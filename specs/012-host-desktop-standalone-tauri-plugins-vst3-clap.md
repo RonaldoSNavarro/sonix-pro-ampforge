@@ -1,7 +1,7 @@
 ---
 spec: 012
 titulo: Arquitetura Desktop nativa (Tauri v2 + Rust) e plugins de DAW (VST3 e CLAP)
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 012 — Arquitetura Desktop nativa (Tauri v2 + Rust) e plugins de DAW (VST3 e CLAP)
@@ -71,7 +71,8 @@ Fontes da verdade e evidências no repositório:
 - **RNF-009 (100% Offline):** A janela Desktop e os plugins carregam todos os recursos (fontes, ícones SVG, presets de fábrica, IRs) do pacote binário local e do sistema de arquivos do SO.
 
 ## Testes que cobrem esta spec
-- `tests/contract/012-host-desktop-standalone-tauri-plugins-vst3-clap.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8 *(pendente — ciclo TDD red → green)*.
+- `crates/sonix-desktop/tests/contract_012_desktop_plugin.rs` → CA-1 a CA-8 (8 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/012-host-desktop-standalone-tauri-plugins-vst3-clap.test.js` → Suíte de integração e validação de critérios CA-1 a CA-8.
 
 ## Notas
 - Rastreabilidade SRS: Seção 1.1.2, Seção 2.1 (`Camada de Hardware / Host Audio & DAW`, `Camada de Apresentação & Controle`), **RNF-001**, **RNF-002**, **RNF-005**, **RNF-008**, **RNF-009**.

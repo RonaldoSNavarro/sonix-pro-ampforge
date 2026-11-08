@@ -172,6 +172,8 @@ version = "1.0.0"
 dependencies = [
  "ampforge-dsp",
  "sonix-core",
+ "sonix-plugin",
+ "thiserror",
 ]
 
 [[package]]
@@ -179,7 +181,10 @@ name = "sonix-plugin"
 version = "1.0.0"
 dependencies = [
  "ampforge-dsp",
+ "serde",
+ "serde_json",
  "sonix-core",
+ "thiserror",
 ]
 
 [[package]]

@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 ampforge-dsp = { path = "../ampforge-dsp" }
 sonix-core = { path = "../sonix-core" }
+sonix-plugin = { path = "../sonix-plugin" }
+thiserror = "1.0"
