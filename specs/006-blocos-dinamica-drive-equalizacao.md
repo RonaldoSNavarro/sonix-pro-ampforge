@@ -1,7 +1,7 @@
 ---
 spec: 006
 titulo: Blocos de dinâmica (Noise Gate, Compressor), Overdrive/Fuzz White-Box e Equalizadores (RTA)
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 006 — Blocos de dinâmica (Noise Gate, Compressor), Overdrive/Fuzz White-Box e Equalizadores (RTA)
@@ -63,7 +63,8 @@ Fontes da verdade e evidências no repositório:
 - **Tokens Semânticos de LED (Design System Seção 2.2):** Os blocos usam obrigatoriamente `--led-gate` (`#00E676`), `--led-comp` (`#00B0FF`), `--led-drive` (`#FF9100`) e `--led-eq` (`#1DE9B6`).
 
 ## Testes que cobrem esta spec
-- `tests/contract/006-blocos-dinamica-drive-equalizacao.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_006_dynamics_drive_eq.rs` → CA-1 a CA-8 (8 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/006-blocos-dinamica-drive-equalizacao.test.js` → Suíte de integração e validação de critérios CA-1 a CA-8.
 
 ## Notas
 - Rastreabilidade SRS: **RF-018**, **RF-019**, **RF-020**, **RF-021**; Design System Seção 2.2.
