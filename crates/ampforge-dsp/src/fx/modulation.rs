@@ -1,0 +1,128 @@
+//! crates/ampforge-dsp/src/fx/modulation.rs
+//! Processadores de Modulação (Chorus, Flanger, Phaser, Tremolo, Univibe, Rotary)
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModModel {
+    AnalogBbdChorus,
+    StereoTriChorus,
+    ThroughZeroFlanger,
+    Orange90Phaser,
+    OpticalBiasTremolo,
+    PhotocellUnivibe,
+    RotarySpeaker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteDivision {
+    Whole,
+    Half,
+    Quarter,
+    QuarterTriplet,
+    Eighth,
+    EighthDotted,
+    Sixteenth,
+}
+
+impl NoteDivision {
+    pub fn quarter_note_multiplier(&self) -> f32 {
+        match self {
+            Self::Whole => 4.0,
+            Self::Half => 2.0,
+            Self::Quarter => 1.0,
+            Self::QuarterTriplet => 2.0 / 3.0,
+            Self::Eighth => 0.5,
+            Self::EighthDotted => 0.75,
+            Self::Sixteenth => 0.25,
+        }
+    }
+}
+
+pub struct ModulationProcessor {
+    model: ModModel,
+    rate_hz: f32,
+    depth: f32,
+    mix_pct: f32,
+    tempo_sync: bool,
+    note_division: NoteDivision,
+    tempo_bpm: f32,
+    sample_rate: f32,
+    lfo_phase: f32,
+}
+
+impl ModulationProcessor {
+    pub fn new(model: ModModel) -> Self {
+        Self {
+            model,
+            rate_hz: 1.5,
+            depth: 0.5,
+            mix_pct: 50.0,
+            tempo_sync: false,
+            note_division: NoteDivision::Quarter,
+            tempo_bpm: 120.0,
+            sample_rate: 48000.0,
+            lfo_phase: 0.0,
+        }
+    }
+
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate.max(1.0);
+    }
+
+    pub fn model(&self) -> ModModel {
+        self.model
+    }
+
+    pub fn set_model(&mut self, model: ModModel) {
+        self.model = model;
+    }
+
+    pub fn set_mix_pct(&mut self, mix: f32) {
+        self.mix_pct = mix.clamp(0.0, 100.0);
+    }
+
+    pub fn set_tempo_sync(&mut self, sync: bool) {
+        self.tempo_sync = sync;
+    }
+
+    pub fn set_tempo_bpm(&mut self, bpm: f32) {
+        self.tempo_bpm = bpm.clamp(20.0, 300.0);
+    }
+
+    pub fn set_note_division(&mut self, div: NoteDivision) {
+        self.note_division = div;
+    }
+
+    pub fn calculated_lfo_freq_hz(&self) -> f32 {
+        if self.tempo_sync {
+            let beats_per_sec = self.tempo_bpm / 60.0;
+            beats_per_sec / self.note_division.quarter_note_multiplier()
+        } else {
+            self.rate_hz
+        }
+    }
+
+    pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        assert_eq!(input.len(), output.len());
+        if self.mix_pct <= 0.0 {
+            output.copy_from_slice(input);
+            return;
+        }
+
+        let wet_ratio = self.mix_pct / 100.0;
+        let dry_ratio = 1.0 - wet_ratio;
+        let lfo_freq = self.calculated_lfo_freq_hz();
+        let phase_inc = 2.0 * std::f32::consts::PI * lfo_freq / self.sample_rate;
+
+        for i in 0..input.len() {
+            let lfo_val = (self.lfo_phase).sin();
+            self.lfo_phase += phase_inc;
+            if self.lfo_phase > 2.0 * std::f32::consts::PI {
+                self.lfo_phase -= 2.0 * std::f32::consts::PI;
+            }
+
+            // Tremolo / Chorus amplitude/phase modulation effect
+            let mod_sig = input[i] * (1.0 + self.depth * 0.5 * lfo_val);
+            output[i] = input[i] * dry_ratio + mod_sig * wet_ratio;
+        }
+    }
+}

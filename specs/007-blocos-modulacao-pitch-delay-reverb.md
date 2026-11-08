@@ -1,7 +1,7 @@
 ---
 spec: 007
 titulo: Blocos de modulação, pitch polifônico, delay com ducking/spillover e reverb
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 007 — Blocos de modulação, pitch polifônico, delay com ducking/spillover e reverb
@@ -64,7 +64,8 @@ Fontes da verdade e evidências no repositório:
 - **Tokens Semânticos de LED (Design System Seção 2.2):** Usa `--led-mod` (`#7C4DFF`), `--led-pitch` (`#E040FB`), `--led-delay` (`#00E5FF`) e `--led-reverb` (`#651FFF`).
 
 ## Testes que cobrem esta spec
-- `tests/contract/007-blocos-modulacao-pitch-delay-reverb.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_007_mod_pitch_delay_reverb.rs` → CA-1 a CA-9 (9 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/007-blocos-modulacao-pitch-delay-reverb.test.js` → Suíte de integração e validação de critérios CA-1 a CA-9.
 
 ## Notas
 - Rastreabilidade SRS: **RF-022**, **RF-023**, **RF-024**, **RF-025**; Design System Seção 2.2.
