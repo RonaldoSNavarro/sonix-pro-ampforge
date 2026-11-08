@@ -1,7 +1,7 @@
 ---
 spec: 005
 titulo: Bloco de gabinete (Cab), sala de microfonação dupla, loader de IR e acoplamento de impedância
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 005 — Bloco de gabinete (Cab), sala de microfonação dupla, loader de IR e acoplamento de impedância
@@ -60,7 +60,8 @@ Fontes da verdade e evidências no repositório:
 - **RNF-009 (100% Offline):** Todo o catálogo de microfones, curvas de impedância e carregamento de IRs opera exclusivamente sobre o sistema de arquivos local.
 
 ## Testes que cobrem esta spec
-- `tests/contract/005-gabinete-sala-microfonacao-ir-acoplamento-impedancia.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_005_virtual_cab.rs` → CA-1 a CA-8 (8 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/005-gabinete-sala-microfonacao-ir-acoplamento-impedancia.test.js` → Suíte de integração e validação de critérios CA-1 a CA-8.
 
 ## Notas
 - Rastreabilidade SRS: **RF-013**, **RF-014**, **RF-015**, **RF-016**, **RF-017**, Seção 5 (`blk_cab_1`); Design System Seção 4.4.
