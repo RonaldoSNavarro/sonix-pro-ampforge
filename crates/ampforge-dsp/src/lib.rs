@@ -17,6 +17,8 @@ pub mod amp;
 pub mod modshop;
 pub mod cab;
 pub mod fx;
+pub mod tuner;
+pub mod looper;
 
 // Re-exports ergonômicos
 pub use config::{AudioConfig, BufferSize, SampleRate};

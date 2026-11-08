@@ -1,7 +1,7 @@
 ---
 spec: 008
 titulo: Afinador estroboscópico/polifônico de alta precisão e Looper de performance
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 008 — Afinador estroboscópico/polifônico de alta precisão e Looper de performance
@@ -64,7 +64,8 @@ Fontes da verdade e evidências no repositório:
 - **RNF-006 (Zipper-Noise Free):** O silenciamento do modo `MUTE` do afinador e os pontos de loop (`loop seam`) aplicam micro-crossfade suave (2–5 ms) para evitar cliques no ponto de repetição.
 
 ## Testes que cobrem esta spec
-- `tests/contract/008-afinador-estroboscopico-polifonico-looper.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_008_tuner_looper.rs` → CA-1 a CA-9 (9 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/008-afinador-estroboscopico-polifonico-looper.test.js` → Suíte de integração e validação de critérios CA-1 a CA-9.
 
 ## Notas
 - Rastreabilidade SRS: **RF-026**, **RF-027**; Design System Seção 2.1 (`--surface-oled-screen`) e Seção 5.
