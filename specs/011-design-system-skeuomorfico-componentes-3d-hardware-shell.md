@@ -1,7 +1,7 @@
 ---
 spec: 011
 titulo: Design System skeuomórfico, tokens de materiais, controles táteis 3D e modo Hardware Shell
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 011 — Design System skeuomórfico, tokens de materiais, controles táteis 3D e modo Hardware Shell
@@ -71,7 +71,7 @@ Fontes da verdade e evidências no repositório:
 - **Princípios de Direção de Arte (Design System Seção 1):** Honestidade Material, Hierarquia em Três Zonas e Ergonomia de Estúdio e Palco são verificadas diretamente nos CAs 1 a 7.
 
 ## Testes que cobrem esta spec
-- `tests/contract/011-design-system-skeuomorfico-componentes-3d-hardware-shell.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9 *(pendente — ciclo TDD red → green)*.
+- `tests/contract/011-design-system-skeuomorfico-componentes-3d-hardware-shell.test.js` → CA-1 a CA-9 (9 testes automatizados de tokens canônicos, tipografia, 3D knobs, footswitch, hardware-shell e valueToAngle, 100% ok).
 
 ## Notas
 - Rastreabilidade: `docs/02-Design-System-Specification.md` (Seções 1, 2, 3, 4 e 5) e `docs/01-SRS-Levantamento-de-Requisitos.md` (**RNF-008**).

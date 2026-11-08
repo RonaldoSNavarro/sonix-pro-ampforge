@@ -11,14 +11,23 @@
   --chassis-metal-light: #2a303a;
   --chassis-border: #333a47;
 
-  /* Physical Materials & Gradients */
-  --surface-anodized: linear-gradient(180deg, #1e2229 0%, #13161b 45%, #0c0e12 100%);
-  --surface-brushed-brass: linear-gradient(180deg, #f0d58c 0%, #d4ac4e 46%, #aa7e24 52%, #e0be68 100%);
-  --surface-brushed-chrome: linear-gradient(180deg, #f2f5f8 0%, #aeb8c4 48%, #7a8491 52%, #dce2e9 100%);
+  /* Canonical Surface Materials & Physical Finishes (Design System Section 2.1) */
+  --surface-chassis-anodized: linear-gradient(180deg, #1e2229 0%, #13161b 45%, #0c0e12 100%);
+  --surface-tolex-black: #0c0d10;
+  --surface-faceplate-gold: linear-gradient(180deg, #f0d58c 0%, #d4ac4e 46%, #aa7e24 52%, #e0be68 100%);
+  --surface-faceplate-chrome: linear-gradient(180deg, #f2f5f8 0%, #aeb8c4 48%, #7a8491 52%, #dce2e9 100%);
+  --surface-circuit-board: radial-gradient(ellipse at 50% 20%, #1d2228 0%, #0d1014 70%, #07080a 100%);
+  --surface-oled-screen: #04070b;
+  --surface-crt-phosphor: radial-gradient(circle at 50% 50%, #08261e 0%, #03110d 85%, #010806 100%);
+
+  /* Compatibility Aliases */
+  --surface-anodized: var(--surface-chassis-anodized);
+  --surface-brushed-brass: var(--surface-faceplate-gold);
+  --surface-brushed-chrome: var(--surface-faceplate-chrome);
   --surface-blackout-metal: linear-gradient(180deg, #2b2e35 0%, #17191d 50%, #0f1013 100%);
-  --surface-circuit-bay: radial-gradient(ellipse at 50% 20%, #1d2228 0%, #0d1014 70%, #07080a 100%);
-  --surface-oled: #04070b;
-  --surface-crt: radial-gradient(circle at 50% 50%, #08261e 0%, #03110d 85%, #010806 100%);
+  --surface-circuit-bay: var(--surface-circuit-board);
+  --surface-oled: var(--surface-oled-screen);
+  --surface-crt: var(--surface-crt-phosphor);
 
   /* Semantic Block Category LEDs */
   --led-gate: #00e676;
@@ -37,10 +46,17 @@
   --font-faceplate: 'Oswald', 'Arial Narrow', Impact, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
-  /* Elevation & Skeuomorphic Shadows */
+  /* Incandescence & 3D Skeuomorphic Shadows (Design System Section 2.3) */
+  --tube-glow-idle: rgba(255, 120, 30, 0.25);
+  --tube-glow-hot: rgba(255, 90, 10, 0.85);
+  --shadow-knob-3d: 0 10px 18px rgba(0, 0, 0, 0.8), 0 3px 6px rgba(0, 0, 0, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+  --shadow-chassis-inset: inset 0 4px 12px rgba(0, 0, 0, 0.9), inset 0 1px 3px rgba(0, 0, 0, 0.95);
+  --shadow-footswitch: 0 12px 25px rgba(0, 0, 0, 0.85), inset 0 2px 2px rgba(255, 255, 255, 0.2);
+
+  /* Elevation & Compatibility Shadows */
   --shadow-elevation-lg: 0 20px 50px rgba(0, 0, 0, 0.85), 0 6px 16px rgba(0, 0, 0, 0.7);
-  --shadow-inset-deep: inset 0 4px 12px rgba(0, 0, 0, 0.9), inset 0 1px 3px rgba(0, 0, 0, 0.95);
-  --shadow-knob: 0 10px 18px rgba(0, 0, 0, 0.8), 0 3px 6px rgba(0, 0, 0, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+  --shadow-inset-deep: var(--shadow-chassis-inset);
+  --shadow-knob: var(--shadow-knob-3d);
 }
 
 * {
@@ -866,7 +882,7 @@ body.hardware-shell-mode .chassis-screws {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
 }
 
 /* ============================================================================
@@ -972,10 +988,35 @@ body.hardware-shell-mode .chassis-screws {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   padding: 1px 6px;
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.78);
   color: #ffca28;
+}
+
+/* 3D Knob Variants (Design System Section 4.1) */
+.knob-variant-skirted .knob-rotor {
+  border-radius: 50%;
+}
+
+.knob-variant-chicken-head .knob-rotor {
+  clip-path: polygon(50% 0%, 75% 45%, 65% 100%, 35% 100%, 25% 45%);
+}
+
+.knob-variant-studio-encoder .knob-rotor {
+  background: radial-gradient(circle, #2a2e36 0%, #15181d 100%);
+  border: 2px dashed #444d5c;
+}
+
+/* Tap Tempo Footswitch Pulse */
+@keyframes tapPulse {
+  0%, 100% { opacity: 0.25; filter: drop-shadow(0 0 2px currentColor); }
+  50% { opacity: 1.0; filter: drop-shadow(0 0 12px currentColor); }
+}
+
+.tap-tempo-pulse {
+  animation: tapPulse var(--bpm-pulse-period, 0.5s) infinite ease-in-out;
 }
 
 .knob-unit.has-modifier .knob-value-readout {
