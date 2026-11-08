@@ -1,7 +1,7 @@
 ---
 spec: 003
 titulo: Modelagem White-Box de amplificadores valvulados e painel frontal autêntico
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 003 — Modelagem White-Box de amplificadores valvulados e painel frontal autêntico
@@ -68,7 +68,8 @@ Fontes da verdade e evidências no repositório:
 - **Fisicalidade Autêntica (Design System Seção 1.1):** O painel frontal utiliza texturas de Tolex, grill cloth com brilho de filamento ao fundo (`#grilleGlow`), serigrafia `Oswald` e lâmpada piloto jewel (`#pilotLamp`).
 
 ## Testes que cobrem esta spec
-- `tests/contract/003-modelagem-amplificadores-white-box-painel-frontal.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_003_amp_modeling.rs` → CA-1 a CA-8 (8 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/003-modelagem-amplificadores-white-box-painel-frontal.test.js` → Suíte de integração e validação de critérios CA-1 a CA-8.
 
 ## Notas
 - Rastreabilidade SRS: Seção 1.1, **RF-006**, Seção 5 (`frontPanel`).

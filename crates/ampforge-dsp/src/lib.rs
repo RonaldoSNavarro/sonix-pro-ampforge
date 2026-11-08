@@ -13,6 +13,7 @@ pub mod precision;
 pub mod cpu;
 pub mod engine;
 pub mod dag;
+pub mod amp;
 
 // Re-exports ergonômicos
 pub use config::{AudioConfig, BufferSize, SampleRate};
