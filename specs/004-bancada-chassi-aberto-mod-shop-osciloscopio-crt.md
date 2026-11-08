@@ -1,7 +1,7 @@
 ---
 spec: 004
 titulo: Bancada Chassi Aberto (Mod Shop) e osciloscópio CRT de transferência em tempo real
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 004 — Bancada Chassi Aberto (Mod Shop) e osciloscópio CRT de transferência em tempo real
@@ -70,7 +70,8 @@ Fontes da verdade e evidências no repositório:
 - **RNF-008 (UI 60 FPS):** A renderização do `#crtCanvas` e da incandescência das válvulas roda no loop visual consumindo dados da `SPSC Telemetry Queue`, sem jamais bloquear a thread de áudio.
 
 ## Testes que cobrem esta spec
-- `tests/contract/004-bancada-chassi-aberto-mod-shop-osciloscopio-crt.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_004_modshop_crt.rs` → CA-1 a CA-9 (9 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/004-bancada-chassi-aberto-mod-shop-osciloscopio-crt.test.js` → Suíte de integração e validação de critérios CA-1 a CA-9.
 
 ## Notas
 - Rastreabilidade SRS: **RF-007**, **RF-008**, **RF-009**, **RF-010**, **RF-011**, **RF-012**, Seção 5 (`circuitModShop`); Design System Seções 4.2 e 4.3.
