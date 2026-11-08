@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SONIX PRO // AMPFORGE™ — Simulador White-Box & Design System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700;800&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+
+    <!-- Parafusos superiores visíveis quando em "Modo Palco / Hardware Shell" -->
+    <div class="chassis-screws">
+      <span><i class="screw-head"></i> SONIX PRO FLOORBOARD // CNC ANODIZED CHASSIS</span>
+      <span>AMPFORGE™ 96kHz / 64-BIT WHITE-BOX ENGINE // OFFLINE LOCAL <i class="screw-head"></i></span>
+    </div>
+
+    <!-- ====================================================================
+         BARRA MESTRE SUPERIOR (PRESET, 8 SCENES, MEDIDORES, TUNER, SHELL)
+         ==================================================================== -->
+    <header class="top-master-bar">
+      <div class="brand-cluster">
+        <div class="brand-logo">
+          <span class="brand-emblem"></span>
+          <span class="brand-title">SONIX PRO</span>
+          <span class="brand-sub">AMPFORGE™ v1.0</span>
+        </div>
+
+        <div class="preset-oled-box">
+          <span class="preset-bank-badge" id="presetBankBadge">P01</span>
+          <select class="preset-select" id="presetSelect" aria-label="Selecionar Preset Local">
+            <option value="brit800">Brit 800 Modded Studio Rig</option>
+            <option value="usdeluxe">US Blackface Edge & Shimmer</option>
+            <option value="recto">Cali Dual Recto Modern Metal</option>
+            <option value="ac30">UK Chime Top Boost Stereo</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 8 Scenes Selector (Gapless Switching < 1ms) -->
+      <div class="scenes-strip" id="scenesStrip" role="group" aria-label="Seletor de 8 Cenas">
+        <span class="scenes-label">SCENES</span>
+        <button class="scene-btn" data-scene="0"><strong>A</strong><span class="scene-sub">CLEAN</span></button>
+        <button class="scene-btn" data-scene="1"><strong>B</strong><span class="scene-sub">CRUNCH</span></button>
+        <button class="scene-btn active" data-scene="2"><strong>C</strong><span class="scene-sub">MOD 800</span></button>
+        <button class="scene-btn" data-scene="3"><strong>D</strong><span class="scene-sub">SOLO +3</span></button>
+        <button class="scene-btn" data-scene="4"><strong>E</strong><span class="scene-sub">AMBIENT</span></button>
+        <button class="scene-btn" data-scene="5"><strong>F</strong><span class="scene-sub">OCTAVE</span></button>
+        <button class="scene-btn" data-scene="6"><strong>G</strong><span class="scene-sub">RHYTHM 2</span></button>
+        <button class="scene-btn" data-scene="7"><strong>H</strong><span class="scene-sub">DRY DI</span></button>
+      </div>
+
+      <!-- Telemetria em Tempo Real e Ações -->
+      <div class="telemetry-cluster">
+        <div class="meter-pill" title="Nível de Entrada DI e Saída Estéreo">
+          <span>IN</span>
+          <div class="vu-bar-track"><div class="vu-bar-fill" id="vuInFill"></div></div>
+          <span>OUT</span>
+          <div class="vu-bar-track"><div class="vu-bar-fill" id="vuOutFill"></div></div>
+        </div>
+
+        <div class="meter-pill" title="Orçamento de DSP/CPU em Tempo Real (48kHz / 64 samples / 1.3ms)">
+          <span>DSP: <strong class="cpu-badge" id="cpuMeterText">34.2%</strong></span>
+          <span style="color:#7c8798">| 1.28ms</span>
+        </div>
+
+        <button class="hw-btn" id="btnToggleRiff" title="Ativar gerador de sinal para ver/ouvir o circuito reagindo ao vivo">
+          ▶ Test Signal DSP
+        </button>
+
+        <button class="hw-btn" id="btnToggleTuner">
+          ◎ Tuner (440Hz)
+        </button>
+
+        <button class="hw-btn" id="btnExportPreset" title="Exportar arquivo .sonixpreset JSON offline">
+          ⬇ Export .JSON
+        </button>
+
+        <button class="hw-btn" id="btnHardwareShell" title="Alternar entre Visão Estúdio e Carcaça Física da Pedaleira">
+          ▣ Modo Palco (Shell)
+        </button>
+      </div>
+    </header>
+
+    <!-- Barra Retrátil do Afinador Estroboscópico -->
+    <div class="tuner-overlay-bar" id="tunerBar">
+      <div style="font-family:var(--font-mono); font-size:11px; color:#9ba6b8;">
+        STROBE TUNER // REF: <strong>A4 = 440.0 Hz</strong> // MODE: <strong>POLYPHONIC + STROBE (±0.1 cent)</strong>
+      </div>
+      <div class="strobe-track">
+        <div class="strobe-center-needle"></div>
+      </div>
+      <div class="tuner-note-display" id="tunerNoteText">E2 (-0.1¢)</div>
+    </div>
+
+    <!-- Sub-Navegação: Workspace do Rig vs Catálogo Técnico do Design System -->
+    <nav class="workspace-subnav">
+      <div class="subnav-tabs">
+        <button class="subnav-tab active" data-view="rig-workspace">🎛️ Sonix Pro Editor & AmpForge™ Workbench</button>
+        <button class="subnav-tab" data-view="cab-room">🎙️ Sala de Microfonação 3D & Curva de Impedância (Cab/IR)</button>
+        <button class="subnav-tab" data-view="ds-catalog">📐 Catálogo de Tokens & Componentes (Design System Spec)</button>
+      </div>
+      <div class="subnav-hint">
+        Dica: Arraste os knobs verticalmente | <strong>Shift+Drag</strong> = Ajuste Fino | <strong>Duplo Clique</strong> = Reset | <strong>EXP 1</strong> modula o Input Gain
+      </div>
+    </nav>
+
+    <!-- ====================================================================
+         ZONA 1: SIGNAL CHAIN MATRIX GRID (4 LINHAS × 12 COLUNAS)
+         ==================================================================== -->
+    <section class="signal-grid-section" id="signalGridSection">
+      <div class="signal-grid-header">
+        <div class="signal-grid-title">
+          <span>SIGNAL ROUTING MATRIX (4×12 DAG)</span>
+          <span class="split-merge-badge">PARALLEL DUAL-PATH ACTIVE</span>
+          <span id="gaplessStatusBadge" style="color:#00e676;">● GAPLESS ENGINE READY (&lt; 1ms)</span>
+        </div>
+
+        <div class="channel-selector-group">
+          <span style="color:#8c97a8;">CANAL DO BLOCO SELECIONADO:</span>
+          <button class="ch-btn" data-ch="A">A</button>
+          <button class="ch-btn" data-ch="B">B</button>
+          <button class="ch-btn active" data-ch="C">C</button>
+          <button class="ch-btn" data-ch="D">D</button>
+          <span style="margin-left:8px; color:#8c97a8;">OVERSAMPLING:</span>
+          <select class="tech-select" id="oversamplingSelect" style="padding:2px 6px;">
+            <option value="2x">2x Standard</option>
+            <option value="4x" selected>4x High Pro</option>
+            <option value="8x">8x Ultra Studio</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid-matrix-container" id="gridMatrixContainer">
+        <!-- Renderizado dinamicamente pelo app.js (Linhas 1 a 4 com blocos clicáveis) -->
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         ZONA 2: PALCO CENTRAL FOTORREALISTA (MAIN STAGE)
+         ==================================================================== -->
+    <main class="main-stage-section" id="mainStageSection">
+      <div class="stage-toolbar">
+        <div class="active-unit-breadcrumb">
+          <span class="unit-badge" id="selectedBlockBadge">AMP 1 // CANAL C</span>
+          <select class="unit-model-select" id="ampModelSelect" aria-label="Modelo de Circuito White-Box">
+            <option value="brit800">Brit JCM 800 2203 (100W EL34 Push-Pull)</option>
+            <option value="plexisuper">1959 Super Lead Plexi (jumped channels)</option>
+            <option value="usdeluxe">US Twin Blackface '65 (2x 6L6GC Clean)</option>
+            <option value="calirecto">Cali Dual Rectifier Rev-F (High Gain 6L6/GZ34)</option>
+          </select>
+          <span style="font-family:var(--font-mono); font-size:11px; color:#9ba6b8;" id="coupledImpedanceBadge">
+            ⚡ Acoplado: Curva Impedância 4x12 UK Greenback (Res: 98Hz / +6.8dB)
+          </span>
+        </div>
+
+        <div class="chassis-toggle-wrapper">
+          <span style="font-family:var(--font-mono); font-size:10px; color:#9ba6b8;">MOTOR WHITE-BOX AMPFORGE™:</span>
+          <button class="chassis-switch-btn" id="btnToggleChassis">
+            🔧 AMPFORGE™ CHASSIS / MOD SHOP (CIRCUIT VIEW)
+          </button>
+        </div>
+      </div>
+
+      <!-- CABEÇOTE SKEUOMÓRFICO FOTORREALISTA (TOLEX + GRILL CLOTH + LATÃO ESCOVADO) -->
+      <div class="amp-head-outer-shell" id="ampHeadShell">
+        <div class="amp-head-inner-bezel">
+          <!-- Tela Superior Grill Cloth com brilho de válvulas ao fundo -->
+          <div class="amp-upper-grille">
+            <div class="grille-back-glow" id="grilleGlow"></div>
+            <div class="amp-script-logo" id="ampBrandLogoText">Britannia 800</div>
+          </div>
+
+          <!-- Painel Frontal de Latão Escovado com Knobs 3D -->
+          <div class="amp-faceplate" id="ampFaceplate">
+            <div class="power-cluster">
+              <div class="jewel-pilot-lamp">
+                <div class="jewel-lens" id="pilotLamp"></div>
+                <span class="faceplate-label">MAINS</span>
+              </div>
+              <div class="rocker-switch" id="brightSwitchBtn" title="Alternar Capacitor Bright (120pF / 470pF) no potenciômetro de ganho">
+                <div class="rocker-body"></div>
+                <span class="faceplate-label" id="brightSwitchLabel">BRIGHT: ON</span>
+              </div>
+            </div>
+
+            <!-- Fileira de Knobs 3D Rotativos Interativos -->
+            <div class="knobs-row" id="frontPanelKnobsRow">
+              <!-- Gerados pelo app.js -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================================================================
+           GAVETA / BANCADA "CHASSI ABERTO (MOD SHOP)" (WHITE-BOX + CRT SCOPE)
+           ================================================================== -->
+      <div class="open-chassis-workbench" id="openChassisWorkbench">
+        <!-- Coluna 1: Baia de Válvulas Termiônicas Acesas (Preamp & Power Amp) -->
+        <div class="tube-bay-panel">
+          <div class="panel-tech-header">
+            <span class="panel-tech-title">🔥 VÁLVULAS TERMIÔNICAS (BIAS & FILAMENTOS)</span>
+            <span style="font-family:var(--font-mono); font-size:10px; color:#00e676;" id="plateCurrentReadout">Ip: 38.5 mA / 465V B+</span>
+          </div>
+
+          <div class="tubes-stage-row" id="tubesStageRow">
+            <!-- 2 Preamp Tubes (12AX7) + 4 Power Tubes (EL34) -->
+            <div class="vacuum-tube preamp-size" data-tube-slot="V1">
+              <div class="tube-glass-envelope"><div class="tube-anode-plate"><div class="tube-heater-filament"></div></div></div>
+              <div class="tube-ceramic-base">12AX7</div>
+              <span class="tube-socket-label">V1 PRE</span>
+            </div>
+            <div class="vacuum-tube preamp-size" data-tube-slot="V2">
+              <div class="tube-glass-envelope"><div class="tube-anode-plate"><div class="tube-heater-filament"></div></div></div>
+              <div class="tube-ceramic-base">ECC83</div>
+              <span class="tube-socket-label">V2 CATH</span>
+            </div>
+            <div class="vacuum-tube preamp-size" data-tube-slot="V3">
+              <div class="tube-glass-envelope"><div class="tube-anode-plate"><div class="tube-heater-filament"></div></div></div>
+              <div class="tube-ceramic-base">12AT7</div>
+              <span class="tube-socket-label">V3 P.I.</span>
+            </div>
+            <div class="vacuum-tube" data-tube-slot="V4">
+              <div class="tube-glass-envelope"><div class="tube-anode-plate"><div class="tube-heater-filament"></div></div></div>
+              <div class="tube-ceramic-base" id="pwrTubeLabel1">EL34</div>
+              <span class="tube-socket-label">V4 PWR</span>
+            </div>
+            <div class="vacuum-tube" data-tube-slot="V5">
+              <div class="tube-glass-envelope"><div class="tube-anode-plate"><div class="tube-heater-filament"></div></div></div>
+              <div class="tube-ceramic-base" id="pwrTubeLabel2">EL34</div>
+              <span class="tube-socket-label">V5 PWR</span>
+            </div>
+          </div>
+
+          <div class="tube-selector-row">
+            <div class="tech-select-group">
+              <label for="preampTubeSelect">Válvulas de Preamp (V1/V2)</label>
+              <select class="tech-select" id="preampTubeSelect">
+                <option value="12AX7A">12AX7A High-Mu (100 Gain)</option>
+                <option value="ECC83S" selected>JJ ECC83S Warm Asymmetric</option>
+                <option value="12AT7">12AT7 Lower Gain (60 Mu)</option>
+                <option value="EF86">EF86 Pentode Vintage</option>
+              </select>
+            </div>
+            <div class="tech-select-group">
+              <label for="powerTubeSelect">Válvulas de Power Amp (V4–V7)</label>
+              <select class="tech-select" id="powerTubeSelect">
+                <option value="EL34" selected>Mullard EL34 Pentode (Brit Crunch)</option>
+                <option value="6L6GC">RCA 6L6GC Beam Tetrode (US Punch)</option>
+                <option value="KT88">Genalex KT88 High Headroom</option>
+                <option value="EL84">Vox EL84 Class-A Chime</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna 2: Trimpots White-Box de Circuito (Bias, Sag, NFB, Tone Stack) -->
+        <div class="circuit-trimpots-panel">
+          <div class="panel-tech-header">
+            <span class="panel-tech-title">⚙️ PARÂMETROS DE CIRCUITO WHITE-BOX (MOD SHOP)</span>
+            <span style="font-family:var(--font-mono); font-size:10px; color:#8c97a8;">SOLVER: 64-BIT NEWTON-RAPHSON</span>
+          </div>
+
+          <div class="trimpots-grid">
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">Power Bias</span>
+                <span class="trimpot-val" id="valBias">38.5 mA</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderBias" min="20" max="55" step="0.5" value="38.5" />
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">B+ Supply Sag</span>
+                <span class="trimpot-val" id="valSag">3.4 dB</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderSag" min="0" max="10" step="0.1" value="3.4" />
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">Neg. Feedback</span>
+                <span class="trimpot-val" id="valNfb">4.8</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderNfb" min="0" max="10" step="0.1" value="4.8" />
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">Xformer Sat</span>
+                <span class="trimpot-val" id="valXformer">5.2</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderXformer" min="0" max="10" step="0.1" value="5.2" />
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">Plate Voltage</span>
+                <span class="trimpot-val" id="valPlateV">295 V</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderPlateV" min="180" max="340" step="1" value="295" />
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">Triode Asym</span>
+                <span class="trimpot-val" id="valAsym">0.24</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderAsym" min="0" max="0.6" step="0.02" value="0.24" />
+            </div>
+          </div>
+
+          <div class="tube-selector-row">
+            <div class="tech-select-group">
+              <label for="toneStackSelect">Topologia do Tone Stack</label>
+              <select class="tech-select" id="toneStackSelect">
+                <option value="marshall" selected>Marshall Cathode Follower (33k/470pF)</option>
+                <option value="fender">Fender Blackface TMB (100k/250pF Scoop)</option>
+                <option value="vox">Vox Top Boost Cut-Circuit</option>
+                <option value="baxandall">Active Baxandall Studio EQ</option>
+              </select>
+            </div>
+            <div class="tech-select-group">
+              <label for="rectifierSelect">Retificador da Fonte (Power Supply)</label>
+              <select class="tech-select" id="rectifierSelect">
+                <option value="diode" selected>Solid-State Silicon Diode (Tight Attack)</option>
+                <option value="gz34">GZ34 / 5AR4 Vacuum Tube (Spongy Sag)</option>
+                <option value="5u4gb">Dual 5U4GB Vintage Rectifier</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna 3: Osciloscópio CRT Tektronix & Analisador White-Box -->
+        <div class="crt-scope-panel">
+          <div class="panel-tech-header" style="margin-bottom:4px;">
+            <span class="panel-tech-title" style="color:#00e676;">📈 OSCILOSCÓPIO DE BANCADA & CURVA DE VÁLVULA</span>
+            <span style="font-family:var(--font-mono); font-size:9px; color:#00e5ff;">REAL-TIME DSP</span>
+          </div>
+
+          <div class="crt-screen-wrapper">
+            <canvas id="crtCanvas" width="420" height="185"></canvas>
+          </div>
+
+          <div class="scope-mode-tabs">
+            <button class="scope-tab active" data-scope="waveform">WAVEFORM (IN/OUT)</button>
+            <button class="scope-tab" data-scope="transfer">CURVA X-Y (CLIPPING)</button>
+            <button class="scope-tab" data-scope="tonestack">TONE STACK + IMPEDÂNCIA</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================================================================
+           SALA DE MICROFONAÇÃO 3D DO GABINETE & IMPEDANCE CURVE (CAB VIEW)
+           ================================================================== -->
+      <div class="cab-room-workbench" id="cabRoomWorkbench">
+        <div>
+          <div class="panel-tech-header">
+            <span class="panel-tech-title">🎙️ POSICIONAMENTO INTERATIVO DE MICROFONES NO CONE (ARRASTE OS MICS)</span>
+            <span style="font-family:var(--font-mono); font-size:10px; color:#ffc400;">CAB: 4x12 UK GREENBACK 25W</span>
+          </div>
+
+          <div class="speaker-cone-stage" id="speakerConeStage">
+            <div class="speaker-dust-cap-label">
+              CENTRO (DUST CAP = +BRILHO) ↔ BORDA (CONE EDGE = +GRAVE/QUENTE)
+            </div>
+            <div class="draggable-mic mic-1" id="mic1Handle" style="left: 42%; top: 48%;">
+              ● MIC 1: SM57
+            </div>
+            <div class="draggable-mic mic-2" id="mic2Handle" style="left: 66%; top: 58%;">
+              ● MIC 2: R121
+            </div>
+          </div>
+        </div>
+
+        <div class="circuit-trimpots-panel">
+          <div class="panel-tech-header">
+            <span class="panel-tech-title">🔊 MIXER DE IRs (.WAV) & ACOPLAMENTO DE IMPEDÂNCIA</span>
+          </div>
+
+          <div class="trimpots-grid" style="grid-template-columns: 1fr 1fr;">
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name" style="color:#ffc400;">MIC 1: Dynamic 57</span>
+                <span class="trimpot-val" id="mic1CoordText">Cap 32% | 2.5cm</span>
+              </div>
+              <small style="font-family:var(--font-mono); color:#8c97a8;">Nível: 0.0 dB | Fase: 0° Normal</small>
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name" style="color:#00e5ff;">MIC 2: Ribbon 121</span>
+                <span class="trimpot-val" id="mic2CoordText">Edge 64% | 6.0cm</span>
+              </div>
+              <small style="font-family:var(--font-mono); color:#8c97a8;">Nível: -3.5 dB | Delay: 0.08 ms</small>
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">Low Resonance Peak</span>
+                <span class="trimpot-val" id="valCabRes">98 Hz (+6.8dB)</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderCabRes" min="65" max="135" value="98" />
+            </div>
+
+            <div class="trimpot-card">
+              <div class="trimpot-header">
+                <span class="trimpot-name">High Cut Filter</span>
+                <span class="trimpot-val" id="valCabHiCut">8.2 kHz</span>
+              </div>
+              <input type="range" class="trimpot-slider" id="sliderCabHiCut" min="3.5" max="18.0" step="0.1" value="8.2" />
+            </div>
+          </div>
+
+          <div class="tube-selector-row">
+            <div class="tech-select-group">
+              <label>Carregar Impulse Response Externo Local (.WAV)</label>
+              <input type="file" accept=".wav" class="tech-select" id="irFileInput" />
+            </div>
+            <div class="tech-select-group">
+              <label>Curva de Impedância Acoplada ao Power Amp</label>
+              <select class="tech-select" id="impedanceCurveSelect">
+                <option value="greenback">4x12 Closed-Back Greenback (98 Hz)</option>
+                <option value="v30">4x12 Oversized Vintage 30 (108 Hz)</option>
+                <option value="alnicoblue">2x12 Open-Back Alnico Blue (82 Hz)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ====================================================================
+         ABA DE CATÁLOGO DO DESIGN SYSTEM (TOKENS, MATERIAIS, TIPOGRAFIA)
+         ==================================================================== -->
+    <section class="ds-catalog-section" id="dsCatalogSection">
+      <div class="ds-grid">
+        <div class="ds-card">
+          <h3>1. Superfícies & Materiais Skeuomórficos</h3>
+          <div class="swatch-grid">
+            <div class="swatch-item">
+              <div class="swatch-box" style="background: var(--surface-brushed-brass);"></div>
+              <div class="swatch-meta"><strong>Brushed Brass</strong><span>--surface-brushed-brass</span></div>
+            </div>
+            <div class="swatch-item">
+              <div class="swatch-box" style="background: var(--surface-brushed-chrome);"></div>
+              <div class="swatch-meta"><strong>Brushed Chrome</strong><span>--surface-brushed-chrome</span></div>
+            </div>
+            <div class="swatch-item">
+              <div class="swatch-box" style="background: var(--surface-anodized);"></div>
+              <div class="swatch-meta"><strong>CNC Anodized Metal</strong><span>--surface-anodized</span></div>
+            </div>
+            <div class="swatch-item">
+              <div class="swatch-box" style="background: var(--surface-crt);"></div>
+              <div class="swatch-meta"><strong>CRT Phosphor Scope</strong><span>--surface-crt</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ds-card">
+          <h3>2. Tokens Semânticos de Categorias & Anéis LED RGB</h3>
+          <div class="swatch-grid">
+            <div class="swatch-item">
+              <div class="swatch-box" style="background:#00e676; box-shadow:0 0 12px #00e676;"></div>
+              <div class="swatch-meta"><strong>IN / NOISE GATE</strong><span>#00E676 (--led-gate)</span></div>
+            </div>
+            <div class="swatch-item">
+              <div class="swatch-box" style="background:#ff9100; box-shadow:0 0 12px #ff9100;"></div>
+              <div class="swatch-meta"><strong>OVERDRIVE / FUZZ</strong><span>#FF9100 (--led-drive)</span></div>
+            </div>
+            <div class="swatch-item">
+              <div class="swatch-box" style="background:#ff3d00; box-shadow:0 0 12px #ff3d00;"></div>
+              <div class="swatch-meta"><strong>WHITE-BOX AMP</strong><span>#FF3D00 (--led-amp)</span></div>
+            </div>
+            <div class="swatch-item">
+              <div class="swatch-box" style="background:#00e5ff; box-shadow:0 0 12px #00e5ff;"></div>
+              <div class="swatch-meta"><strong>DELAY / ECHO</strong><span>#00E5FF (--led-delay)</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ds-card">
+          <h3>3. Hierarquia Tipográfica & Serigrafia</h3>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div>
+              <span style="font-family:var(--font-faceplate); font-size:20px; letter-spacing:0.14em; color:#f0d58c;">OSWALD BOLD — SERIGRAFIA DE AMPLIFICADOR</span>
+              <p style="font-size:11px; color:#8c97a8;">Usada em painéis de cabeçote e pedais (tracking 0.12em, uppercase).</p>
+            </div>
+            <div>
+              <span style="font-family:var(--font-mono); font-size:14px; color:#00e5ff;">JetBrains Mono — OLED Scribble Strips & Telemetria DSP</span>
+              <p style="font-size:11px; color:#8c97a8;">Números tabulares sem jitter durante leitura de parâmetros em 60 FPS.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         ZONA 3: DOCK INFERIOR DE HARDWARE FÍSICO (8 FOOTSWITCHES RGB + EXP 1)
+         ==================================================================== -->
+    <footer class="hardware-footswitch-dock">
+      <div class="footswitch-array" id="footswitchArray">
+        <!-- 8 Footswitches Físicos com Anéis RGB e Mini-Displays OLED (Modo Híbrido: 4 Stomps + 4 Scenes) -->
+      </div>
+
+      <!-- Pedal de Expressão 3D Vinculado ao Modifier Matrix -->
+      <div class="expression-pedal-unit" title="Pedal de Expressão 1 — Vinculado ao Input Gain do Amp via Modifier Matrix">
+        <div class="exp-header">
+          <span>EXP PEDAL 1</span>
+          <span id="expPedalValueText">68%</span>
+        </div>
+        <div class="exp-treadle-grip">
+          <input type="range" class="exp-slider" id="expPedalSlider" min="0" max="100" value="68" aria-label="Pedal de Expressão 1" />
+        </div>
+        <div style="font-family:var(--font-mono); font-size:8px; color:#9ba6b8; text-align:center;">
+          MODIFIER → AMP GAIN
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
