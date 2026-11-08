@@ -1,13 +1,26 @@
 # SONIX PRO // AMPFORGE™
 
-Simulador de pedaleira de guitarra multi-efeitos e amplificadores com modelagem de circuito White-Box (100% algorítmica em nível de componentes) e Design System Skeuomórfico Fotorrealista.
+Simulador de pedaleira de guitarra multi-efeitos e amplificadores com modelagem de circuito White-Box (100% algorítmica em nível de componentes discretos), motor DSP nativo em Rust e Design System Skeuomórfico Fotorrealista.
 
 ---
 
-## 🎛️ Visão Geral
+## 🎛️ Visão Geral e Arquitetura Desktop
 
+O projeto é direcionado exclusivamente a **plataformas Desktop nativas** (sem alvo Web no escopo atual):
+- **Desktop Standalone (`Tauri v2 + Rust`)**: Executável de palco/estúdio com janela nativa acelerada por GPU, drivers de áudio de ultrabaixa latência (`ASIO`, `WASAPI Exclusive`, `CoreAudio`, `ALSA`, `JACK`) e suporte a controladores MIDI USB físicos.
+- **Plugins de DAW 64-bit (`VST3` e `CLAP`)**: Integração direta com DAWs profissionais compartilhando o mesmo núcleo `ampforge-dsp` e a mesma interface do Design System.
 - **SONIX PRO**: Interface de estúdio e simulação de hardware físico da pedaleira de chão (8 footswitches RGB, *scribble strips* OLED, pedal de expressão, matriz de roteamento 4×12).
-- **AMPFORGE™**: Motor DSP White-Box (64-bit Newton-Raphson) e bancada de bancada (*Open Chassis Mod Shop*) com controle de válvulas (`12AX7`, `EL34`, etc.), tensão de placa, bias, sag da fonte e osciloscópio CRT em tempo real.
+- **AMPFORGE™**: Motor DSP White-Box (64-bit Newton-Raphson) e bancada (*Open Chassis Mod Shop*) com controle de válvulas (`12AX7`, `EL34`, etc.), tensão de placa, bias, sag da fonte e osciloscópio CRT em tempo real.
+
+---
+
+## 📐 Metodologia: Spec Driven Development (SDD) & TDD Estrito
+
+Toda funcionalidade e resolução de lacunas é guiada por especificações formais numeradas em `specs/` (12 especificações aprovadas cobrindo 106 critérios de aceite verificáveis `CA-n`).
+
+- Índice e Changelog de Specs: [specs/README.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/specs/README.md)
+- Regras de desenvolvimento e TDD estrito: [AGENTS.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/AGENTS.md)
+- Fontes da verdade: [01-SRS-Levantamento-de-Requisitos.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/docs/01-SRS-Levantamento-de-Requisitos.md) e [02-Design-System-Specification.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/docs/02-Design-System-Specification.md)
 
 ---
 
@@ -17,20 +30,22 @@ Simulador de pedaleira de guitarra multi-efeitos e amplificadores com modelagem 
 ├── docs/
 │   ├── 01-SRS-Levantamento-de-Requisitos.md    # Especificação formal de requisitos (RFs, RNFs e JSON Schema)
 │   └── 02-Design-System-Specification.md      # Especificação visual, tokens de materiais e anatomia dos componentes
-└── design-system/
-    ├── index.html                             # Protótipo funcional interativo completo
-    ├── styles.css                             # Design tokens, CSS skeuomórfico e iluminação de válvulas
-    └── app.js                                 # Simulação de áudio, oscilloscópio CRT, grid 4x12 e cenas gapless
+├── specs/                                     # Especificações SDD numeradas (001 a 012)
+│   ├── README.md                              # Índice canônico de specs e status
+│   └── ...
+└── design-system/                             # Casca visual do Design System (Web Components / CSS / Canvas)
+    ├── index.html                             # Layout em 3 zonas, palco skeuomórfico e hardware shell
+    ├── styles.css                             # Tokens canônicos de materiais (:root), microtexturas e iluminação
+    └── app.js                                 # Simulação visual, osciloscópio CRT e barramento de parâmetros
 ```
 
 ---
 
-## 🚀 Como Executar o Protótipo
+## 🚀 Como Visualizar a Casca do Design System
 
-Basta abrir o arquivo `design-system/index.html` em qualquer navegador web moderno:
+A casca de apresentação do Design System (utilizada pela WebView Desktop do Tauri v2 e plugins VST3/CLAP) pode ser inspecionada localmente:
 
 ```bash
-# Ou servir localmente com qualquer servidor estático HTTP
 cd design-system
 python3 -m http.server 8080
 ```

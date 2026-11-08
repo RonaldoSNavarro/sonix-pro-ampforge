@@ -4,7 +4,7 @@
 - **Versão do Documento:** 1.0.0
 - **Data:** 08/11/2026
 - **Papel:** Análise de Sistemas & Arquitetura de Áudio em Tempo Real
-- **Paradigma:** Ecossistema Híbrido (Motor DSP Nativo C++/Rust **AmpForge™** + Interface Desktop/Web **Sonix Pro** com Simulação de Hardware Físico)
+- **Paradigma:** Ecossistema Desktop Nativo (Motor DSP Nativo em Rust **AmpForge™** + Interface Desktop **Sonix Pro** em **Tauri v2** e Plugins de DAW **VST3 / CLAP** com Simulação de Hardware Físico — *sem alvo Web por enquanto*)
 - **Referências de Mercado:** Fractal Audio Axe-Fx III / FM9, Neural DSP Quad Cortex, Kemper Profiler, AmpliTube 5 / Neural DSP Archetype Series.
 
 ---
@@ -15,10 +15,10 @@ O sistema **SONIX PRO // AMPFORGE** é uma plataforma de processamento de áudio
 
 ### 1.1 Objetivos Estratégicos
 1. **Fidelidade Sonora Absoluta (Motor AmpForge™ White-Box):** Simular fisicamente cada estágio de amplificação (triodos 12AX7, pentodos EL34/6L6, transformadores de saída, sag de fonte de alimentação, tone stacks passivos e curva de impedância reativa do alto-falante).
-2. **Ecossistema Híbrido Portátil:** O núcleo de processamento de sinal (**AmpForge™ DSP Core Engine**) deve ser escrito em C++20 ou Rust sem dependências de SO no loop de áudio, permitindo compilação para:
-   - **Desktop Standalone & Plugins (VST3 / CLAP / AU)**;
-   - **Hardware Embarcado Dedicado** (Linux RT / ARM64 + DSP);
-   - **Navegador Web** via **WebAssembly (WASM SIMD) + AudioWorklet**.
+2. **Arquitetura Desktop Nativa & Plugins de DAW (Sem Web no Escopo Atual):** O núcleo de processamento de sinal (**AmpForge™ DSP Core Engine**) deve ser escrito em **Rust** sem dependências de SO ou alocações no loop de áudio, compilado nativamente para:
+   - **Desktop Standalone (`Tauri v2 + Rust`)** com drivers de áudio nativos de baixa latência (`ASIO`, `WASAPI`, `CoreAudio`, `ALSA`, `JACK`) e MIDI USB nativo;
+   - **Plugins de DAW 64-bit (`VST3` e `CLAP`)** compartilhando o mesmo motor DSP e a mesma interface visual do Design System;
+   - *(Fora de escopo na fase atual: execução em navegador Web / WebAssembly e hardware embarcado dedicado).*
 3. **Experiência Visual Skeuomórfica + Bancada "AmpForge™ Chassi Aberto":** Unir a satisfação tátil de equipamentos reais fotorrealistas (tolex, metal escovado, válvulas incandescentes, knobs 3D) com a bancada **"AmpForge™ Workbench / Chassi Aberto"**, onde o músico ou engenheiro ajusta componentes internos da bancada com auxílio de um osciloscópio/analisador de transferência em tempo real.
 4. **Confiabilidade 100% Offline-First:** Operação totalmente autônoma e determinística no sistema de arquivos local, sem dependência de servidores de nuvem, contas de usuário ou conexão com a internet.
 
@@ -32,13 +32,13 @@ O sistema separa rigorosamente a **Thread de Áudio em Tempo Real (Hard Real-Tim
 
 ```mermaid
 flowchart TB
-    subgraph HW["Camada de Hardware / Host Audio"]
-        ADC["Entrada de Áudio (ASIO / CoreAudio / ALSA / WebAudio)"]
-        MIDI["Controladores MIDI / USB / Pedal Expressão"]
-        DAC["Saída de Áudio Estéreo / Multicanal USB"]
+    subgraph HW["Camada de Hardware / Host Audio & DAW (Desktop Nativo)"]
+        ADC["Entrada de Áudio (ASIO / WASAPI / CoreAudio / ALSA / JACK / Host DAW)"]
+        MIDI["Controladores MIDI USB / Pedal Expressão / Host DAW MIDI"]
+        DAC["Saída de Áudio Estéreo / Multicanal USB / Bus DAW"]
     end
 
-    subgraph RT["DSP Real-Time Engine (C++20 / Rust / WASM SIMD) — Lock-Free"]
+    subgraph RT["DSP Real-Time Engine (Rust Nativo + SIMD) — Lock-Free"]
         IN_BUF["Input RingBuffer & Input Gate"]
         DAG["Executor do Grafo Acíclico Dirigido (Grid 4x12)"]
         subgraph BLOCKS["Processadores White-Box & IR"]
@@ -57,7 +57,7 @@ flowchart TB
         TEL_Q["SPSC Telemetry Queue\n(Buffers de Osciloscópio, RTA, VU, Tuner)"]
     end
 
-    subgraph UI["Camada de Apresentação & Controle (Desktop / Web UI)"]
+    subgraph UI["Camada de Apresentação & Controle (Desktop Tauri v2 / Plugin WebView)"]
         STATE["State Manager (Presets, 8 Scenes, 4 Canais/Bloco, Modifiers)"]
         GRID_UI["Top Signal Grid (4 Linhas × 12 Colunas)"]
         STAGE_UI["Palco Fotorrealista (Front Panel vs Modo Chassi Aberto)"]
@@ -187,7 +187,7 @@ stateDiagram-v2
 | :--- | :--- | :--- |
 | **RNF-001** | **Latência Interna de DSP** | A latência algorítmica interna adicionada pelo motor DSP (incluindo filtros de oversampling de fase mínima e convolução de IR particionada) deve ser **< 1.5 ms** a 48 kHz / 96 kHz. |
 | **RNF-002** | **Tamanhos de Buffer e Taxa de Amostragem** | Suporte nativo a taxas de amostragem de `44.1 kHz`, `48 kHz`, `88.2 kHz` e `96 kHz`, operando de forma estável com buffers de hardware desde `32 samples` (0.66 ms @ 48kHz) até `512 samples`. |
-| **RNF-003** | **Precisão Numérica Interna** | O barramento de áudio do Grid opera em `32-bit IEEE 754 floating-point` com alinhamento SIMD (AVX2 / NEON / WASM SIMD128). Os solucionadores não-lineares de circuito (Newton-Raphson / DK-Method de válvulas e diodos) e acumuladores de filtros IIR abaixo de 100 Hz devem operar internamente em **`64-bit double precision`** para evitar ruído de quantização e instabilidade numérica. |
+| **RNF-003** | **Precisão Numérica Interna** | O barramento de áudio do Grid opera em `32-bit IEEE 754 floating-point` com alinhamento SIMD (AVX2 / NEON / SSE). Os solucionadores não-lineares de circuito (Newton-Raphson / DK-Method de válvulas e diodos) e acumuladores de filtros IIR abaixo de 100 Hz devem operar internamente em **`64-bit double precision`** para evitar ruído de quantização e instabilidade numérica. |
 | **RNF-004** | **Oversampling Anti-Aliasing Dinâmico** | Todo bloco não-linear (`DRIVE`, `AMP Preamp/PowerAmp`, `Fuzz`) deve suportar Oversampling configurável (`1x Eco`, `2x Standard`, `4x High`, `8x Ultra Studio`) usando filtros polifásicos Half-Band com rejeição de banda de passagem > 96 dB para eliminar *aliasing* harmônico. |
 | **RNF-005** | **Garantia Real-Time Safe (Zero Lock / Zero Alloc)** | Na thread de áudio (`processBlock`), é **estritamente proibido**: (1) alocar ou liberar memória dinâmica (`malloc`, `free`, `new`, `delete`, `std::vector::push_back`), (2) usar `mutex`, `semaphore` ou `condition_variable`, (3) realizar chamadas de sistema (I/O de disco ou rede), ou (4) lançar exceções. |
 | **RNF-006** | **Suavização de Parâmetros (Zipper-Noise Free)** | Qualquer alteração em controles contínuos (Ganhos, Frequências de EQ, Mix, Pedal de Expressão) deve passar por um filtro suavizador de 1 polo (`One-Pole Parameter Smoother` com constante de tempo de 5ms a 20ms) em nível de sample para eliminar cliques e *zipper noise*. |
