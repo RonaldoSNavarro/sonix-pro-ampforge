@@ -200,16 +200,17 @@ impl SforgePackage {
         let payload: BundlePayload = serde_json::from_slice(bytes)
             .map_err(|e| PackageIntegrityError::CorruptedArchive(e.to_string()))?;
 
-        // 1. Verify preset.json hash
+        // 1. Verify preset.json hash (mandatory in manifest)
         let actual_preset_hash = Self::hash_bytes(payload.preset_json.as_bytes());
-        if let Some(expected_hash) = payload.manifest.get("preset.json") {
-            if &actual_preset_hash != expected_hash {
-                return Err(PackageIntegrityError::ChecksumMismatch {
-                    file: "preset.json".to_string(),
-                    expected: expected_hash.clone(),
-                    actual: actual_preset_hash,
-                });
-            }
+        let expected_preset_hash = payload.manifest.get("preset.json").ok_or_else(|| {
+            PackageIntegrityError::CorruptedArchive("preset.json ausente no manifesto".to_string())
+        })?;
+        if &actual_preset_hash != expected_preset_hash {
+            return Err(PackageIntegrityError::ChecksumMismatch {
+                file: "preset.json".to_string(),
+                expected: expected_preset_hash.clone(),
+                actual: actual_preset_hash,
+            });
         }
 
         let preset = SonixPresetDoc::from_json_str(&payload.preset_json)
@@ -218,19 +219,23 @@ impl SforgePackage {
         // 2. Verify all files
         let mut irs = HashMap::new();
         for (rel_path, file_bytes) in payload.files {
-            if rel_path.contains("..") || rel_path.starts_with('/') {
+            if rel_path.contains("..") || rel_path.starts_with('/') || rel_path.starts_with('\\') {
                 return Err(PackageIntegrityError::PathTraversalDetected(rel_path));
             }
 
             let actual_hash = Self::hash_bytes(&file_bytes);
-            if let Some(expected_hash) = payload.manifest.get(&rel_path) {
-                if &actual_hash != expected_hash {
-                    return Err(PackageIntegrityError::ChecksumMismatch {
-                        file: rel_path,
-                        expected: expected_hash.clone(),
-                        actual: actual_hash,
-                    });
-                }
+            let expected_hash = payload.manifest.get(&rel_path).ok_or_else(|| {
+                PackageIntegrityError::CorruptedArchive(format!(
+                    "Arquivo '{}' não encontrado no manifesto",
+                    rel_path
+                ))
+            })?;
+            if &actual_hash != expected_hash {
+                return Err(PackageIntegrityError::ChecksumMismatch {
+                    file: rel_path,
+                    expected: expected_hash.clone(),
+                    actual: actual_hash,
+                });
             }
 
             irs.insert(rel_path, file_bytes);

@@ -181,6 +181,13 @@ impl LooperProcessor {
                         // Max buffer reached: auto switch to Play
                         self.state = LooperState::Play;
                         self.play_pos = 0.0;
+                        // Fill remaining output samples with input plus playback
+                        let len = self.loop_length.max(1);
+                        for j in i..input.len() {
+                            let idx = self.play_pos.floor() as usize % len;
+                            output[j] = input[j] + self.base_buffer[idx];
+                            self.play_pos = (self.play_pos + 1.0) % len as f32;
+                        }
                         break;
                     }
                 }

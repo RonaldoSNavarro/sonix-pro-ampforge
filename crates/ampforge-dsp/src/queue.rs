@@ -113,11 +113,18 @@ impl<T: Copy, const CAP: usize> SpscBuffer<T, CAP> {
     #[inline]
     pub fn push_overwrite(&self, item: T) {
         let head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Acquire);
+        let mut tail = self.tail.load(Ordering::Acquire);
 
-        if head.wrapping_sub(tail) >= CAP {
-            // Avança o tail para descartar o mais antigo
-            self.tail.store(tail.wrapping_add(1), Ordering::Release);
+        while head.wrapping_sub(tail) >= CAP {
+            match self.tail.compare_exchange_weak(
+                tail,
+                tail.wrapping_add(1),
+                Ordering::Release,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(actual) => tail = actual,
+            }
         }
 
         let idx = head & (CAP - 1);
@@ -126,6 +133,12 @@ impl<T: Copy, const CAP: usize> SpscBuffer<T, CAP> {
             (*slot).write(item);
         }
         self.head.store(head.wrapping_add(1), Ordering::Release);
+    }
+}
+
+impl<T: Copy, const CAP: usize> Default for SpscBuffer<T, CAP> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

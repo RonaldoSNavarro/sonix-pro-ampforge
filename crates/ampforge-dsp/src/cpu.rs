@@ -34,11 +34,7 @@ impl CpuMonitor {
         let usage = (elapsed_micros as f64 / self.deadline_micros as f64) * 100.0;
         self.current_usage_pct = usage as f32;
 
-        if self.current_usage_pct >= Self::OVERLOAD_THRESHOLD_PCT {
-            self.warning_flag = true;
-        } else {
-            self.warning_flag = false;
-        }
+        self.warning_flag = self.current_usage_pct >= Self::OVERLOAD_THRESHOLD_PCT;
     }
 
     pub fn cpu_usage_pct(&self) -> f32 {

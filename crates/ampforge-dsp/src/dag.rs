@@ -457,7 +457,6 @@ impl DagGraph {
 
         for &(u, v) in connections {
             adj.entry(u).or_default().push(v);
-            in_degree.entry(v).or_insert(0);
             *in_degree.entry(v).or_default() += 1;
             in_degree.entry(u).or_insert(0);
         }

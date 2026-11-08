@@ -67,9 +67,9 @@ impl FootswitchArray {
             }
             FootswitchMode::Scene => {
                 let scene_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-                for i in 0..8 {
+                for (i, letter) in scene_letters.iter().enumerate() {
                     self.units[i].oled_top_line = "SCENE".to_string();
-                    self.units[i].oled_main_text = format!("SCENE {}", scene_letters[i]);
+                    self.units[i].oled_main_text = format!("SCENE {}", letter);
                     self.units[i].color_hex = "#7C4DFF".to_string();
                 }
             }
@@ -89,9 +89,9 @@ impl FootswitchArray {
                 }
                 // FS 5..8 = Scenes A..D
                 let scene_letters = ['A', 'B', 'C', 'D'];
-                for i in 0..4 {
+                for (i, letter) in scene_letters.iter().enumerate() {
                     self.units[i + 4].oled_top_line = "SCENE".to_string();
-                    self.units[i + 4].oled_main_text = format!("SCENE {}", scene_letters[i]);
+                    self.units[i + 4].oled_main_text = format!("SCENE {}", letter);
                     self.units[i + 4].color_hex = "#7C4DFF".to_string();
                 }
             }

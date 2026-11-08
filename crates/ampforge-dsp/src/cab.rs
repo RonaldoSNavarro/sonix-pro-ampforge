@@ -259,7 +259,7 @@ impl VirtualCabProcessor {
             coupled_amp_id: None,
             sample_rate: 48000.0,
             custom_ir: None,
-            delay_line_slot1: vec![0.0; 1024],
+            delay_line_slot1: vec![0.0; 16384],
             delay_pos_slot1: 0,
         }
     }
@@ -340,12 +340,14 @@ impl VirtualCabProcessor {
             let sign = if self.mics[1].phase_invert { -1.0 } else { 1.0 };
             let total_gain = gain * sign;
 
-            // Fractional delay in samples
-            let delay_samples = (self.mics[1].delay_ms * 0.001 * self.sample_rate).max(0.0);
-            let d_int = delay_samples.floor() as usize;
-            let d_frac = delay_samples - d_int as f32;
-
             let line_len = self.delay_line_slot1.len();
+            // Fractional delay in samples clamped within buffer capacity
+            let max_delay = line_len.saturating_sub(2);
+            let delay_samples = (self.mics[1].delay_ms * 0.001 * self.sample_rate)
+                .max(0.0)
+                .min(max_delay as f32);
+            let d_int = (delay_samples.floor() as usize).min(max_delay);
+            let d_frac = delay_samples - d_int as f32;
 
             for i in 0..input.len() {
                 let x = input[i];

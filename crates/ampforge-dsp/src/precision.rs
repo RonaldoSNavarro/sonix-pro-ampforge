@@ -94,3 +94,9 @@ impl MixedPrecisionSolver {
         x.powf(1.5) * 1e-3
     }
 }
+
+impl Default for MixedPrecisionSolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
