@@ -1,7 +1,7 @@
 ---
 spec: 009
 titulo: Hierarquia Setlist/Preset, 8 Scenes gapless, 4 canais por bloco, Modifiers e modos de footswitch
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 009 — Hierarquia Setlist/Preset, 8 Scenes gapless, 4 canais por bloco, Modifiers e modos de footswitch
@@ -69,7 +69,8 @@ Fontes da verdade e evidências no repositório:
 - **RNF-006 (Zipper-Noise Free):** O amortecimento `dampingMs` do Modifier e o crossfade cosseno de `1.5 ms` garantem transições livres de cliques.
 
 ## Testes que cobrem esta spec
-- `tests/contract/009-cenas-gapless-canais-modifiers-footswitches.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9 *(pendente — ciclo TDD red → green)*.
+- `crates/sonix-core/tests/contract_009_scenes_modifiers.rs` → CA-1 a CA-9 (9 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/009-cenas-gapless-canais-modifiers-footswitches.test.js` → Suíte de integração e validação de critérios CA-1 a CA-9.
 
 ## Notas
 - Rastreabilidade SRS: Seção 3.5, **RF-028**, **RF-029**, **RF-030**, **RF-031**, **RF-032**, Seção 5 (`scenes`, `activeChannelByScene`, `bypassByScene`, `modifiers`).
