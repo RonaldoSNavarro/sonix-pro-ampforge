@@ -1,7 +1,7 @@
 ---
 spec: 010
 titulo: Persistência 100% offline-first, validação de schema .sonixpreset e pacotes .sforgepkg
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 010 — Persistência 100% offline-first, validação de schema .sonixpreset e pacotes .sforgepkg
@@ -65,7 +65,8 @@ Fontes da verdade e evidências no repositório:
 - **RNF-009 (Operação 100% Offline e Portabilidade):** Garantida diretamente nos CAs 1 a 5 e 7.
 
 ## Testes que cobrem esta spec
-- `tests/contract/010-persistencia-offline-schema-sonixpreset-pacotes-sforgepkg.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8 *(pendente — ciclo TDD red → green)*.
+- `crates/sonix-core/tests/contract_010_persistence_offline.rs` → CA-1 a CA-8 (8 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/010-persistencia-offline-schema-sonixpreset-pacotes-sforgepkg.test.js` → Suíte de integração e validação de critérios CA-1 a CA-8.
 
 ## Notas
 - Rastreabilidade SRS: Seção 1.1.4, **RF-033**, **RNF-009**, Seção 5 (`JSON Preset Schema`).
