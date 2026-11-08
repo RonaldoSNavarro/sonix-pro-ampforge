@@ -1,0 +1,13 @@
+[package]
+name = "ampforge-dsp"
+version = "1.0.0"
+edition = "2021"
+authors = ["SONIX PRO // AMPFORGE Team"]
+description = "AmpForge™ DSP Core Engine - Lock-Free, Real-Time Audio Engine"
+
+[dependencies]
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[dev-dependencies]

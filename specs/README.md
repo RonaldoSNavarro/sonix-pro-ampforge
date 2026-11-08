@@ -51,7 +51,7 @@ Este arquivo é, além das regras, o **índice** — e o índice é o changelog 
 
 | Spec | Título | Status | Testes |
 |---|---|---|---|
-| [001](001-nucleo-dsp-tempo-real-ipc-lock-free.md) | Isolamento em tempo real do motor DSP, comunicação lock-free e orçamento de CPU | Aprovada | `tests/contract/001-nucleo-dsp-tempo-real-ipc-lock-free.test.js` *(pendente TDD)* |
+| [001](001-nucleo-dsp-tempo-real-ipc-lock-free.md) | Isolamento em tempo real do motor DSP, comunicação lock-free e orçamento de CPU | Implementada | `crates/ampforge-dsp/tests/contract_001_nucleo_dsp.rs` (11 CAs ok) |
 | [002](002-matriz-roteamento-sinal-dag-4x12.md) | Matriz de roteamento de sinal 4x12 (DAG), nós de Split/Mixer e múltiplos I/Os | Aprovada | `tests/contract/002-matriz-roteamento-sinal-dag-4x12.test.js` *(pendente TDD)* |
 | [003](003-modelagem-amplificadores-white-box-painel-frontal.md) | Modelagem White-Box de amplificadores valvulados e painel frontal autêntico | Aprovada | `tests/contract/003-modelagem-amplificadores-white-box-painel-frontal.test.js` *(pendente TDD)* |
 | [004](004-bancada-chassi-aberto-mod-shop-osciloscopio-crt.md) | Bancada Chassi Aberto (Mod Shop) e osciloscópio CRT de transferência em tempo real | Aprovada | `tests/contract/004-bancada-chassi-aberto-mod-shop-osciloscopio-crt.test.js` *(pendente TDD)* |

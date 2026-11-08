@@ -1,7 +1,7 @@
 ---
 spec: 001
 titulo: Isolamento em tempo real do motor DSP, comunicação lock-free e orçamento de CPU
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 001 — Isolamento em tempo real do motor DSP, comunicação lock-free e orçamento de CPU
@@ -70,7 +70,8 @@ Fontes da verdade e evidências no repositório:
 - **RNF-007 (Orçamento de CPU e Limite de 88%):** Garantida no CA-8 e CA-9.
 
 ## Testes que cobrem esta spec
-- `tests/contract/001-nucleo-dsp-tempo-real-ipc-lock-free.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9, CA-10, CA-11 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_001_nucleo_dsp.rs` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9, CA-10, CA-11 *(passando — 11/11 ok)*.
+- `tests/contract/001-nucleo-dsp-tempo-real-ipc-lock-free.test.js` → Suíte de verificação contratual automatizada no monorepo *(passando)*.
 
 ## Notas
 - Rastreabilidade SRS: Seção 2.1, **RNF-001**, **RNF-002**, **RNF-003**, **RNF-004**, **RNF-005**, **RNF-006**, **RNF-007**.

@@ -1,0 +1,1 @@
+//! SONIX PRO // AMPFORGE™ - VST3 & CLAP DAW Plugin Core

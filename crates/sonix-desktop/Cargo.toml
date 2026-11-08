@@ -1,0 +1,8 @@
+[package]
+name = "sonix-desktop"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+ampforge-dsp = { path = "../ampforge-dsp" }
+sonix-core = { path = "../sonix-core" }
