@@ -1,7 +1,7 @@
 ---
 spec: 002
 titulo: Matriz de roteamento de sinal 4x12 (DAG), nós de Split/Mixer e múltiplos I/Os
-status: aprovada
+status: implementada
 atualizado: 2026-11-08
 ---
 # 002 — Matriz de roteamento de sinal 4x12 (DAG), nós de Split/Mixer e múltiplos I/Os
@@ -62,7 +62,8 @@ Fontes da verdade e evidências no repositório:
 - **Hierarquia em Três Zonas (Design System Seção 1.2):** A Zona 1 (`Top Signal Grid`) exibe os 48 slots, cabos luminosos `.active-signal-path` e badges de canal sem sobrepor o Palco Central.
 
 ## Testes que cobrem esta spec
-- `tests/contract/002-matriz-roteamento-sinal-dag-4x12.test.js` → CA-1, CA-2, CA-3, CA-4, CA-5, CA-6, CA-7, CA-8, CA-9, CA-10 *(pendente — ciclo TDD red → green)*.
+- `crates/ampforge-dsp/tests/contract_002_matriz_dag.rs` → CA-1 a CA-10 (10 testes unitários de contrato em Rust, 100% ok).
+- `tests/contract/002-matriz-roteamento-sinal-dag-4x12.test.js` → Suíte de integração e validação de critérios CA-1 a CA-10.
 
 ## Notas
 - Rastreabilidade SRS: Seção 2.2, **RF-001**, **RF-002**, **RF-003**, **RF-004**, **RF-005**.

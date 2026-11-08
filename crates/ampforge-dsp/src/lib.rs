@@ -12,6 +12,7 @@ pub mod oversampling;
 pub mod precision;
 pub mod cpu;
 pub mod engine;
+pub mod dag;
 
 // Re-exports ergonômicos
 pub use config::{AudioConfig, BufferSize, SampleRate};
