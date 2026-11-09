@@ -2,6 +2,11 @@
 
 pub mod audio;
 pub mod midi;
+pub mod server;
 
-pub use audio::{AudioBackendType, AudioDriverError, DesktopAudioDevice, DesktopAudioHost};
+pub use audio::{
+    AudioBackendType, AudioDriverError, DesktopAudioDevice, DesktopAudioHost, RealtimeDspChain,
+    RealtimeDuplexEngine, TelemetryBuffer, TelemetrySnapshot,
+};
 pub use midi::{DesktopMidiHost, MidiMessageType};
+pub use server::LocalAppServer;
