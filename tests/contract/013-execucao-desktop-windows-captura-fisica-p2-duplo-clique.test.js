@@ -9,9 +9,11 @@ import { execSync } from 'node:child_process';
 describe('Spec 013: Execução Desktop Nativa no Windows com Captura Física P2/P3 e Duplo Clique', () => {
   test('Execução de testes de contrato Rust (CA-1 a CA-8)', () => {
     try {
-      const output = execSync('CARGO_TARGET_DIR=/tmp/target cargo test -p sonix-desktop --test contract_013_desktop_realtime_audio -- --nocapture', {
+      const mingwPath = 'C:\\ProgramData\\mingw64\\mingw64\\bin';
+      const pathEnv = process.env.PATH ? `${mingwPath};${process.env.PATH}` : mingwPath;
+      const output = execSync('cargo test -p sonix-desktop --test contract_013_desktop_realtime_audio -- --nocapture', {
         encoding: 'utf-8',
-        env: { ...process.env, PATH: `${process.env.HOME}/.cargo/bin:${process.env.PATH}` }
+        env: { ...process.env, PATH: pathEnv }
       });
       console.log(output);
       assert.match(output, /test_ca_01_desktop_windows_double_click_launcher_artifact_present \.\.\. ok/);

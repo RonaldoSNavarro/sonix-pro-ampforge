@@ -352,13 +352,25 @@ function drawCrtScope() {
     ctx.shadowBlur = 10;
     ctx.lineWidth = 2.4;
     ctx.beginPath();
-    for (let x = 0; x < w; x++) {
-      const t = (x / w) * Math.PI * 4 + scopePhase;
-      const inSig = Math.sin(t) * 0.65 + Math.sin(t * 2) * 0.22;
-      const outSig = nonLinearTubeStage(inSig, drive, asym, sag);
-      const y = h / 2 - outSig * (h * 0.38);
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    if (state.liveWaveform && state.liveWaveform.length > 0 && (state.liveOutputDb > -58 || state.testRiffPlaying)) {
+      const wave = state.liveWaveform;
+      const step = wave.length / w;
+      for (let x = 0; x < w; x++) {
+        const idx = Math.floor(x * step);
+        const s = wave[idx] || 0;
+        const y = h / 2 - s * (h * 0.42);
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+    } else {
+      for (let x = 0; x < w; x++) {
+        const t = (x / w) * Math.PI * 4 + scopePhase;
+        const inSig = Math.sin(t) * 0.65 + Math.sin(t * 2) * 0.22;
+        const outSig = nonLinearTubeStage(inSig, drive, asym, sag);
+        const y = h / 2 - outSig * (h * 0.38);
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
     }
     ctx.stroke();
     ctx.shadowBlur = 0;
@@ -420,13 +432,20 @@ function drawCrtScope() {
 
   scopePhase += state.testRiffPlaying ? 0.14 : 0.035;
 
-  // Update Top VU Meters dynamically
+  // Update Top VU Meters dynamically from real WASAPI signal or simulation
   const vuIn = document.getElementById('vuInFill');
   const vuOut = document.getElementById('vuOutFill');
   if (vuIn && vuOut) {
-    const jitter = state.testRiffPlaying ? Math.sin(scopePhase * 3) * 14 : Math.sin(scopePhase) * 3;
-    vuIn.style.width = `${Math.min(96, Math.max(18, 58 + jitter))}%`;
-    vuOut.style.width = `${Math.min(98, Math.max(22, 48 + state.ampParams.masterVol * 4.2 + jitter))}%`;
+    if (state.liveInputDb !== undefined && state.liveInputDb > -100) {
+      const inPct = Math.min(100, Math.max(0, (state.liveInputDb + 60) * 1.666));
+      const outPct = Math.min(100, Math.max(0, (state.liveOutputDb + 60) * 1.666));
+      vuIn.style.width = `${inPct}%`;
+      vuOut.style.width = `${outPct}%`;
+    } else {
+      const jitter = state.testRiffPlaying ? Math.sin(scopePhase * 3) * 14 : Math.sin(scopePhase) * 3;
+      vuIn.style.width = `${Math.min(96, Math.max(18, 58 + jitter))}%`;
+      vuOut.style.width = `${Math.min(98, Math.max(22, 48 + state.ampParams.masterVol * 4.2 + jitter))}%`;
+    }
   }
 
   requestAnimationFrame(drawCrtScope);
@@ -742,6 +761,7 @@ function initEventListeners() {
     state.testRiffPlaying = !state.testRiffPlaying;
     btnRiff.classList.toggle('active-riff', state.testRiffPlaying);
     btnRiff.textContent = state.testRiffPlaying ? '■ Stop Test Signal' : '▶ Test Signal DSP';
+    toggleTestRiffAudio(state.testRiffPlaying);
   });
 
   // Toggle Tuner Bar
@@ -782,6 +802,127 @@ function initEventListeners() {
 }
 
 // ============================================================================
+// WEB AUDIO GUITAR TEST RIFF SYNTHESIZER
+// ============================================================================
+let riffAudioCtx = null;
+let riffInterval = null;
+
+function toggleTestRiffAudio(start) {
+  if (!start) {
+    if (riffInterval) { clearInterval(riffInterval); riffInterval = null; }
+    if (riffAudioCtx) {
+      try { riffAudioCtx.close(); } catch (_) {}
+      riffAudioCtx = null;
+    }
+    return;
+  }
+
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    riffAudioCtx = new AudioCtx();
+    const ctx = riffAudioCtx;
+
+    // Distorção valvulada simulada via WaveShaper
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = (i * 2) / 256 - 1;
+      curve[i] = (Math.PI + 4) * x / (Math.PI + 4 * Math.abs(x));
+    }
+    shaper.curve = curve;
+
+    const cabFilter = ctx.createBiquadFilter();
+    cabFilter.type = 'lowpass';
+    cabFilter.frequency.setValueAtTime(4200, ctx.currentTime);
+
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(0.28, ctx.currentTime);
+
+    shaper.connect(cabFilter);
+    cabFilter.connect(masterGain);
+    masterGain.connect(ctx.destination);
+
+    // Riff estilo rock clássico (E2, G2, A2, Bb2, B2)
+    const notes = [82.41, 82.41, 98.0, 110.0, 116.54, 110.0, 98.0, 82.41];
+    let step = 0;
+
+    riffInterval = setInterval(() => {
+      if (!riffAudioCtx || riffAudioCtx.state === 'closed') return;
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      const freq = notes[step % notes.length];
+      step++;
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+
+      oscGain.gain.setValueAtTime(0.35, ctx.currentTime);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.32);
+
+      osc.connect(oscGain);
+      oscGain.connect(shaper);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.33);
+    }, 280);
+  } catch (e) {
+    console.warn('Web Audio sintetizador não suportado:', e);
+  }
+}
+
+// ============================================================================
+// REAL-TIME TELEMETRY & STROBE TUNER
+// ============================================================================
+function updateStrobeTunerFromSignal() {
+  const tunerEl = document.getElementById('tunerNoteText');
+  const needle = document.querySelector('.strobe-center-needle');
+  if (!tunerEl || !needle || !state.tunerVisible) return;
+
+  if (state.liveWaveform && state.liveWaveform.length > 300 && state.liveInputDb > -52) {
+    const wave = state.liveWaveform;
+    const sampleRate = 48000;
+    let bestR = 0;
+    let bestLag = 0;
+    for (let lag = 100; lag < 600; lag += 2) {
+      let r = 0;
+      for (let i = 0; i < 200; i += 2) {
+        r += wave[i] * wave[i + lag];
+      }
+      if (r > bestR) {
+        bestR = r;
+        bestLag = lag;
+      }
+    }
+    if (bestLag > 0 && bestR > 0.05) {
+      const freq = sampleRate / bestLag;
+      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const midiNum = 69 + 12 * Math.log2(freq / 440);
+      const roundedMidi = Math.round(midiNum);
+      const centDiff = ((midiNum - roundedMidi) * 100).toFixed(1);
+      const noteName = noteNames[(roundedMidi % 12 + 12) % 12];
+      const octave = Math.floor(roundedMidi / 12) - 1;
+      tunerEl.textContent = `${noteName}${octave} (${centDiff > 0 ? '+' : ''}${centDiff}¢)`;
+      needle.style.transform = `translateX(${Math.min(48, Math.max(-48, centDiff * 0.5))}px)`;
+    }
+  }
+}
+
+async function pollBackendTelemetry() {
+  try {
+    const res = await fetch('/api/telemetry');
+    if (res.ok) {
+      const data = await res.json();
+      state.liveInputDb = data.input_peak_db;
+      state.liveOutputDb = data.output_peak_db;
+      if (data.waveform && data.waveform.length > 0) {
+        state.liveWaveform = data.waveform;
+      }
+      updateStrobeTunerFromSignal();
+    }
+  } catch (_) {}
+}
+
+// ============================================================================
 // INITIALIZE APPLICATION
 // ============================================================================
 window.addEventListener('DOMContentLoaded', () => {
@@ -792,5 +933,6 @@ window.addEventListener('DOMContentLoaded', () => {
   updateCpuBudget();
   initDraggableCabMics();
   initEventListeners();
+  setInterval(pollBackendTelemetry, 45);
   requestAnimationFrame(drawCrtScope);
 });

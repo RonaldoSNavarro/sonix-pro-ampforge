@@ -4,9 +4,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use tiny_http::{Header, Response, Server, StatusCode};
+use crate::audio::{RealtimeDspChain, TelemetryBuffer};
 
 pub struct LocalAppServer {
     host: String,
@@ -21,6 +22,14 @@ impl LocalAppServer {
     }
 
     pub fn bind_port(port: u16) -> Result<Self, String> {
+        Self::bind_port_with_telemetry(port, Arc::new(TelemetryBuffer::new(512)), None)
+    }
+
+    pub fn bind_port_with_telemetry(
+        port: u16,
+        telemetry: Arc<TelemetryBuffer>,
+        dsp_chain: Option<Arc<Mutex<RealtimeDspChain>>>,
+    ) -> Result<Self, String> {
         let addr = format!("127.0.0.1:{}", port);
         let server = Server::http(&addr).map_err(|e| format!("Falha ao ligar servidor em {}: {}", addr, e))?;
         let actual_port = server.server_addr().to_ip().map(|ip| ip.port()).unwrap_or(port);
@@ -30,6 +39,7 @@ impl LocalAppServer {
 
         // Procura pelos assets do frontend (design-system/)
         let static_dir = find_design_system_dir();
+        let dsp_chain_clone = dsp_chain;
 
         let server_thread = thread::spawn(move || {
             while running_clone.load(Ordering::Relaxed) {
@@ -66,12 +76,37 @@ impl LocalAppServer {
                                 (200, "application/json", json.as_bytes().to_vec())
                             }
                             "/api/telemetry" => {
-                                let json = r#"{"input_peak_db":-45.0,"output_peak_db":-12.0,"cpu_usage_pct":1.4,"active_scene":0}"#;
-                                (200, "application/json", json.as_bytes().to_vec())
+                                let snap = telemetry.snapshot();
+                                let json = serde_json::to_string(&snap).unwrap_or_else(|_| "{}".to_string());
+                                (200, "application/json", json.into_bytes())
                             }
                             "/api/devices" => {
                                 let json = r#"[{"id":"p2_mic","name":"Realtek Microphone (P2/P3 3.5mm)","input":true},{"id":"p2_out","name":"Realtek Audio Output (P2/P3)","input":false}]"#;
                                 (200, "application/json", json.as_bytes().to_vec())
+                            }
+                            "/api/params" => {
+                                if let Some(ref dsp_ref) = dsp_chain_clone {
+                                    if let Some(query) = url.split('?').nth(1) {
+                                        if let Ok(mut dsp) = dsp_ref.lock() {
+                                            for param in query.split('&') {
+                                                let mut parts = param.split('=');
+                                                if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                                                    if let Ok(val) = v.parse::<f32>() {
+                                                        match k {
+                                                            "gain" => dsp.set_amp_gain(val),
+                                                            "master" => dsp.set_amp_master(val),
+                                                            "gate" => dsp.set_gate_threshold_db(val),
+                                                            "boost" => dsp.set_input_boost(val),
+                                                            "cab" => dsp.set_cab_enabled(val > 0.5),
+                                                            _ => {}
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                (200, "application/json", b"{\"status\":\"ok\"}".to_vec())
                             }
                             _ => (404, "text/plain", b"Not Found".to_vec()),
                         };
