@@ -45,38 +45,44 @@ Evidência:
 1. **Despachante no frontend.** Todo controle mapeado na tabela do §2 chama
    `syncParamsToBackend(patch, immediate)`. Arrastos contínuos (knobs, expressão) são coalescidos
    em janela de 25 ms (último valor vence); cliques discretos (FS1, cena, BRIGHT, bypass por duplo
-   clique) são enviados imediatamente. Uma cena envia, em uma requisição, `gain`, `overdrive` e
-   `drive_enabled` da cena.
-2. **Contrato do endpoint — fonte única de chaves, tipos e faixas.** `POST /api/params`,
-   `Content-Type: application/json`, corpo objeto JSON `{"<chave>": <valor>, ...}`. Esta tabela é
-   a **única** definição de parâmetros do projeto; a Spec 015 a protege e não a redefine.
+   clique) são enviados imediatamente. Uma cena envia, em uma requisição, `amp_1.gain`, `amp_1.overdrive` e
+   `drive.enabled` da cena.
+2. **Contrato do endpoint — registro de chaves, tipos e faixas.** `POST /api/params`,
+   `Content-Type: application/json`, corpo objeto JSON `{"<chave>": <valor>, ...}`. Esta tabela e as
+   tabelas das specs posteriores (mesmo formato) formam o registro de parâmetros do projeto; a
+   Spec 015 o protege e não o redefine.
 
    | Chave | Tipo | Unidade | Faixa | Valor no boot | Suavização | Origem na UI |
    |---|---|---|---|---|---|---|
-   | `gain` | número | posição 0–10 | 0–10 | 8,0 (`main.rs:43`) | `OnePoleSmoother` | knob `inputGain`, expressão, cena |
-   | `overdrive` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob `overdrive`, cena |
-   | `bass` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
-   | `middle` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
-   | `treble` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
-   | `presence` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
-   | `depth` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
-   | `master` | número | posição 0–10 | 0–10 | 7,0 (`main.rs:44`) | `OnePoleSmoother` | knob `masterVol` |
-   | `input_boost` | número | ganho linear (×) | 0,1–8,0 | 2,5 (`main.rs:42`) | `OnePoleSmoother` | sem controle na UI (calibração) |
-   | `gate_threshold_db` | número | dBFS | −90–0 | −65 (`main.rs:41`) | `OnePoleSmoother` | sem controle na UI (calibração) |
-   | `bright` | booleano | — | — | `false` | crossfade | BRIGHT |
-   | `drive_enabled` | booleano | — | — | `false` | crossfade | FS1, duplo clique em `blk_drive`, cena (`!driveBypass`) |
-   | `gate_enabled` | booleano | — | — | `true` | crossfade | duplo clique em `blk_gate` |
-   | `amp_enabled` | booleano | — | — | `true` | crossfade | duplo clique em `blk_amp_1` |
-   | `cab_enabled` | booleano | — | — | `true` (`main.rs:45`) | crossfade | duplo clique em `blk_cab_1` |
+   | `amp_1.gain` | número | posição 0–10 | 0–10 | 8,0 (`main.rs:43`) | `OnePoleSmoother` | knob `inputGain`, expressão, cena |
+   | `amp_1.overdrive` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob `overdrive`, cena |
+   | `amp_1.bass` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
+   | `amp_1.middle` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
+   | `amp_1.treble` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
+   | `amp_1.presence` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
+   | `amp_1.depth` | número | posição 0–10 | 0–10 | 5,0 | `OnePoleSmoother` | knob |
+   | `amp_1.master` | número | posição 0–10 | 0–10 | 7,0 (`main.rs:44`) | `OnePoleSmoother` | knob `masterVol` |
+   | `input.boost` | número | ganho linear (×) | 0,1–8,0 | 2,5 (`main.rs:42`) | `OnePoleSmoother` | sem controle na UI (calibração) |
+   | `gate.threshold_db` | número | dBFS | −90–0 | −65 (`main.rs:41`) | `OnePoleSmoother` | sem controle na UI (calibração) |
+   | `amp_1.bright` | booleano | — | — | `false` | crossfade | BRIGHT |
+   | `drive.enabled` | booleano | — | — | `false` | crossfade | FS1, duplo clique em `blk_drive`, cena (`!driveBypass`) |
+   | `gate.enabled` | booleano | — | — | `true` | crossfade | duplo clique em `blk_gate` |
+   | `amp_1.enabled` | booleano | — | — | `true` | crossfade | duplo clique em `blk_amp_1` |
+   | `cab_1.enabled` | booleano | — | — | `true` (`main.rs:45`) | crossfade | duplo clique em `blk_cab_1` |
 
    "Posição 0–10" é a posição do knob, não uma grandeza física: a curva que a liga ao circuito
    (taper do potenciômetro, ganho em dB, frequência) é definida no bloco DSP (Spec 016) e nunca
    convertida linearmente em dB aqui. "Valor no boot" é o estado do motor ao iniciar
    (`AmpFrontPanel::default`, `amp.rs:48-62`, sobrescrito por `main.rs:41-45`); a UI o lê do
-   motor (§7) em vez de impor os próprios defaults (`app.js:18-28`). `drive_enabled` nasce
+   motor (§7) em vez de impor os próprios defaults (`app.js:18-28`). `drive.enabled` nasce
    `false` para que a entrada do pedal na cadeia (Spec 016) não mude o som do boot.
 
-   Os valores são só número JSON ou booleano JSON — não há chave de tipo string.
+   Chaves usam o formato `<bloco>.<parâmetro>`, em que `<bloco>` é o id do bloco no grid sem o
+   prefixo `blk_` (`app.js:43-57`: `gate`, `drive`, `amp_1`, `cab_1`, …) e `input` é a entrada
+   física. As chaves desta spec são número JSON ou booleano JSON. Specs posteriores acrescentam
+   chaves com tabela no mesmo formato e podem usar o tipo **enum** (string de um conjunto fechado,
+   ex.: modelo de amp); valem para elas as mesmas regras do §3 (string fora do conjunto → `400`).
+   Nenhuma spec redefine uma chave existente.
 3. **Validação atômica.** O corpo inteiro é validado antes de aplicar qualquer chave: se uma chave
    conhecida tem tipo errado, valor fora da faixa ou o corpo não é um objeto JSON válido, a
    resposta é `400 {"error":"..."}` e **nenhum** parâmetro muda. Chaves desconhecidas — inclusive
@@ -102,9 +108,9 @@ Evidência:
   ao exibido no readout (teste JS com `fetch` simulado e relógio falso).
 - **CA-2:** Clicar em FS1, em um botão de cena, no BRIGHT ou dar duplo clique em `blk_gate`,
   `blk_drive`, `blk_amp_1` ou `blk_cab_1` dispara a requisição **sem espera de debounce**
-  (≤ 1 tick), com a chave da tabela do §2 (`drive_enabled` / `gain`+`overdrive`+`drive_enabled` /
-  `bright` / `gate_enabled`, `drive_enabled`, `amp_enabled`, `cab_enabled`).
-- **CA-3:** Mover o slider de expressão (`#expPedalSlider`) envia `gain` com o valor mapeado em
+  (≤ 1 tick), com a chave da tabela do §2 (`drive.enabled` / `amp_1.gain`+`amp_1.overdrive`+`drive.enabled` /
+  `amp_1.bright` / `gate.enabled`, `drive.enabled`, `amp_1.enabled`, `cab_1.enabled`).
+- **CA-3:** Mover o slider de expressão (`#expPedalSlider`) envia `amp_1.gain` com o valor mapeado em
   `3.0..9.5`, coalescido como no CA-1.
 - **CA-4:** `POST /api/params` aplica **cada** chave da tabela do §2: após o POST,
   `GET /api/state` devolve o valor enviado (teste de contrato Rust sobre `LocalAppServer` +
@@ -116,10 +122,10 @@ Evidência:
   prova de que o fallback `copy_from_slice(&mono_in)` de `audio.rs:252` deixou de existir.
 - **CA-7:** Com a thread do servidor segurando o estado compartilhado por 200 ms (contenção
   simulada), a thread de áudio continua produzindo saída processada em todos os blocos do intervalo.
-- **CA-8:** Um degrau de `gain` de `2.0` para `9.0` converge pelo suavizador: o ganho efetivo
+- **CA-8:** Um degrau de `amp_1.gain` de `2.0` para `9.0` converge pelo suavizador: o ganho efetivo
   atinge ≥ 63 % da variação em ≤ 20 ms e < 63 % em < 5 ms (mesma régua da Spec 001 CA-6).
 - **CA-9:** Bypass sem estalo — com seno de 1 kHz e pico 0,3 na entrada, alternar
-  `cab_enabled`, `amp_enabled`, `drive_enabled`, `gate_enabled` e `bright` (um por vez) resulta
+  `cab_1.enabled`, `amp_1.enabled`, `drive.enabled`, `gate.enabled` e `amp_1.bright` (um por vez) resulta
   em `max |y[n] − y[n−1]|` durante a transição ≤ 1,1 × o maior valor de `max |y[n] − y[n−1]|`
   medido em regime nos dois estados; a transição dura 10 ms ± 1 bloco.
 - **CA-10:** `GET /api/state` devolve JSON com todas as chaves da tabela do §2 e, no boot, os
@@ -130,11 +136,11 @@ Evidência:
   visuais, mostra `#engineLinkBadge` = `OFFLINE` e, ao voltar, reenvia o estado completo em uma
   única requisição.
 - **CA-12:** Caso de erro — cada corpo a seguir retorna `400` e **nenhum** parâmetro muda
-  (comparação de `GET /api/state` antes/depois): `{"input_boost":1e30}`, `{"input_boost":-1}`,
-  `{"input_boost":0}`, `{"input_boost":9}`, `{"gate_threshold_db":-91}`,
-  `{"gate_threshold_db":1}`, `{"gain":-0.1}`, `{"gain":10.1}`, `{"gain":"9"}`, `{"gain":null}`,
-  `{"gain":[9]}`, `{"bright":1}`, `{"gain":9,"master":11}` (atômico: `gain` também não muda),
-  `[1,2]`, JSON truncado e `{"input_boost":NaN}` (não é JSON válido).
+  (comparação de `GET /api/state` antes/depois): `{"input.boost":1e30}`, `{"input.boost":-1}`,
+  `{"input.boost":0}`, `{"input.boost":9}`, `{"gate.threshold_db":-91}`,
+  `{"gate.threshold_db":1}`, `{"amp_1.gain":-0.1}`, `{"amp_1.gain":10.1}`, `{"amp_1.gain":"9"}`, `{"amp_1.gain":null}`,
+  `{"amp_1.gain":[9]}`, `{"amp_1.bright":1}`, `{"amp_1.gain":9,"amp_1.master":11}` (atômico: `amp_1.gain` também não muda),
+  `[1,2]`, JSON truncado e `{"input.boost":NaN}` (não é JSON válido).
 - **CA-13:** Caso de erro — `GET /api/params?gain=9` retorna `405`, e `POST` com
   `Content-Type: text/plain` retorna `415`; em ambos o estado não muda.
 - **CA-14:** Não-regressão — sem interação do usuário nenhuma requisição `POST /api/params` é
@@ -147,12 +153,14 @@ Evidência:
 - Proteção contra clientes hostis (Host/Origin/token, CORS, limite de corpo, concorrência) e
   defesa em profundidade contra `NaN` dentro do DSP → **Spec 015**.
 - Canais de bloco A–D (Spec 009): a UI só guarda a letra em `block.ch`, sem parâmetros por canal;
-  ligar canal de bloco ao motor exige estado por canal na UI → spec futura, sem número reservado.
-- FS2–FS4 (mod, delay, reverb) e `dlyBypass` das cenas: os blocos não estão na cadeia ao vivo.
+  ligar canal de bloco ao motor exige estado por canal na UI → **Spec 025**.
+- FS2–FS4 (mod, delay, reverb) e `dlyBypass` das cenas: os blocos não estão na cadeia ao vivo →
+  **Spec 024**.
 - Voicing `Norm`/`HighLead` do amp (`AmpChannelVoicing`), parâmetros do pedal de drive
-  (`gain/tone/level`), `outputLevel` e oversampling: sem controle na UI ligado a eles hoje.
-- Correções do host de áudio (taxa, formatos, reconexão de dispositivo) e persistência de presets
-  da UI → specs futuras, sem número reservado.
+  (`gain/tone/level`), `outputLevel` e oversampling: sem controle na UI ligado a eles hoje
+  (pedal → **Spec 023**; oversampling → **Spec 020**).
+- Correções do host de áudio (taxa, formatos, reconexão de dispositivo) → **Spec 018**;
+  persistência de presets da UI → **Spec 025**.
 
 ## Invariantes tocadas
 - Áudio em tempo real (Spec 001/013): nenhuma alocação nem trava na thread de áudio — a entrega
@@ -166,15 +174,20 @@ CA-12…CA-14) e `tests/contract/014-ponte-de-controle-ui-dsp-tempo-real.test.js
 CA-10, CA-11, CA-14).
 
 ## Notas
-- Ordem de implementação: **014 → 015 → 016**. A 014 define e valida o contrato; a 015 o protege.
+- Ordem de implementação: **018 → 014 → 015 → 016** (ordem completa no `specs/README.md`). A 014
+  define e valida o contrato; a 015 o protege.
   Entre o merge da 014 e o da 015 o servidor ainda envia `Access-Control-Allow-Origin: *`; exigir
   `application/json` (CA-13) força preflight em `POST` de outra origem, mas a 015 deve entrar na
   mesma release.
 - Esta versão substitui a anterior em três pontos, para eliminar contradições com a Spec 015:
   (a) a chave `channel` (`norm`/`lead`) foi removida — os botões A–D são canais de bloco com 4
   valores, não o voicing do amp, e nenhum controle da UI produz `norm`/`lead`; (b) os nomes
-  `input_boost` e `gate_threshold_db` substituem `boost` e `gate`; (c) validação de tipo/faixa e
+  `input.boost` e `gate.threshold_db` substituem `boost` e `gate`; (c) validação de tipo/faixa e
   `GET → 405` passaram para cá; `output_db`, `drive_gain/tone/level` e `delay_enabled` saíram da
   tabela por não terem controle na UI nem bloco ao vivo.
+- Revisão de 2026-11-09 (antes de qualquer implementação): as chaves passaram ao formato
+  `<bloco>.<parâmetro>` e o contrato admite enums, porque as Specs 020–025 acrescentam parâmetros
+  de vários blocos (amp 2, cab 2, efeitos) e nomes planos colidiriam (skill do projeto §10.5:
+  identificador estável).
 - Origem: code review de 2026-11-09 (achados F-01 e F-04), registrado no Cortex
   (`simulador-de-efeitos`).

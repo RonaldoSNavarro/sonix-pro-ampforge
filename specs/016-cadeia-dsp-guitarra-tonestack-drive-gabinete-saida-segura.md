@@ -27,12 +27,12 @@ Leitura técnica: (a) `inputGain` multiplica por no máximo **1,0** (`amp.rs:243
 ## Comportamento esperado
 1. **Tone stack passivo de 3 bandas** aplicado no sinal, com topologia por modelo (documentada na spec/notas com **revisão do esquema e fonte**; implementação por função de transferência discretizada — ref.: Yeh & Smith, *Discretization of the '59 Fender Bassman Tone Stack*, DAFx-06). Valores de componentes do modelo inicial (BRIT JCM800 2203) marcados "a confirmar com esquema oficial" até haver fonte.
 2. **Estrutura de ganho**: `inputGain`/`overdrive` controlam o ganho do pré (de ~1× a no mínimo +30 dB entre 0 e 10 — alvo de calibração, ajustável por medição); `masterVolume` controla nível pós-estágio de potência e quantidade de saturação de potência; `outputLevel` é ganho linear final.
-3. **Pedal de drive na cadeia** (antes do amp), com bypass pelo FS1 (`blk_drive`, chave `drive_enabled` da Spec 014 §2): `gain`, `tone`, `level` e `model`/diodo realmente alteram o sinal (curva de clipping e pré/pós-EQ por modelo; hipóteses documentadas).
+3. **Pedal de drive na cadeia** (antes do amp), com bypass pelo FS1 (`blk_drive`, chave `drive.enabled` da Spec 014 §2): `gain`, `tone`, `level` e `model`/diodo realmente alteram o sinal (curva de clipping e pré/pós-EQ por modelo; hipóteses documentadas).
 4. **Presence e Depth** corretos: presence = realce em alta (> 2 kHz) na malha de realimentação; depth = realce/ressonância em 65–130 Hz; coeficientes calculados a partir da taxa de amostragem efetiva.
 5. **Seleção de modelo audível**: cada `AmpModelId` aplica estrutura de ganho + tone stack + voicing próprios; o painel (logo, tema) já muda no frontend.
 6. **Gabinete funcional**: por padrão **um** slot de mic ativo; o slot 2 só soma quando habilitado. Usa resposta de alto-falante parametrizada por `CabAcousticConditioning` (passa-altas e passa-baixas de 12 dB/oit, ressonância do `ImpedanceCurve`). Ganho unitário (±0,5 dB) com defaults. Convolução de IR carregada fica fora desta spec.
 7. **Saída segura**: limitador/saturador final, no fim do `RealtimeDspChain` (depois do cab, fora do `WhiteBoxAmpProcessor`), garante |y| ≤ 1,0 (0 dBFS) em qualquer combinação de controles; o clamp ±2,0 é removido.
-8. **Aliasing controlado**: só os estágios não lineares (pré, potência, clipping do pedal) rodam com oversampling, usando o `HalfBandOversampler` existente (`oversampling.rs`) com buffers pré-alocados. O fator é escolhido por medição: 2× e 4× são medidos pelo método do CA-11 (aliasing, CPU por bloco e latência somada) e o resultado, com o fator escolhido, é registrado nas Notas antes do merge. O seletor `#oversamplingSelect` da UI continua sem efeito nesta spec.
+8. **Aliasing controlado**: só os estágios não lineares (pré, potência, clipping do pedal) rodam com oversampling, usando o `HalfBandOversampler` existente (`oversampling.rs`) com buffers pré-alocados. O fator é escolhido por medição: 2× e 4× são medidos pelo método do CA-11 (aliasing, CPU por bloco e latência somada) e o resultado, com o fator escolhido, é registrado nas Notas antes do merge. O seletor `#oversamplingSelect` da UI continua sem efeito nesta spec (a Spec 020 o liga).
 
 ## Critérios de aceite
 - **CA-1:** Com o mesmo sinal de entrada, `bass`=0 vs `bass`=10 diferem em ≥ 6 dB de energia na banda 80–200 Hz, e `treble`=0 vs `treble`=10 diferem em ≥ 6 dB na banda 2–5 kHz (análise por DFT no teste).
@@ -51,8 +51,8 @@ Leitura técnica: (a) `inputGain` multiplica por no máximo **1,0** (`amp.rs:243
 
 ## Fora de escopo
 - Captura/medição de amplificadores reais, IRs comerciais ou modelagem circuit-level completa (MNA/WDF) dos estágios — hoje o amp é comportamental; a evolução para circuit-level é spec própria.
-- Robustez do loader de IR (cabeçalho malformado) → **Spec 017**. Convolução da IR carregada no sinal ao vivo → spec futura, sem número reservado.
-- Reverb/delay/modulação/pitch na cadeia ao vivo → futuras specs de integração (hoje só estão como blocos isolados).
+- Robustez do loader de IR (cabeçalho malformado) → **Spec 017**. Convolução da IR carregada no sinal ao vivo → **Spec 022**.
+- Compressor, EQ, chorus, delay, reverb e caminho paralelo na cadeia ao vivo → **Spec 024** (pitch: sem bloco na UI).
 - Ligação UI→motor dos controles → **Spec 014**.
 
 ## Invariantes tocadas

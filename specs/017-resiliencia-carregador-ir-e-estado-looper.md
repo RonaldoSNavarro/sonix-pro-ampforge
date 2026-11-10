@@ -103,8 +103,8 @@ WAV channels=1, rate 1 Hz     → Ok, 16 amostras viram 768.000          (sem li
 ## Fora de escopo
 - Pilha de undo com várias camadas: o contrato da Spec 008 CA-5 é undo/redo **da última camada**.
 - Convolução da IR carregada no sinal ao vivo (hoje `custom_ir` não é lido em `process`, Spec 016
-  Contexto) → spec futura, sem número reservado.
-- Demais validações e tratamento de IR que a skill do projeto (`sonix-pro-ampforge-expert` §9.2) pede e que hoje não existem — limite de duração, WAV com chunk `fmt ` estendido (`WAVE_FORMAT_EXTENSIBLE`), uso de todos os canais (hoje só o canal 0 é lido, `cab.rs:182-198`, sem aviso) e reamostragem com filtro de qualidade (hoje interpolação linear, `cab.rs:214-224`) — ficam para a spec de convolução de IR, que é quando a IR passa a soar. Esta spec trata só do que derruba o processo ou aloca sem limite.
+  Contexto) → **Spec 022**.
+- Demais validações e tratamento de IR que a skill do projeto (`sonix-pro-ampforge-expert` §9.2) pede e que hoje não existem — limite de duração, WAV com chunk `fmt ` estendido (`WAVE_FORMAT_EXTENSIBLE`), uso de todos os canais (hoje só o canal 0 é lido, `cab.rs:182-198`, sem aviso) e reamostragem com filtro de qualidade (hoje interpolação linear, `cab.rs:214-224`) — ficam para a **Spec 022** (convolução de IR), que é quando a IR passa a soar. Esta spec trata só do que derruba o processo ou aloca sem limite.
 - Armazenamento em disco ou exportação de áudio do looper.
 
 ## Invariantes tocadas
