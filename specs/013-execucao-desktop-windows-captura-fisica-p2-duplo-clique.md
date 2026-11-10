@@ -50,3 +50,8 @@ As especificações 001 a 012 consolidaram o motor DSP de 64-bit, a matriz de ro
 
 ## Notas
 - A spec é acompanhada de teste de contrato automatizado estrito (TDD red → green) e da geração do artefato executável para Windows.
+- **Calibração de Captura P2/P3 Realizada**: Em testes com captador passivo de guitarra conectado na entrada 3.5mm do PC (nível RMS medido de ~-48.9 dB), o motor foi aprimorado com:
+  1. Filtro *DC Blocker* de 1 polo (`audio.rs:496-505`, `r = 0,995`) para anular a tensão de polarização contínua (bias DC) do conector de microfone P2 do PC. Corte ≈ (1 − r)·fs / 2π ≈ **38 Hz a 48 kHz** (≈ 35 Hz a 44,1 kHz; −1,3 dB em 65 Hz) — não ~10 Hz como registrado antes (correção de 2026-11-09; o comentário em `audio.rs:496` ainda diz ~10 Hz). Levar o corte a ~10 Hz (`r` ≈ 0,9987 a 48 kHz, derivado de `sample_rate`) é mudança de comportamento e precisa de spec própria.
+  2. Ajuste do threshold do *Noise Gate* para -65 dB com release de 30 ms para preservar o decaimento (*sustain*) das notas.
+  3. Dreno automático de acúmulo no *Ring Buffer* de 65.536 amostras quando o jitter ultrapassa 50 ms (> 2.400 amostras), mantendo latência estritamente inferior a 20 ms.
+- **Ponto de Atenção Identificado (Pós-Áudio Operacional)**: O áudio da guitarra está fluindo e distorcendo em tempo real pelo motor DSP nativo. Porém, os controles da interface (`design-system/app.js` - knobs rotatórios, chaves e footswitches) estavam alterando apenas o estado visual do DOM sem despachar as alterações para o endpoint `/api/params` do servidor desktop. O mapeamento completo dos controles (tonestack bass/mid/treble, overdrive, gabinete, bypass de blocos) está catalogado para implementação na próxima sessão.
