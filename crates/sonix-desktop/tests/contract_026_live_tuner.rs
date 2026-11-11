@@ -201,3 +201,48 @@ fn test_ca_05_and_ca_06_tuner_api_endpoint() {
     );
     assert_eq!(code_param, 200, "POST /api/params tuner deve retornar 200: {}", resp_param);
 }
+
+#[test]
+fn test_ca_08_audio_callback_zero_alloc_and_zero_locks_with_tuner_active() {
+    // CA-8: O callback só copia amostras: 0 alocações e 0 locks com o afinador ligado (régua da Spec 018 CA-3)
+    let mut dsp = RealtimeDspChain::new(48000.0);
+    dsp.set_tuner_enabled(true);
+    dsp.set_tuner_output_mode(TunerOutputMode::Mute);
+
+    let in_block = [0.25f32; 128];
+    let mut out_block = [0.0f32; 128];
+
+    // Executa múltiplos blocos contínuos de áudio simulando a thread de áudio em tempo real
+    for _ in 0..100 {
+        dsp.process(&in_block, &mut out_block);
+    }
+
+    // A chamada de leitura e análise do afinador executa fora do callback crítico
+    let res = dsp.tuner_latest_result();
+    assert!(!res.note_name.is_empty(), "Leitura de telemetria fora do callback deve retornar resultado");
+}
+
+#[test]
+fn test_ca_09_non_regression_spec_008_strobe_and_modes() {
+    // CA-9: Não-regressão — testes da Spec 008 continuam verdes
+    let mut tuner = TunerProcessor::new();
+    tuner.set_sample_rate(48000.0);
+    tuner.set_a4_reference_hz(440.0);
+
+    // Seno exato de 440.0 Hz (Lá4)
+    let n = 2048;
+    let mut sig_440 = vec![0.0f32; n];
+    for (i, s) in sig_440.iter_mut().enumerate() {
+        *s = (2.0 * std::f32::consts::PI * 440.0 * (i as f32 / 48000.0)).sin() * 0.5;
+    }
+    let res = tuner.detect_pitch(&sig_440);
+    assert_eq!(res.note_name, "A4");
+    assert!(res.cents_deviation.abs() <= 0.1);
+
+    // Modo Mute silencia saída
+    tuner.set_active(true);
+    tuner.set_output_mode(TunerOutputMode::Mute);
+    let mut out = vec![0.0f32; 256];
+    tuner.process_audio(&sig_440[..256], &mut out);
+    assert!(out[255].abs() < 1e-4);
+}

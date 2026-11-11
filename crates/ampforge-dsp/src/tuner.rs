@@ -41,6 +41,8 @@ pub struct TunerProcessor {
     a4_ref: f32,
     sample_rate: f32,
     mute_gain: f32,
+    d_scratch: Vec<f32>,
+    d_prime_scratch: Vec<f32>,
 }
 
 impl Default for TunerProcessor {
@@ -59,6 +61,8 @@ impl TunerProcessor {
             a4_ref: 440.0,
             sample_rate: 48000.0,
             mute_gain: 1.0,
+            d_scratch: vec![0.0; 2048],
+            d_prime_scratch: vec![0.0; 2048],
         }
     }
 
@@ -116,7 +120,7 @@ impl TunerProcessor {
         self.a4_ref = hz.clamp(430.0, 450.0);
     }
 
-    pub fn detect_pitch(&self, signal: &[f32]) -> TunerPitchResult {
+    pub fn detect_pitch(&mut self, signal: &[f32]) -> TunerPitchResult {
         if signal.len() < 256 {
             return TunerPitchResult {
                 note_name: "---".to_string(),
@@ -148,7 +152,13 @@ impl TunerProcessor {
             };
         }
 
-        let mut d = vec![0.0f32; max_lag];
+        if self.d_scratch.len() < max_lag {
+            self.d_scratch.resize(max_lag, 0.0);
+        }
+        if self.d_prime_scratch.len() < max_lag {
+            self.d_prime_scratch.resize(max_lag, 0.0);
+        }
+
         for tau in 1..max_lag {
             let mut sum = 0.0f32;
             let len = n - max_lag;
@@ -156,17 +166,16 @@ impl TunerProcessor {
                 let diff = signal[j] - signal[j + tau];
                 sum += diff * diff;
             }
-            d[tau] = sum;
+            self.d_scratch[tau] = sum;
         }
 
         // 2. Cumulative mean normalized difference function (CMND)
-        let mut d_prime = vec![0.0f32; max_lag];
-        d_prime[0] = 1.0;
+        self.d_prime_scratch[0] = 1.0;
         let mut running_sum = 0.0f32;
         for tau in 1..max_lag {
-            running_sum += d[tau];
-            d_prime[tau] = if running_sum > 1e-9 {
-                d[tau] * (tau as f32) / running_sum
+            running_sum += self.d_scratch[tau];
+            self.d_prime_scratch[tau] = if running_sum > 1e-9 {
+                self.d_scratch[tau] * (tau as f32) / running_sum
             } else {
                 1.0
             };
@@ -177,8 +186,8 @@ impl TunerProcessor {
         let mut best_tau = 0;
         let mut tau = min_lag;
         while tau < max_lag {
-            if d_prime[tau] < threshold {
-                while tau + 1 < max_lag && d_prime[tau + 1] < d_prime[tau] {
+            if self.d_prime_scratch[tau] < threshold {
+                while tau + 1 < max_lag && self.d_prime_scratch[tau + 1] < self.d_prime_scratch[tau] {
                     tau += 1;
                 }
                 best_tau = tau;
@@ -191,15 +200,15 @@ impl TunerProcessor {
             // Fallback to absolute minimum if threshold was not crossed
             let mut min_val = f32::MAX;
             for t in min_lag..max_lag {
-                if d_prime[t] < min_val {
-                    min_val = d_prime[t];
+                if self.d_prime_scratch[t] < min_val {
+                    min_val = self.d_prime_scratch[t];
                     best_tau = t;
                 }
             }
         }
 
         // Se a periodicidade for fraca (ruído ou não-harmônico)
-        if best_tau == 0 || d_prime[best_tau] > 0.40 {
+        if best_tau == 0 || self.d_prime_scratch[best_tau] > 0.40 {
             return TunerPitchResult {
                 note_name: "---".to_string(),
                 cents_deviation: 0.0,
@@ -209,9 +218,9 @@ impl TunerProcessor {
 
         // 4. Parabolic interpolation for sub-sample accuracy on symmetric difference function d
         let tau_sub = if best_tau > min_lag && best_tau + 1 < max_lag {
-            let s0 = d[best_tau - 1];
-            let s1 = d[best_tau];
-            let s2 = d[best_tau + 1];
+            let s0 = self.d_scratch[best_tau - 1];
+            let s1 = self.d_scratch[best_tau];
+            let s2 = self.d_scratch[best_tau + 1];
             let denom = 2.0 * (s0 - 2.0 * s1 + s2);
             if denom.abs() > 1e-9 {
                 best_tau as f32 + (s0 - s2) / denom

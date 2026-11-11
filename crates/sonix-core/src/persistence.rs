@@ -131,6 +131,8 @@ impl SonixPresetDoc {
         m.insert("merge.level_a_db".to_string(), serde_json::json!(0.0));
         m.insert("merge.level_b_db".to_string(), serde_json::json!(0.0));
         m.insert("merge.phase_invert_b".to_string(), serde_json::json!(false));
+        m.insert("merge.row_1_level_db".to_string(), serde_json::json!(-6.0));
+        m.insert("merge.row_1_phase_invert".to_string(), serde_json::json!(false));
         m.insert("amp_1.gain".to_string(), serde_json::json!(5.0));
         m.insert("amp_1.bass".to_string(), serde_json::json!(5.0));
         m.insert("amp_1.middle".to_string(), serde_json::json!(5.0));
@@ -139,6 +141,7 @@ impl SonixPresetDoc {
         m.insert("amp_1.master".to_string(), serde_json::json!(7.0));
         m.insert("amp_1.model".to_string(), serde_json::json!("us_twin_blackface_65"));
         m.insert("cab_1.enabled".to_string(), serde_json::json!(true));
+        m.insert("cab_1.speaker".to_string(), serde_json::json!("alnico_blue_2x12"));
         m.insert("cab_1.ir_enabled".to_string(), serde_json::json!(false));
         m.insert("cab_1.mic1.position".to_string(), serde_json::json!(0.2));
         m.insert("cab_1.mic1.distance_cm".to_string(), serde_json::json!(2.0));

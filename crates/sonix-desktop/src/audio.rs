@@ -989,10 +989,12 @@ impl RealtimeDspChain {
         let mut dly_1 = DelayProcessor::new(DelayModel::MultiHeadTapeEcho);
         dly_1.set_sample_rate(sample_rate);
         dly_1.set_spillover_enabled(true);
+        dly_1.set_bypassed(true);
 
         let mut rev_1 = ReverbProcessor::new(ReverbModel::StudioVintagePlate);
         rev_1.set_sample_rate(sample_rate);
         rev_1.set_spillover_enabled(true);
+        rev_1.set_bypassed(true);
 
         let mut tuner = TunerProcessor::new();
         tuner.set_sample_rate(sample_rate);
@@ -1109,7 +1111,19 @@ impl RealtimeDspChain {
         self.tuner_enabled
     }
 
-    pub fn tuner_latest_result(&self) -> TunerPitchResult {
+    pub fn update_tuner_pitch(&mut self) {
+        if self.tuner_enabled && self.tuner_input_accum_pos >= 1024 {
+            let res = self.tuner.detect_pitch(&self.tuner_input_accum[..self.tuner_input_accum_pos]);
+            self.tuner_latest_result = res;
+            if self.tuner_input_accum_pos >= 2048 {
+                self.tuner_input_accum.copy_within(1024..2048, 0);
+                self.tuner_input_accum_pos = 1024;
+            }
+        }
+    }
+
+    pub fn tuner_latest_result(&mut self) -> TunerPitchResult {
+        self.update_tuner_pitch();
         self.tuner_latest_result.clone()
     }
 
@@ -1144,6 +1158,7 @@ impl RealtimeDspChain {
         self.eq_1.set_sample_rate(sample_rate);
         self.dly_1.set_sample_rate(sample_rate);
         self.rev_1.set_sample_rate(sample_rate);
+        self.tuner.set_sample_rate(sample_rate);
 
         self.gain_smoother = ampforge_dsp::smoother::OnePoleSmoother::new(
             sample_rate as f64,
@@ -1396,9 +1411,9 @@ impl RealtimeDspChain {
 
     pub fn set_cab_speaker(&mut self, speaker: &str) {
         let model = match speaker {
-            "greenback_4x12" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
-            "v30_4x12" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
-            "alnico_blue_2x12" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
+            "greenback_4x12" | "greenback_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
+            "v30_4x12" | "v30_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
+            "alnico_blue_2x12" | "alnico_blue_2x12_open" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
             _ => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
         };
         self.cab.set_speaker_model(model);
@@ -1632,9 +1647,9 @@ impl RealtimeDspChain {
 
     pub fn set_cab_2_speaker(&mut self, speaker: &str) {
         let model = match speaker {
-            "greenback_4x12" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
-            "v30_4x12" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
-            "alnico_blue_2x12" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
+            "greenback_4x12" | "greenback_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
+            "v30_4x12" | "v30_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
+            "alnico_blue_2x12" | "alnico_blue_2x12_open" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
             _ => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
         };
         self.cab_2.set_speaker_model(model);
@@ -1707,20 +1722,18 @@ impl RealtimeDspChain {
             self.dc_y1 = y;
             boost_slice[i] = y * self.input_boost;
 
-            // Spec 026: Copia sinal de entrada limpo para o afinador (CA-1, CA-8)
+            // Spec 026: Copia sinal de entrada limpo para o afinador (CA-1, CA-8: 0 alocações e 0 locks)
             if self.tuner_enabled {
                 if self.tuner_input_accum_pos < self.tuner_input_accum.len() {
                     self.tuner_input_accum[self.tuner_input_accum_pos] = y;
                     self.tuner_input_accum_pos += 1;
+                } else {
+                    self.tuner_input_accum.copy_within(1024..2048, 0);
+                    self.tuner_input_accum_pos = 1024;
+                    self.tuner_input_accum[self.tuner_input_accum_pos] = y;
+                    self.tuner_input_accum_pos += 1;
                 }
             }
-        }
-
-        if self.tuner_enabled && self.tuner_input_accum_pos >= 2048 {
-            let res = self.tuner.detect_pitch(&self.tuner_input_accum[..self.tuner_input_accum_pos]);
-            self.tuner_latest_result = res;
-            self.tuner_input_accum.copy_within(1024..2048, 0);
-            self.tuner_input_accum_pos = 1024;
         }
 
         let gate_slice = &mut self.temp_gate_buf[..len];

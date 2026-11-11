@@ -303,11 +303,11 @@ impl AmpModelCatalog {
 
 pub fn find_model_by_name(name: &str) -> Option<AmpModelId> {
     match name {
-        "jcm800_2203" | "brit_jcm800_2203" => Some(AmpModelId::BritJcm800_2203),
-        "plexi_1959" | "brit_plexi_1959" => Some(AmpModelId::BritPlexi1959),
-        "twin_ab763" | "us_twin_blackface_65" | "twin_reverb" => Some(AmpModelId::UsTwinBlackface65),
-        "dual_rect" | "cali_dual_recto_revf" | "dual_rectifier" => Some(AmpModelId::CaliDualRectoRevF),
-        "ac30_tb" | "uk_ac30_topboost" | "ac30" => Some(AmpModelId::UkAc30TopBoost),
+        "jcm800_2203" | "brit_jcm800_2203" | "brit800" => Some(AmpModelId::BritJcm800_2203),
+        "plexi_1959" | "brit_plexi_1959" | "plexi" => Some(AmpModelId::BritPlexi1959),
+        "twin_ab763" | "us_twin_blackface_65" | "twin_reverb" | "usdeluxe" => Some(AmpModelId::UsTwinBlackface65),
+        "dual_rect" | "cali_dual_recto_revf" | "dual_rectifier" | "rectifier_solo_100" | "recto" => Some(AmpModelId::CaliDualRectoRevF),
+        "ac30_tb" | "uk_ac30_topboost" | "ac30" | "ac30_top_boost" => Some(AmpModelId::UkAc30TopBoost),
         _ => None,
     }
 }

@@ -137,4 +137,24 @@ fn test_ca_10_and_ca_11_preset_api_endpoints() {
     );
     assert_eq!(code_scene_a, 200, "Cena 'A' deve retornar 200: {}", resp_scene_a);
     assert!(resp_scene_a.contains("transition_ms"), "Deve retornar transition_ms: {}", resp_scene_a);
+
+    // 6. CA-1 & CA-3: Carregar usdeluxe restaura parâmetros completos em GET /api/state
+    let (code_usdeluxe, _) = http_request(
+        port,
+        "POST",
+        "/api/presets/load",
+        &[("Content-Type", "application/json"), ("X-Sonix-Token", &token)],
+        r#"{"id": "usdeluxe"}"#,
+    );
+    assert_eq!(code_usdeluxe, 200);
+
+    let (code_state, resp_state) = http_request(
+        port,
+        "GET",
+        "/api/state",
+        &[("X-Sonix-Token", &token)],
+        "",
+    );
+    assert_eq!(code_state, 200);
+    assert!(resp_state.contains("twin_ab763"), "Estado deve refletir o modelo de usdeluxe: {}", resp_state);
 }

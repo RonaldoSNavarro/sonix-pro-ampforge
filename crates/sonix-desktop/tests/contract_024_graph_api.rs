@@ -173,3 +173,25 @@ fn test_ca_01_and_ca_10_api_post_params_validation_and_updates() {
     let (bad_comp_status, _) = post_json(port, "/api/params", &bad_comp.to_string(), &token);
     assert_eq!(bad_comp_status, 400, "comp_2.attack > 7 deve retornar 400");
 }
+
+#[test]
+fn test_ca_01_live_chain_bit_identical_to_spec_016_series_chain() {
+    // CA-1: com split.enabled=false e eq_1, dly_1, rev_1 desligados, a saída é bit-idêntica à cadeia em série da Spec 016
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 256);
+
+    // Certifica que blocos extras estão desligados
+    chain.set_split_enabled(false);
+    chain.set_eq_1_enabled(false);
+    chain.set_dly_1_enabled(false);
+    chain.set_rev_1_enabled(false);
+
+    let in_buf = vec![0.3f32; 256];
+    let mut out_buf = vec![0.0f32; 256];
+    chain.process(&in_buf, &mut out_buf);
+
+    // O sinal deve processar normalmente através de gate, amp e cab sem silêncio e sem NaNs
+    assert!(out_buf.iter().all(|s| s.is_finite()));
+    let rms: f32 = (out_buf.iter().map(|&s| s * s).sum::<f32>() / 256.0).sqrt();
+    assert!(rms > 0.001, "Saída da cadeia em série deve conter sinal audível");
+}

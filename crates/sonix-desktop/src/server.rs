@@ -545,7 +545,7 @@ impl LocalAppServer {
                                 "/api/tuner" => {
                                     if method == "GET" {
                                         let res = if let Some(ref dsp_ref) = dsp_chain_clone {
-                                            if let Ok(dsp) = dsp_ref.lock() {
+                                            if let Ok(mut dsp) = dsp_ref.lock() {
                                                 dsp.tuner_latest_result()
                                             } else {
                                                 ampforge_dsp::tuner::TunerPitchResult {
@@ -2528,36 +2528,93 @@ impl LocalAppServer {
             for (k, v) in params {
                 match k.as_str() {
                     "amp_1.gain" => if let Some(n) = v.as_f64() { st.amp_gain = n as f32; },
+                    "amp_1.overdrive" => if let Some(n) = v.as_f64() { st.amp_overdrive = n as f32; },
                     "amp_1.bass" => if let Some(n) = v.as_f64() { st.amp_bass = n as f32; },
                     "amp_1.middle" => if let Some(n) = v.as_f64() { st.amp_middle = n as f32; },
                     "amp_1.treble" => if let Some(n) = v.as_f64() { st.amp_treble = n as f32; },
                     "amp_1.presence" => if let Some(n) = v.as_f64() { st.amp_presence = n as f32; },
+                    "amp_1.depth" => if let Some(n) = v.as_f64() { st.amp_depth = n as f32; },
                     "amp_1.master" => if let Some(n) = v.as_f64() { st.amp_master = n as f32; },
+                    "amp_1.volume_2" => if let Some(n) = v.as_f64() { st.amp_volume_2 = n as f32; },
+                    "amp_1.cut" => if let Some(n) = v.as_f64() { st.amp_cut = n as f32; },
                     "amp_1.model" => if let Some(s) = v.as_str() { st.amp_model = s.to_string(); },
+                    "amp_1.bright" => if let Some(b) = v.as_bool() { st.amp_bright = b; },
+                    "amp_1.enabled" => if let Some(b) = v.as_bool() { st.amp_enabled = b; },
+                    "amp_1.bias_ma" => if let Some(n) = v.as_f64() { st.bias_ma = n as f32; },
+                    "amp_1.sag" => if let Some(n) = v.as_f64() { st.sag = n as f32; },
+                    "amp_1.nfb" => if let Some(n) = v.as_f64() { st.nfb = n as f32; },
+                    "amp_1.xformer_sat" => if let Some(n) = v.as_f64() { st.xformer_sat = n as f32; },
+                    "amp_1.preamp_plate_v" => if let Some(n) = v.as_f64() { st.preamp_plate_v = n as f32; },
+                    "amp_1.triode_asym" => if let Some(n) = v.as_f64() { st.triode_asym = n as f32; },
+                    "amp_1.preamp_tube" => if let Some(s) = v.as_str() { st.preamp_tube = s.to_string(); },
+                    "amp_1.power_tube" => if let Some(s) = v.as_str() { st.power_tube = s.to_string(); },
+                    "amp_1.rectifier" => if let Some(s) = v.as_str() { st.rectifier = s.to_string(); },
+                    "amp_1.tonestack" => if let Some(s) = v.as_str() { st.tonestack = s.to_string(); },
+                    "engine.oversampling" => if let Some(s) = v.as_str() { st.engine_oversampling = s.to_string(); },
+                    "input.boost" => if let Some(n) = v.as_f64() { st.input_boost = n as f32; },
+                    "input.source" => if let Some(s) = v.as_str() { st.input_source = s.to_string(); },
                     "drive.enabled" => if let Some(b) = v.as_bool() { st.drive_enabled = b; },
                     "drive.drive" => if let Some(n) = v.as_f64() { st.drive_drive = n as f32; },
                     "drive.tone" => if let Some(n) = v.as_f64() { st.drive_tone = n as f32; },
                     "drive.level" => if let Some(n) = v.as_f64() { st.drive_level = n as f32; },
                     "gate.enabled" => if let Some(b) = v.as_bool() { st.gate_enabled = b; },
                     "gate.threshold_db" => if let Some(n) = v.as_f64() { st.gate_threshold_db = n as f32; },
+                    "cab_1.enabled" => if let Some(b) = v.as_bool() { st.cab_enabled = b; },
+                    "cab_1.speaker" | "cab_1.model" => if let Some(s) = v.as_str() { st.cab_speaker = s.to_string(); },
+                    "cab_1.resonance_hz" => if let Some(n) = v.as_f64() { st.cab_resonance_hz = n as f32; },
+                    "cab_1.hicut_khz" => if let Some(n) = v.as_f64() { st.cab_hicut_khz = n as f32; },
+                    "cab_1.ir_enabled" => if let Some(b) = v.as_bool() { st.cab_ir_enabled = b; },
+                    "cab_1.mic1.model" => if let Some(s) = v.as_str() { st.cab_mic1_model = s.to_string(); },
+                    "cab_1.mic1.position" => if let Some(n) = v.as_f64() { st.cab_mic1_position = n as f32; },
+                    "cab_1.mic1.distance_cm" => if let Some(n) = v.as_f64() { st.cab_mic1_distance_cm = n as f32; },
+                    "cab_1.mic1.level_db" => if let Some(n) = v.as_f64() { st.cab_mic1_level_db = n as f32; },
+                    "cab_1.mic1.enabled" => if let Some(b) = v.as_bool() { st.cab_mic1_enabled = b; },
+                    "cab_1.mic2.model" => if let Some(s) = v.as_str() { st.cab_mic2_model = s.to_string(); },
+                    "cab_1.mic2.position" => if let Some(n) = v.as_f64() { st.cab_mic2_position = n as f32; },
+                    "cab_1.mic2.distance_cm" => if let Some(n) = v.as_f64() { st.cab_mic2_distance_cm = n as f32; },
+                    "cab_1.mic2.level_db" => if let Some(n) = v.as_f64() { st.cab_mic2_level_db = n as f32; },
+                    "cab_1.mic2.enabled" => if let Some(b) = v.as_bool() { st.cab_mic2_enabled = b; },
                     "split.enabled" => if let Some(b) = v.as_bool() { st.split_enabled = b; },
+                    "split.mode" => if let Some(s) = v.as_str() { st.split_mode = s.to_string(); },
+                    "split.crossover_hz" => if let Some(n) = v.as_f64() { st.split_crossover_hz = n as f32; },
+                    "merge.row_1_level_db" => if let Some(n) = v.as_f64() { st.merge_row_1_level_db = n as f32; },
+                    "merge.row_1_phase_invert" => if let Some(b) = v.as_bool() { st.merge_row_1_phase_invert = b; },
                     "comp_2.enabled" => if let Some(b) = v.as_bool() { st.comp_2_enabled = b; },
-                    "amp_2.enabled" => if let Some(b) = v.as_bool() { st.amp_2_enabled = b; },
-                    "cab_2.enabled" => if let Some(b) = v.as_bool() { st.cab_2_enabled = b; },
+                    "comp_2.input" => if let Some(n) = v.as_f64() { st.comp_2_input = n as f32; },
+                    "comp_2.output" => if let Some(n) = v.as_f64() { st.comp_2_output = n as f32; },
+                    "comp_2.attack" => if let Some(n) = v.as_f64() { st.comp_2_attack = n as f32; },
+                    "comp_2.release" => if let Some(n) = v.as_f64() { st.comp_2_release = n as f32; },
+                    "comp_2.ratio" => if let Some(s) = v.as_str() { st.comp_2_ratio = s.to_string(); },
+                    "eq_1.enabled" => if let Some(b) = v.as_bool() { st.eq_1_enabled = b; },
                     "mod_2.enabled" => if let Some(b) = v.as_bool() { st.mod_2_enabled = b; },
                     "mod_2.rate_hz" => if let Some(n) = v.as_f64() { st.mod_2_rate_hz = n as f32; },
                     "mod_2.depth" => if let Some(n) = v.as_f64() { st.mod_2_depth = n as f32; },
-                    "mod_2.mix" => if let Some(n) = v.as_f64() { st.mod_2_mix = n as f32; },
-                    "eq_1.enabled" => if let Some(b) = v.as_bool() { st.eq_1_enabled = b; },
+                    "mod_2.mix" | "mod_2.mix_pct" => if let Some(n) = v.as_f64() { st.mod_2_mix = n as f32; },
                     "dly_1.enabled" => if let Some(b) = v.as_bool() { st.dly_1_enabled = b; },
+                    "dly_1.heads" => if let Some(s) = v.as_str() { st.dly_1_heads = s.to_string(); },
+                    "dly_1.repeat_rate" => if let Some(n) = v.as_f64() { st.dly_1_repeat_rate = n as f32; },
+                    "dly_1.intensity" => if let Some(n) = v.as_f64() { st.dly_1_intensity = n as f32; },
+                    "dly_1.echo_volume" => if let Some(n) = v.as_f64() { st.dly_1_echo_volume = n as f32; },
+                    "dly_1.bass" => if let Some(n) = v.as_f64() { st.dly_1_bass = n as f32; },
+                    "dly_1.treble" => if let Some(n) = v.as_f64() { st.dly_1_treble = n as f32; },
                     "dly_1.spillover" => if let Some(b) = v.as_bool() { st.dly_1_spillover = b; },
                     "rev_1.enabled" => if let Some(b) = v.as_bool() { st.rev_1_enabled = b; },
-                    "rev_1.spillover" => if let Some(b) = v.as_bool() { st.rev_1_spillover = b; },
                     "rev_1.decay_s" => if let Some(n) = v.as_f64() { st.rev_1_decay_s = n as f32; },
+                    "rev_1.predelay_ms" => if let Some(n) = v.as_f64() { st.rev_1_predelay_ms = n as f32; },
+                    "rev_1.damping" => if let Some(n) = v.as_f64() { st.rev_1_damping = n as f32; },
+                    "rev_1.mix" | "rev_1.mix_pct" => if let Some(n) = v.as_f64() { st.rev_1_mix = n as f32; },
+                    "rev_1.spillover" => if let Some(b) = v.as_bool() { st.rev_1_spillover = b; },
+                    "amp_2.enabled" => if let Some(b) = v.as_bool() { st.amp_2_enabled = b; },
+                    "amp_2.model" => if let Some(s) = v.as_str() { st.amp_2_model = s.to_string(); },
+                    "cab_2.enabled" => if let Some(b) = v.as_bool() { st.cab_2_enabled = b; },
+                    "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() { st.cab_2_speaker = s.to_string(); },
                     "scene.active" => if let Some(s) = v.as_str() { st.scene_active = s.to_string(); },
+                    "tuner.enabled" => if let Some(b) = v.as_bool() { st.tuner_enabled = b; },
+                    "tuner.output" => if let Some(s) = v.as_str() { st.tuner_output = s.to_string(); },
                     _ => {}
                 }
             }
+            st.is_modded = st.check_is_modded();
         }
 
         if let Some(ref dsp_ref) = dsp_chain {
@@ -2565,31 +2622,112 @@ impl LocalAppServer {
                 for (k, v) in params {
                     match k.as_str() {
                         "amp_1.gain" => if let Some(n) = v.as_f64() { dsp.set_amp_gain(n as f32); },
+                        "amp_1.overdrive" => if let Some(n) = v.as_f64() { dsp.set_amp_overdrive(n as f32); },
                         "amp_1.bass" => if let Some(n) = v.as_f64() { dsp.set_amp_bass(n as f32); },
                         "amp_1.middle" => if let Some(n) = v.as_f64() { dsp.set_amp_middle(n as f32); },
                         "amp_1.treble" => if let Some(n) = v.as_f64() { dsp.set_amp_treble(n as f32); },
                         "amp_1.presence" => if let Some(n) = v.as_f64() { dsp.set_amp_presence(n as f32); },
+                        "amp_1.depth" => if let Some(n) = v.as_f64() { dsp.set_amp_depth(n as f32); },
                         "amp_1.master" => if let Some(n) = v.as_f64() { dsp.set_amp_master(n as f32); },
+                        "amp_1.volume_2" => if let Some(n) = v.as_f64() { dsp.set_amp_volume_2(n as f32); },
+                        "amp_1.cut" => if let Some(n) = v.as_f64() { dsp.set_amp_cut(n as f32); },
+                        "amp_1.model" => if let Some(s) = v.as_str() { dsp.set_amp_model(s); },
+                        "amp_1.bright" => if let Some(b) = v.as_bool() { dsp.set_amp_bright(b); },
+                        "amp_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_amp_enabled(b); },
+                        "amp_1.bias_ma" => if let Some(n) = v.as_f64() { dsp.set_amp_bias_ma(n as f32); },
+                        "amp_1.sag" => if let Some(n) = v.as_f64() { dsp.set_amp_sag(n as f32); },
+                        "amp_1.nfb" => if let Some(n) = v.as_f64() { dsp.set_amp_nfb(n as f32); },
+                        "amp_1.xformer_sat" => if let Some(n) = v.as_f64() { dsp.set_amp_xformer_sat(n as f32); },
+                        "amp_1.preamp_plate_v" => if let Some(n) = v.as_f64() { dsp.set_amp_preamp_plate_v(n as f32); },
+                        "amp_1.triode_asym" => if let Some(n) = v.as_f64() { dsp.set_amp_triode_asym(n as f32); },
+                        "amp_1.preamp_tube" => if let Some(s) = v.as_str() { dsp.set_amp_preamp_tube(s); },
+                        "amp_1.power_tube" => if let Some(s) = v.as_str() { dsp.set_amp_power_tube(s); },
+                        "amp_1.rectifier" => if let Some(s) = v.as_str() { dsp.set_amp_rectifier(s); },
+                        "amp_1.tonestack" => if let Some(s) = v.as_str() { dsp.set_amp_tonestack(s); },
+                        "engine.oversampling" => if let Some(s) = v.as_str() { dsp.set_oversampling_factor(s); },
+                        "input.boost" => if let Some(n) = v.as_f64() { dsp.set_input_boost(n as f32); },
+                        "input.source" => if let Some(s) = v.as_str() { dsp.set_input_source(s); },
                         "drive.enabled" => if let Some(b) = v.as_bool() { dsp.set_drive_enabled(b); },
                         "drive.drive" => if let Some(n) = v.as_f64() { dsp.set_drive_gain(n as f32); },
                         "drive.tone" => if let Some(n) = v.as_f64() { dsp.set_drive_tone(n as f32); },
                         "drive.level" => if let Some(n) = v.as_f64() { dsp.set_drive_level(n as f32); },
                         "gate.enabled" => if let Some(b) = v.as_bool() { dsp.set_gate_enabled(b); },
                         "gate.threshold_db" => if let Some(n) = v.as_f64() { dsp.set_gate_threshold_db(n as f32); },
+                        "cab_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_enabled(b); },
+                        "cab_1.speaker" | "cab_1.model" => if let Some(s) = v.as_str() { dsp.set_cab_speaker(s); },
+                        "cab_1.resonance_hz" => if let Some(n) = v.as_f64() { dsp.set_cab_resonance_hz(n as f32); },
+                        "cab_1.hicut_khz" => if let Some(n) = v.as_f64() { dsp.set_cab_hicut_khz(n as f32); },
+                        "cab_1.ir_enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_ir_enabled(b); },
+                        "cab_1.mic1.model" => if let Some(s) = v.as_str() { dsp.set_cab_mic1_model(s); },
+                        "cab_1.mic1.position" => if let Some(n) = v.as_f64() { dsp.set_cab_mic1_position(n as f32); },
+                        "cab_1.mic1.distance_cm" => if let Some(n) = v.as_f64() { dsp.set_cab_mic1_distance_cm(n as f32); },
+                        "cab_1.mic1.level_db" => if let Some(n) = v.as_f64() { dsp.set_cab_mic1_level_db(n as f32); },
+                        "cab_1.mic1.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_mic1_enabled(b); },
+                        "cab_1.mic2.model" => if let Some(s) = v.as_str() { dsp.set_cab_mic2_model(s); },
+                        "cab_1.mic2.position" => if let Some(n) = v.as_f64() { dsp.set_cab_mic2_position(n as f32); },
+                        "cab_1.mic2.distance_cm" => if let Some(n) = v.as_f64() { dsp.set_cab_mic2_distance_cm(n as f32); },
+                        "cab_1.mic2.level_db" => if let Some(n) = v.as_f64() { dsp.set_cab_mic2_level_db(n as f32); },
+                        "cab_1.mic2.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_mic2_enabled(b); },
                         "split.enabled" => if let Some(b) = v.as_bool() { dsp.set_split_enabled(b); },
+                        "split.mode" => {
+                            if let Some(s) = v.as_str() {
+                                let hz = params.get("split.crossover_hz").and_then(|x| x.as_f64()).map(|x| x as f32).unwrap_or(650.0);
+                                dsp.set_split_mode(s, hz);
+                            }
+                        }
+                        "split.crossover_hz" => {
+                            if let Some(n) = v.as_f64() {
+                                let mode = params.get("split.mode").and_then(|x| x.as_str()).unwrap_or("crossover");
+                                dsp.set_split_mode(mode, n as f32);
+                            }
+                        }
+                        "merge.row_1_level_db" => {
+                            if let Some(n) = v.as_f64() {
+                                let inv = params.get("merge.row_1_phase_invert").and_then(|x| x.as_bool()).unwrap_or(false);
+                                dsp.set_merge_config(n as f32, inv);
+                            }
+                        }
+                        "merge.row_1_phase_invert" => {
+                            if let Some(b) = v.as_bool() {
+                                let db = params.get("merge.row_1_level_db").and_then(|x| x.as_f64()).map(|x| x as f32).unwrap_or(-6.0);
+                                dsp.set_merge_config(db, b);
+                            }
+                        }
                         "comp_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_comp_2_enabled(b); },
-                        "amp_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_amp_2_enabled(b); },
-                        "cab_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_2_enabled(b); },
+                        "comp_2.input" => if let Some(n) = v.as_f64() { dsp.set_comp_2_input(n as f32); },
+                        "comp_2.output" => if let Some(n) = v.as_f64() { dsp.set_comp_2_output(n as f32); },
+                        "comp_2.attack" => if let Some(n) = v.as_f64() { dsp.set_comp_2_attack(n as f32); },
+                        "comp_2.release" => if let Some(n) = v.as_f64() { dsp.set_comp_2_release(n as f32); },
+                        "comp_2.ratio" => if let Some(s) = v.as_str() { dsp.set_comp_2_ratio(s); },
+                        "eq_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_eq_1_enabled(b); },
                         "mod_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_mod_2_enabled(b); },
                         "mod_2.rate_hz" => if let Some(n) = v.as_f64() { dsp.set_mod_2_rate_hz(n as f32); },
                         "mod_2.depth" => if let Some(n) = v.as_f64() { dsp.set_mod_2_depth(n as f32); },
-                        "mod_2.mix" => if let Some(n) = v.as_f64() { dsp.set_mod_2_mix(n as f32); },
-                        "eq_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_eq_1_enabled(b); },
+                        "mod_2.mix" | "mod_2.mix_pct" => if let Some(n) = v.as_f64() { dsp.set_mod_2_mix(n as f32); },
                         "dly_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_dly_1_enabled(b); },
+                        "dly_1.repeat_rate" => if let Some(n) = v.as_f64() { dsp.set_dly_1_repeat_rate(n as f32); },
+                        "dly_1.intensity" => if let Some(n) = v.as_f64() { dsp.set_dly_1_intensity(n as f32); },
+                        "dly_1.echo_volume" => if let Some(n) = v.as_f64() { dsp.set_dly_1_echo_volume(n as f32); },
                         "dly_1.spillover" => if let Some(b) = v.as_bool() { dsp.set_dly_1_spillover(b); },
                         "rev_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_rev_1_enabled(b); },
-                        "rev_1.spillover" => if let Some(b) = v.as_bool() { dsp.set_rev_1_spillover(b); },
                         "rev_1.decay_s" => if let Some(n) = v.as_f64() { dsp.set_rev_1_decay_s(n as f32); },
+                        "rev_1.predelay_ms" => if let Some(n) = v.as_f64() { dsp.set_rev_1_predelay_ms(n as f32); },
+                        "rev_1.damping" => if let Some(n) = v.as_f64() { dsp.set_rev_1_damping(n as f32); },
+                        "rev_1.mix" | "rev_1.mix_pct" => if let Some(n) = v.as_f64() { dsp.set_rev_1_mix(n as f32); },
+                        "rev_1.spillover" => if let Some(b) = v.as_bool() { dsp.set_rev_1_spillover(b); },
+                        "amp_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_amp_2_enabled(b); },
+                        "amp_2.model" => if let Some(s) = v.as_str() { dsp.set_amp_2_model(s); },
+                        "cab_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_2_enabled(b); },
+                        "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() { dsp.set_cab_2_speaker(s); },
+                        "tuner.enabled" => if let Some(b) = v.as_bool() { dsp.set_tuner_enabled(b); },
+                        "tuner.output" => if let Some(s) = v.as_str() {
+                            let m = if s == "bypass" {
+                                ampforge_dsp::tuner::TunerOutputMode::Bypass
+                            } else {
+                                ampforge_dsp::tuner::TunerOutputMode::Mute
+                            };
+                            dsp.set_tuner_output_mode(m);
+                        },
                         _ => {}
                     }
                 }
