@@ -1,8 +1,8 @@
 ---
 spec: 015
 titulo: Servidor local aceita comandos de qualquer página web e um NaN silencia o motor até reiniciar
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-10
 ---
 # 015 — Endurecimento do Servidor Local (CSRF, DNS rebinding, CORS, defesa contra NaN)
 
@@ -92,9 +92,7 @@ set_gate_threshold_db(NaN) -> process()                                         
 - Spec 003 CA-7 (NaN/limites): estendida do painel do amp para gate, boost e cab.
 
 ## Testes que cobrem esta spec
-Planejados: `crates/sonix-desktop/tests/contract_015_server_hardening.rs` (CA-1…CA-9, cliente
-HTTP mínimo via `std::net::TcpStream`) e
-`tests/contract/015-endurecimento-servidor-local-validacao-csrf.test.js` (parte JS do CA-9).
+Implementados: `crates/sonix-desktop/tests/contract_015_server_hardening.rs` (CA-1…CA-9, cliente HTTP robusto via `std::net::TcpStream`) e `tests/contract/015-endurecimento-servidor-local-validacao-csrf.test.js` (parte JS do CA-4 e CA-9). 100% aprovados.
 
 ## Notas
 - Implementar **depois** da Spec 014 (ela cria o `POST` JSON que esta spec protege) e na mesma

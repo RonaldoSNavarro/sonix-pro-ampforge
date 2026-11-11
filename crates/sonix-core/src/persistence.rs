@@ -104,6 +104,10 @@ pub struct SonixPresetDoc {
     pub scenes: Vec<SceneDto>,
     pub grid: GridDto,
     pub modifiers: Vec<ModifierDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<HashMap<String, HashMap<String, HashMap<String, serde_json::Value>>>>,
 }
 
 impl SonixPresetDoc {
@@ -112,14 +116,58 @@ impl SonixPresetDoc {
             .map_err(|e| PresetSchemaValidationError::MalformedJson(e.to_string()))
     }
 
+    pub fn default_boot_params() -> HashMap<String, serde_json::Value> {
+        let mut m = HashMap::new();
+        m.insert("gate.enabled".to_string(), serde_json::json!(true));
+        m.insert("gate.threshold_db".to_string(), serde_json::json!(-60.0));
+        m.insert("drive.enabled".to_string(), serde_json::json!(false));
+        m.insert("drive.drive".to_string(), serde_json::json!(5.0));
+        m.insert("drive.tone".to_string(), serde_json::json!(5.0));
+        m.insert("drive.level".to_string(), serde_json::json!(5.0));
+        m.insert("split.enabled".to_string(), serde_json::json!(false));
+        m.insert("split.mode".to_string(), serde_json::json!("ab"));
+        m.insert("split.balance".to_string(), serde_json::json!(0.5));
+        m.insert("split.crossover_hz".to_string(), serde_json::json!(600.0));
+        m.insert("merge.level_a_db".to_string(), serde_json::json!(0.0));
+        m.insert("merge.level_b_db".to_string(), serde_json::json!(0.0));
+        m.insert("merge.phase_invert_b".to_string(), serde_json::json!(false));
+        m.insert("amp_1.gain".to_string(), serde_json::json!(5.0));
+        m.insert("amp_1.bass".to_string(), serde_json::json!(5.0));
+        m.insert("amp_1.middle".to_string(), serde_json::json!(5.0));
+        m.insert("amp_1.treble".to_string(), serde_json::json!(5.0));
+        m.insert("amp_1.presence".to_string(), serde_json::json!(5.0));
+        m.insert("amp_1.master".to_string(), serde_json::json!(7.0));
+        m.insert("amp_1.model".to_string(), serde_json::json!("us_twin_blackface_65"));
+        m.insert("cab_1.enabled".to_string(), serde_json::json!(true));
+        m.insert("cab_1.ir_enabled".to_string(), serde_json::json!(false));
+        m.insert("cab_1.mic1.position".to_string(), serde_json::json!(0.2));
+        m.insert("cab_1.mic1.distance_cm".to_string(), serde_json::json!(2.0));
+        m.insert("comp_2.enabled".to_string(), serde_json::json!(false));
+        m.insert("amp_2.enabled".to_string(), serde_json::json!(false));
+        m.insert("cab_2.enabled".to_string(), serde_json::json!(false));
+        m.insert("mod_2.enabled".to_string(), serde_json::json!(false));
+        m.insert("eq_1.enabled".to_string(), serde_json::json!(false));
+        m.insert("dly_1.enabled".to_string(), serde_json::json!(false));
+        m.insert("rev_1.enabled".to_string(), serde_json::json!(false));
+        m.insert("scene.active".to_string(), serde_json::json!("A"));
+        m
+    }
+
     pub fn from_json_str(s: &str) -> Result<Self, PresetSchemaValidationError> {
-        let doc: Self = serde_json::from_str(s)
+        let mut doc: Self = serde_json::from_str(s)
             .map_err(|e| PresetSchemaValidationError::MalformedJson(e.to_string()))?;
 
-        if doc.schema_version != "1.0.0" {
+        if doc.schema_version != "1.0.0" && doc.schema_version != "1.1.0" {
             return Err(PresetSchemaValidationError::IncompatibleSchemaVersion(
                 doc.schema_version,
             ));
+        }
+
+        if doc.schema_version == "1.0.0" {
+            if doc.params.is_none() {
+                doc.params = Some(Self::default_boot_params());
+            }
+            doc.schema_version = "1.1.0".to_string();
         }
 
         Ok(doc)

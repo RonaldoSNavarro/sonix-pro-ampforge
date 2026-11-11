@@ -1,8 +1,8 @@
 ---
 spec: 025
 titulo: Seletor de preset não carrega nada, cenas só mudam dois knobs e o export gera arquivo que o próprio validador recusa
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-11
 ---
 # 025 — Presets, Cenas e Canais de Bloco Reais
 

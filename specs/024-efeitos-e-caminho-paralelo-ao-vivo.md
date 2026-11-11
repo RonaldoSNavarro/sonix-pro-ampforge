@@ -1,8 +1,8 @@
 ---
 spec: 024
 titulo: Compressor, EQ, chorus, delay, reverb, split e o segundo amp do grid não fazem parte do som
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-11
 ---
 # 024 — Efeitos e Caminho Paralelo do Grid ao Vivo
 

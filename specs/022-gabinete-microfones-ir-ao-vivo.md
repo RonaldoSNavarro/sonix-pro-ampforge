@@ -1,8 +1,8 @@
 ---
 spec: 022
 titulo: Sala do gabinete — curva de impedância, ressonância, corte, microfones e IR carregada — não altera o som
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-10
 ---
 # 022 — Gabinete, Microfones e Impulse Response ao Vivo, sem Latência Adicional
 

@@ -1,7 +1,182 @@
 //! crates/ampforge-dsp/src/cab.rs
-//! Bloco de Gabinete (Cab), Sala de Microfonação Dupla, Loader de IR e Acoplamento de Impedância
+//! Bloco de Gabinete (Cab), Sala de Microfonação Dupla, Loader de IR e Acoplamento de Impedância (Spec 022)
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use std::f32::consts::PI;
+
+#[derive(Debug, Clone, Copy)]
+pub struct BiquadFilter {
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
+    x1: f64,
+    x2: f64,
+    y1: f64,
+    y2: f64,
+}
+
+impl Default for BiquadFilter {
+    fn default() -> Self {
+        Self {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+}
+
+impl BiquadFilter {
+    pub fn lowpass(fc: f64, q: f64, sr: f64) -> Self {
+        let k = (std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499)).tan();
+        let k2 = k * k;
+        let inv_q = 1.0 / q.max(0.1);
+        let a0 = 1.0 + inv_q * k + k2;
+        let b0 = k2 / a0;
+        let b1 = 2.0 * b0;
+        let b2 = b0;
+        let a1 = 2.0 * (k2 - 1.0) / a0;
+        let a2 = (1.0 - inv_q * k + k2) / a0;
+
+        Self {
+            b0,
+            b1,
+            b2,
+            a1,
+            a2,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    pub fn high_shelf(fc: f64, gain_db: f64, sr: f64) -> Self {
+        let a = 10.0f64.powf(gain_db / 40.0);
+        let w0 = 2.0 * std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499);
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let alpha = sin_w0 / std::f64::consts::SQRT_2;
+        let sqrt_a_2_alpha = 2.0 * a.sqrt() * alpha;
+
+        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + sqrt_a_2_alpha);
+        let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
+        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - sqrt_a_2_alpha);
+        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + sqrt_a_2_alpha;
+        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
+        let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - sqrt_a_2_alpha;
+
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    pub fn low_shelf(fc: f64, gain_db: f64, sr: f64) -> Self {
+        let a = 10.0f64.powf(gain_db / 40.0);
+        let w0 = 2.0 * std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499);
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let alpha = sin_w0 / std::f64::consts::SQRT_2;
+        let sqrt_a_2_alpha = 2.0 * a.sqrt() * alpha;
+
+        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + sqrt_a_2_alpha);
+        let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
+        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - sqrt_a_2_alpha);
+        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + sqrt_a_2_alpha;
+        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
+        let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - sqrt_a_2_alpha;
+
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    pub fn update_coeffs(&mut self, other: Self) {
+        self.b0 = other.b0;
+        self.b1 = other.b1;
+        self.b2 = other.b2;
+        self.a1 = other.a1;
+        self.a2 = other.a2;
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, x: f64) -> f64 {
+        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2;
+        self.x2 = self.x1;
+        self.x1 = x;
+        self.y2 = self.y1;
+        self.y1 = y;
+        y
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SpeakerCabModel {
+    Greenback4x12Closed,
+    V304x12Closed,
+    AlnicoBlue2x12Open,
+}
+
+impl SpeakerCabModel {
+    pub fn nominal_resonance_hz(&self) -> f32 {
+        match self {
+            Self::Greenback4x12Closed => 98.0,
+            Self::V304x12Closed => 108.0,
+            Self::AlnicoBlue2x12Open => 82.0,
+        }
+    }
+
+    pub fn is_open_back(&self) -> bool {
+        matches!(self, Self::AlnicoBlue2x12Open)
+    }
+
+    pub fn default_impedance_curve(&self) -> ImpedanceCurve {
+        match self {
+            Self::Greenback4x12Closed => ImpedanceCurve {
+                low_resonance_hz: 98.0,
+                resonance_q: 2.2,
+                low_resonance_gain_db: 7.0,
+                high_inductance_rise_db: 4.5,
+            },
+            Self::V304x12Closed => ImpedanceCurve {
+                low_resonance_hz: 108.0,
+                resonance_q: 2.5,
+                low_resonance_gain_db: 7.5,
+                high_inductance_rise_db: 5.0,
+            },
+            Self::AlnicoBlue2x12Open => ImpedanceCurve {
+                low_resonance_hz: 82.0,
+                resonance_q: 1.8,
+                low_resonance_gain_db: 5.5,
+                high_inductance_rise_db: 3.5,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MicModel {
     Sm57,
     Md421,
@@ -12,7 +187,7 @@ pub enum MicModel {
     C414,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MicSlotConfig {
     pub model: MicModel,
     pub position_cap_to_edge: f32, // 0.0 (Cap) to 1.0 (Edge)
@@ -45,7 +220,7 @@ impl Default for MicSlotConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ImpedanceCurve {
     pub low_resonance_hz: f32,
     pub resonance_q: f32,
@@ -55,16 +230,11 @@ pub struct ImpedanceCurve {
 
 impl Default for ImpedanceCurve {
     fn default() -> Self {
-        Self {
-            low_resonance_hz: 80.0,
-            resonance_q: 2.0,
-            low_resonance_gain_db: 6.0,
-            high_inductance_rise_db: 4.0,
-        }
+        SpeakerCabModel::Greenback4x12Closed.default_impedance_curve()
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CabAcousticConditioning {
     pub low_cut_hz: f32,
     pub low_cut_slope_db_oct: u32,
@@ -78,7 +248,7 @@ impl Default for CabAcousticConditioning {
         Self {
             low_cut_hz: 60.0,
             low_cut_slope_db_oct: 12,
-            high_cut_hz: 10000.0,
+            high_cut_hz: 4200.0,
             speaker_thump: 0.0,
             room_mic_early_reflections_pct: 0.0,
         }
@@ -111,6 +281,21 @@ pub struct ImpulseResponse {
 }
 
 impl ImpulseResponse {
+    pub fn from_samples(sample_rate: f32, samples: Vec<f32>) -> Self {
+        Self { sample_rate, samples }
+    }
+
+    pub fn from_samples_with_normalization(sample_rate: f32, mut samples: Vec<f32>, normalize: bool) -> Self {
+        if normalize && !samples.is_empty() {
+            let sum_sq: f32 = samples.iter().map(|&s| s * s).sum();
+            let energy = sum_sq.sqrt().max(1e-9);
+            for s in samples.iter_mut() {
+                *s /= energy;
+            }
+        }
+        Self { sample_rate, samples }
+    }
+
     pub fn sample_rate(&self) -> f32 {
         self.sample_rate
     }
@@ -131,7 +316,59 @@ impl WavIrLoader {
         }
     }
 
+    pub fn validate_ir_duration(num_samples: usize, sample_rate: f32) -> Result<(), InvalidImpulseResponseError> {
+        let max_samples = (sample_rate * 0.50001).round() as usize;
+        if num_samples > max_samples {
+            return Err(InvalidImpulseResponseError::UnsupportedFormat(format!(
+                "ir_too_long: IR tem {} amostras ({:.1} ms), excedendo limite de 500 ms",
+                num_samples,
+                (num_samples as f32 / sample_rate) * 1000.0
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn resample_sinc(&self, input: &[f32], in_sr: f32, out_sr: f32) -> ImpulseResponse {
+        if (in_sr - out_sr).abs() < 1.0 {
+            return ImpulseResponse::from_samples(out_sr, input.to_vec());
+        }
+        let ratio = in_sr / out_sr;
+        let out_len = (input.len() as f32 / ratio).round() as usize;
+        let mut out = Vec::with_capacity(out_len);
+        let filter_half_width = 24isize; // 48 taps windowed sinc
+        let cutoff = if out_sr < in_sr { out_sr / in_sr } else { 1.0 };
+        for i in 0..out_len {
+            let center = i as f32 * ratio;
+            let center_idx = center.round() as isize;
+            let mut sum = 0.0f32;
+            for tap in (center_idx - filter_half_width)..=(center_idx + filter_half_width) {
+                if tap >= 0 && (tap as usize) < input.len() {
+                    let d = center - tap as f32;
+                    let sinc = if d.abs() < 1e-6 {
+                        cutoff
+                    } else {
+                        let pi_d = PI * d * cutoff;
+                        cutoff * (pi_d.sin() / pi_d)
+                    };
+                    let w = (d / filter_half_width as f32).clamp(-1.0, 1.0);
+                    let window = 0.42 + 0.50 * (PI * w).cos() + 0.08 * (2.0 * PI * w).cos();
+                    sum += input[tap as usize] * (sinc * window);
+                }
+            }
+            out.push(sum);
+        }
+        ImpulseResponse::from_samples(out_sr, out)
+    }
+
     pub fn load_from_bytes(&self, bytes: &[u8]) -> Result<ImpulseResponse, InvalidImpulseResponseError> {
+        self.load_from_bytes_internal(bytes, true)
+    }
+
+    pub fn load_wav_unlimited(&self, bytes: &[u8]) -> Result<ImpulseResponse, InvalidImpulseResponseError> {
+        self.load_from_bytes_internal(bytes, false)
+    }
+
+    fn load_from_bytes_internal(&self, bytes: &[u8], enforce_max_duration: bool) -> Result<ImpulseResponse, InvalidImpulseResponseError> {
         if bytes.is_empty() {
             return Err(InvalidImpulseResponseError::EmptyFile);
         }
@@ -139,23 +376,23 @@ impl WavIrLoader {
             return Err(InvalidImpulseResponseError::CorruptedOrTruncated);
         }
 
-        // Check RIFF header
         if &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
             return Err(InvalidImpulseResponseError::CorruptedOrTruncated);
         }
 
-        // Locate 'fmt ' and 'data' chunks
         let mut pos = 12;
         let mut sample_rate = 44100u32;
         let mut channels = 1u16;
         let mut bits_per_sample = 16u16;
         let mut audio_format = 1u16;
+        let mut fmt_parsed = false;
         let mut data_start: Option<usize> = None;
         let mut data_len = 0usize;
 
         while pos + 8 <= bytes.len() {
             let chunk_id = &bytes[pos..pos + 4];
-            let chunk_size = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+            let Ok(chunk_size_bytes) = bytes[pos + 4..pos + 8].try_into() else { break; };
+            let chunk_size = u32::from_le_bytes(chunk_size_bytes) as usize;
             pos += 8;
 
             if chunk_id == b"fmt " && chunk_size >= 16 && pos + 16 <= bytes.len() {
@@ -163,12 +400,27 @@ impl WavIrLoader {
                 channels = u16::from_le_bytes(bytes[pos + 2..pos + 4].try_into().unwrap());
                 sample_rate = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap());
                 bits_per_sample = u16::from_le_bytes(bytes[pos + 14..pos + 16].try_into().unwrap());
+                fmt_parsed = true;
             } else if chunk_id == b"data" {
                 data_start = Some(pos);
-                data_len = chunk_size.min(bytes.len() - pos);
+                data_len = chunk_size.min(bytes.len().saturating_sub(pos));
                 break;
             }
-            pos += chunk_size;
+            let Some(next_pos) = pos.checked_add(chunk_size) else {
+                break;
+            };
+            pos = next_pos;
+        }
+
+        if !fmt_parsed || channels == 0 || sample_rate == 0 {
+            return Err(InvalidImpulseResponseError::CorruptedOrTruncated);
+        }
+
+        if !(8_000..=384_000).contains(&sample_rate) {
+            return Err(InvalidImpulseResponseError::UnsupportedFormat(format!(
+                "Sample rate {} fora da faixa permitida (8000 a 384000 Hz)",
+                sample_rate
+            )));
         }
 
         let start = data_start.ok_or(InvalidImpulseResponseError::CorruptedOrTruncated)?;
@@ -178,22 +430,25 @@ impl WavIrLoader {
         let mut samples = Vec::new();
         match (audio_format, bits_per_sample) {
             (1, 16) => {
-                // PCM 16-bit
-                for chunk in raw_data.chunks_exact(2 * channels as usize) {
+                let frame_size = 2 * channels as usize;
+                if frame_size == 0 { return Err(InvalidImpulseResponseError::CorruptedOrTruncated); }
+                for chunk in raw_data.chunks_exact(frame_size) {
                     let s_i16 = i16::from_le_bytes([chunk[0], chunk[1]]);
                     samples.push(s_i16 as f32 / 32768.0);
                 }
             }
             (1, 24) => {
-                // PCM 24-bit
-                for chunk in raw_data.chunks_exact(3 * channels as usize) {
+                let frame_size = 3 * channels as usize;
+                if frame_size == 0 { return Err(InvalidImpulseResponseError::CorruptedOrTruncated); }
+                for chunk in raw_data.chunks_exact(frame_size) {
                     let s_i32 = i32::from_le_bytes([0, chunk[0], chunk[1], chunk[2]]) >> 8;
                     samples.push(s_i32 as f32 / 8388608.0);
                 }
             }
             (3, 32) => {
-                // IEEE Float 32-bit
-                for chunk in raw_data.chunks_exact(4 * channels as usize) {
+                let frame_size = 4 * channels as usize;
+                if frame_size == 0 { return Err(InvalidImpulseResponseError::CorruptedOrTruncated); }
+                for chunk in raw_data.chunks_exact(frame_size) {
                     let s_f32 = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                     samples.push(s_f32);
                 }
@@ -210,38 +465,49 @@ impl WavIrLoader {
             return Err(InvalidImpulseResponseError::CorruptedOrTruncated);
         }
 
-        // Resample if needed
-        if (sample_rate as f32 - self.session_sample_rate).abs() > 1.0 {
-            let ratio = sample_rate as f32 / self.session_sample_rate;
-            let new_len = (samples.len() as f32 / ratio).round() as usize;
-            let mut resampled = Vec::with_capacity(new_len);
-            for i in 0..new_len {
-                let orig_idx = i as f32 * ratio;
-                let idx0 = orig_idx.floor() as usize;
-                let idx1 = (idx0 + 1).min(samples.len() - 1);
-                let frac = orig_idx - idx0 as f32;
-                resampled.push(samples[idx0] * (1.0 - frac) + samples[idx1] * frac);
-            }
-            samples = resampled;
+        // Validação de duração máxima de 500 ms para IR de gabinete (Spec 022, CA-11)
+        if enforce_max_duration {
+            Self::validate_ir_duration(samples.len(), sample_rate as f32)?;
         }
 
-        Ok(ImpulseResponse {
-            sample_rate: self.session_sample_rate,
-            samples,
-        })
+        let ir = if (sample_rate as f32 - self.session_sample_rate).abs() > 1.0 {
+            self.resample_sinc(&samples, sample_rate as f32, self.session_sample_rate)
+        } else {
+            ImpulseResponse::from_samples(self.session_sample_rate, samples)
+        };
+
+        Ok(ir)
     }
 }
 
 pub struct VirtualCabProcessor {
+    speaker_model: SpeakerCabModel,
     mics: [MicSlotConfig; 2],
     impedance_curve: ImpedanceCurve,
     conditioning: CabAcousticConditioning,
     coupled_amp_id: Option<String>,
     sample_rate: f32,
     custom_ir: Option<ImpulseResponse>,
-    // Delay buffer for fractional delay
-    delay_line_slot1: Vec<f32>,
-    delay_pos_slot1: usize,
+    target_ir: Option<ImpulseResponse>,
+    ir_enabled: bool,
+    ir_crossfade: f32,
+    ir_crossfade_step: f32,
+    // Delay buffer para mic 1 e mic 2
+    delay_line_mic1: Vec<f32>,
+    delay_pos_mic1: usize,
+    delay_line_mic2: Vec<f32>,
+    delay_pos_mic2: usize,
+    // Buffer circular para convolução direta FIR de baixa latência (zero latência adicional)
+    ir_circ_buf: Vec<f32>,
+    ir_circ_pos: usize,
+    // Filtros de modelagem de microfone e gabinete
+    hicut_filter1: BiquadFilter,
+    hicut_filter2: BiquadFilter,
+    open_back_hp: BiquadFilter,
+    mic1_pos_filter: BiquadFilter,
+    mic2_pos_filter: BiquadFilter,
+    mic1_prox_filter: BiquadFilter,
+    mic2_prox_filter: BiquadFilter,
 }
 
 impl Default for VirtualCabProcessor {
@@ -252,20 +518,120 @@ impl Default for VirtualCabProcessor {
 
 impl VirtualCabProcessor {
     pub fn new() -> Self {
-        Self {
-            mics: [MicSlotConfig::default(), MicSlotConfig::default()],
-            impedance_curve: ImpedanceCurve::default(),
+        let slot1 = MicSlotConfig::default();
+        let mut slot2 = MicSlotConfig::default();
+        slot2.enabled = false;
+
+        let spk = SpeakerCabModel::Greenback4x12Closed;
+
+        let mut s = Self {
+            speaker_model: spk,
+            mics: [slot1, slot2],
+            impedance_curve: spk.default_impedance_curve(),
             conditioning: CabAcousticConditioning::default(),
             coupled_amp_id: None,
             sample_rate: 48000.0,
             custom_ir: None,
-            delay_line_slot1: vec![0.0; 16384],
-            delay_pos_slot1: 0,
-        }
+            target_ir: None,
+            ir_enabled: false,
+            ir_crossfade: 1.0,
+            ir_crossfade_step: 1.0 / (48000.0 * 0.020),
+            delay_line_mic1: vec![0.0; 16384],
+            delay_pos_mic1: 0,
+            delay_line_mic2: vec![0.0; 16384],
+            delay_pos_mic2: 0,
+            ir_circ_buf: vec![0.0; 32768],
+            ir_circ_pos: 0,
+            hicut_filter1: BiquadFilter::default(),
+            hicut_filter2: BiquadFilter::default(),
+            open_back_hp: BiquadFilter::default(),
+            mic1_pos_filter: BiquadFilter::default(),
+            mic2_pos_filter: BiquadFilter::default(),
+            mic1_prox_filter: BiquadFilter::default(),
+            mic2_prox_filter: BiquadFilter::default(),
+        };
+        s.update_filters();
+        s
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
+        self.ir_crossfade_step = 1.0 / (self.sample_rate * 0.020).max(1.0);
+        self.update_filters();
+    }
+
+    pub fn set_speaker_model(&mut self, model: SpeakerCabModel) {
+        self.speaker_model = model;
+        self.impedance_curve = model.default_impedance_curve();
+        self.update_filters();
+    }
+
+    pub fn speaker_model(&self) -> SpeakerCabModel {
+        self.speaker_model
+    }
+
+    pub fn set_resonance_hz(&mut self, hz: f32) {
+        self.impedance_curve.low_resonance_hz = hz.clamp(65.0, 135.0);
+    }
+
+    pub fn resonance_hz(&self) -> f32 {
+        self.impedance_curve.low_resonance_hz
+    }
+
+    pub fn set_hicut_khz(&mut self, khz: f32) {
+        self.conditioning.high_cut_hz = (khz * 1000.0).clamp(3500.0, 18000.0);
+        self.update_filters();
+    }
+
+    pub fn hicut_khz(&self) -> f32 {
+        self.conditioning.high_cut_hz / 1000.0
+    }
+
+    pub fn set_ir_enabled(&mut self, enabled: bool) {
+        self.ir_enabled = enabled;
+    }
+
+    pub fn ir_enabled(&self) -> bool {
+        self.ir_enabled
+    }
+
+    pub fn set_custom_ir(&mut self, ir: ImpulseResponse) {
+        self.custom_ir = Some(ir);
+        self.ir_crossfade = 1.0;
+        self.target_ir = None;
+    }
+
+    pub fn set_target_ir(&mut self, ir: ImpulseResponse) {
+        if self.custom_ir.is_none() {
+            self.set_custom_ir(ir);
+        } else {
+            self.target_ir = Some(ir);
+            self.ir_crossfade = 0.0;
+        }
+    }
+
+    pub fn reset_ir_state(&mut self) {
+        self.ir_circ_buf.fill(0.0);
+        self.ir_circ_pos = 0;
+    }
+
+    pub fn calculate_impedance_peak(&self, f_min: f32, f_max: f32, f_step: f32) -> (f32, f32) {
+        let f_res = self.impedance_curve.low_resonance_hz;
+        let q = self.impedance_curve.resonance_q;
+        let mut best_f = f_res;
+        let mut max_z = 0.0f32;
+        let mut f = f_min;
+        while f <= f_max {
+            let ratio = f / f_res;
+            let denom = 1.0 + q * q * (ratio - 1.0 / ratio).powi(2);
+            let z = 8.0 + 32.0 / denom + (f / 3000.0);
+            if z > max_z {
+                max_z = z;
+                best_f = f;
+            }
+            f += f_step;
+        }
+        (best_f, max_z)
     }
 
     pub fn mic_slot(&self, idx: usize) -> &MicSlotConfig {
@@ -302,65 +668,173 @@ impl VirtualCabProcessor {
 
     pub fn set_conditioning(&mut self, cond: CabAcousticConditioning) {
         self.conditioning = cond;
+        self.update_filters();
     }
 
     pub fn load_custom_ir(&mut self, bytes: &[u8]) -> Result<(), InvalidImpulseResponseError> {
         let loader = WavIrLoader::new(self.sample_rate);
         let ir = loader.load_from_bytes(bytes)?;
-        self.custom_ir = Some(ir);
+        self.set_custom_ir(ir);
+        self.ir_enabled = true;
         Ok(())
+    }
+
+    fn update_filters(&mut self) {
+        let sr = self.sample_rate as f64;
+        let fc = self.conditioning.high_cut_hz.clamp(1000.0, self.sample_rate * 0.45) as f64;
+
+        // Butterworth 2ª ordem passa-baixas (Q = 1 / sqrt(2) = 0.7071) para corte exato de -3 dB na fc
+        let b = BiquadFilter::lowpass(fc, 0.7071, sr);
+        self.hicut_filter1.update_coeffs(b);
+        self.hicut_filter2.update_coeffs(b);
+
+        // Open back dipole cancelamento em graves (< 120 Hz)
+        if self.speaker_model.is_open_back() {
+            self.open_back_hp.update_coeffs(BiquadFilter::low_shelf(120.0, -6.0, sr));
+        } else {
+            self.open_back_hp.update_coeffs(BiquadFilter::default());
+        }
     }
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), output.len());
         output.fill(0.0);
 
-        // Process Slot 0 if enabled and not muted
-        if self.mics[0].enabled && !self.mics[0].mute {
-            let gain = if self.mics[0].level_db <= -60.0 {
-                0.0
-            } else {
-                10.0f32.powf(self.mics[0].level_db / 20.0)
-            };
-            let sign = if self.mics[0].phase_invert { -1.0 } else { 1.0 };
-            let total_gain = gain * sign;
-
-            for i in 0..input.len() {
-                output[i] += input[i] * total_gain;
-            }
+        if self.ir_enabled && (self.custom_ir.is_some() || self.target_ir.is_some()) {
+            self.process_ir_convolution(input, output);
+            return;
         }
 
-        // Process Slot 1 if enabled and not muted
-        if self.mics[1].enabled && !self.mics[1].mute {
-            let gain = if self.mics[1].level_db <= -60.0 {
+        self.update_filters();
+        let sr = self.sample_rate as f64;
+
+        // Processa cada slot de microfone
+        for slot_idx in 0..2 {
+            let mic = &self.mics[slot_idx];
+            if !mic.enabled || mic.mute {
+                continue;
+            }
+
+            let gain = if mic.level_db <= -60.0 {
                 0.0
             } else {
-                10.0f32.powf(self.mics[1].level_db / 20.0)
+                10.0f32.powf(mic.level_db / 20.0)
             };
-            let sign = if self.mics[1].phase_invert { -1.0 } else { 1.0 };
-            let total_gain = gain * sign;
+            let sign = if mic.phase_invert { -1.0 } else { 1.0 };
+            let total_gain = (gain * sign) as f64;
 
-            let line_len = self.delay_line_slot1.len();
-            // Fractional delay in samples clamped within buffer capacity
+            // Filtro de posição cap-to-edge (0.0 = centro/brilhante, 1.0 = borda/-8.5 dB em altas frequências)
+            let pos = mic.position_cap_to_edge.clamp(0.0, 1.0);
+            let pos_cut_db = -8.5 * pos as f64;
+            let pos_filter = if slot_idx == 0 {
+                self.mic1_pos_filter.update_coeffs(BiquadFilter::high_shelf(3500.0, pos_cut_db, sr));
+                &mut self.mic1_pos_filter
+            } else {
+                self.mic2_pos_filter.update_coeffs(BiquadFilter::high_shelf(3500.0, pos_cut_db, sr));
+                &mut self.mic2_pos_filter
+            };
+
+            // Efeito de proximidade para microfones direcionais (mais grave em distâncias curtas)
+            let dist_cm = mic.distance_cm.clamp(0.0, 30.0) as f64;
+            let prox_boost_db = 9.0 * (1.0 - (dist_cm / 20.0).clamp(0.0, 1.0));
+            let prox_filter = if slot_idx == 0 {
+                self.mic1_prox_filter.update_coeffs(BiquadFilter::low_shelf(150.0, prox_boost_db, sr));
+                &mut self.mic1_prox_filter
+            } else {
+                self.mic2_prox_filter.update_coeffs(BiquadFilter::low_shelf(150.0, prox_boost_db, sr));
+                &mut self.mic2_prox_filter
+            };
+
+            // Atraso de propagação do microfone: delta t = d_cm * 0.01 / 343.0 s
+            let delay_sec = (dist_cm * 0.01) / 343.0;
+            let delay_samples = delay_sec * sr;
+
+            let (delay_line, delay_pos) = if slot_idx == 0 {
+                (&mut self.delay_line_mic1, &mut self.delay_pos_mic1)
+            } else {
+                (&mut self.delay_line_mic2, &mut self.delay_pos_mic2)
+            };
+
+            let line_len = delay_line.len();
             let max_delay = line_len.saturating_sub(2);
-            let delay_samples = (self.mics[1].delay_ms * 0.001 * self.sample_rate)
-                .max(0.0)
-                .min(max_delay as f32);
-            let d_int = (delay_samples.floor() as usize).min(max_delay);
-            let d_frac = delay_samples - d_int as f32;
+            let d_clamped = delay_samples.max(0.0).min(max_delay as f64);
+            let d_int = (d_clamped.floor() as usize).min(max_delay);
+            let d_frac = (d_clamped - d_int as f64) as f32;
 
             for i in 0..input.len() {
                 let x = input[i];
-                self.delay_line_slot1[self.delay_pos_slot1] = x;
+                delay_line[*delay_pos] = x;
 
-                let r_idx0 = (self.delay_pos_slot1 + line_len - d_int) % line_len;
+                let r_idx0 = (*delay_pos + line_len - d_int) % line_len;
                 let r_idx1 = (r_idx0 + line_len - 1) % line_len;
+                let delayed = delay_line[r_idx0] * (1.0 - d_frac) + delay_line[r_idx1] * d_frac;
+                *delay_pos = (*delay_pos + 1) % line_len;
 
-                let delayed_sample = self.delay_line_slot1[r_idx0] * (1.0 - d_frac)
-                    + self.delay_line_slot1[r_idx1] * d_frac;
+                // Passa pelos filtros acústicos do microfone
+                let mut s = delayed as f64;
+                s = pos_filter.process(s);
+                s = prox_filter.process(s);
 
-                self.delay_pos_slot1 = (self.delay_pos_slot1 + 1) % line_len;
-                output[i] += delayed_sample * total_gain;
+                output[i] += (s * total_gain) as f32;
+            }
+        }
+
+        // Condicionamento acústico do gabinete: corte de agudos e cancelamento open-back
+        for s in output.iter_mut() {
+            let mut v = *s as f64;
+            v = self.open_back_hp.process(v);
+            v = self.hicut_filter1.process(v);
+            *s = v as f32;
+        }
+    }
+
+    fn process_ir_convolution(&mut self, input: &[f32], output: &mut [f32]) {
+        let circ_len = self.ir_circ_buf.len();
+
+        for i in 0..input.len() {
+            let x = input[i];
+            self.ir_circ_buf[self.ir_circ_pos] = x;
+
+            let mut y1 = 0.0f32;
+            if let Some(ref ir) = self.custom_ir {
+                let h = ir.samples();
+                let h_len = h.len();
+                let mut sum = 0.0f32;
+                for k in 0..h_len {
+                    let r_idx = (self.ir_circ_pos + circ_len - k) % circ_len;
+                    sum += self.ir_circ_buf[r_idx] * h[k];
+                }
+                y1 = sum;
+            }
+
+            let mut y2 = 0.0f32;
+            if let Some(ref ir) = self.target_ir {
+                let h = ir.samples();
+                let h_len = h.len();
+                let mut sum = 0.0f32;
+                for k in 0..h_len {
+                    let r_idx = (self.ir_circ_pos + circ_len - k) % circ_len;
+                    sum += self.ir_circ_buf[r_idx] * h[k];
+                }
+                y2 = sum;
+            }
+
+            let y = if self.target_ir.is_some() {
+                let a = self.ir_crossfade;
+                (1.0 - a) * y1 + a * y2
+            } else {
+                y1
+            };
+
+            output[i] = y;
+            self.ir_circ_pos = (self.ir_circ_pos + 1) % circ_len;
+
+            if self.target_ir.is_some() {
+                self.ir_crossfade += self.ir_crossfade_step;
+                if self.ir_crossfade >= 1.0 {
+                    self.custom_ir = self.target_ir.take();
+                    self.ir_crossfade = 1.0;
+                }
             }
         }
     }

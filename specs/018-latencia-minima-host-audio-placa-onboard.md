@@ -1,8 +1,8 @@
 ---
 spec: 018
 titulo: O caminho de áudio soma até 50 ms de atraso evitável e não usa o modo de menor latência da placa onboard
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-10
 ---
 # 018 — Latência Mínima e Host de Áudio Robusto em Placa Onboard
 

@@ -1,8 +1,8 @@
 ---
 spec: 023
 titulo: O pedal "Screamer 808" não tem controles na interface e o drive não reproduz o circuito do pedal
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-10
 ---
 # 023 — Pedal de Drive 808 Fiel ao Circuito e Editor do Bloco Selecionado
 

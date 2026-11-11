@@ -129,12 +129,16 @@ pub struct CompressorProcessor {
 
 impl CompressorProcessor {
     pub fn new(topology: CompressorTopology) -> Self {
+        let (att, rel) = match topology {
+            CompressorTopology::StudioFet1176 => (0.05, 200.0),
+            _ => (10.0, 100.0),
+        };
         Self {
             topology,
             threshold_db: -20.0,
             ratio: 4.0,
-            attack_ms: 10.0,
-            release_ms: 100.0,
+            attack_ms: att,
+            release_ms: rel,
             makeup_gain_db: 0.0,
             parallel_mix_pct: 100.0,
             sample_rate: 48000.0,
@@ -153,6 +157,14 @@ impl CompressorProcessor {
 
     pub fn set_ratio(&mut self, val: f32) {
         self.ratio = val.clamp(1.0, 20.0);
+    }
+
+    pub fn set_attack_ms(&mut self, val: f32) {
+        self.attack_ms = val.clamp(0.01, 100.0);
+    }
+
+    pub fn set_release_ms(&mut self, val: f32) {
+        self.release_ms = val.clamp(1.0, 2000.0);
     }
 
     pub fn set_parallel_mix_pct(&mut self, val: f32) {

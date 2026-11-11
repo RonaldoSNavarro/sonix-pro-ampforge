@@ -1,7 +1,7 @@
 ---
 spec: 026
 titulo: O afinador lê o sinal já distorcido, assume 48 kHz, não alcança notas abaixo de 80 Hz e não silencia a saída
-status: rascunho
+status: implementada
 atualizado: 2026-11-09
 ---
 # 026 — Afinador ao Vivo na Entrada da Guitarra

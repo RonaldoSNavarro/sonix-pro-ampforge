@@ -27,6 +27,20 @@ const state = {
     brightSwitch: true,
   },
 
+  // Sincronização e parâmetros completos do motor DSP (Specs 014, 022, 023, 024)
+  params: {
+    'amp_1.gain': 7.4,
+    'drive.enabled': false,
+    'drive.drive': 5.0,
+    'drive.tone': 5.0,
+    'drive.level': 7.0,
+    'amp_1.bright': true,
+    'cab_1.ir_enabled': false,
+    'mod_2.enabled': false,
+    'dly_1.enabled': false,
+    'rev_1.enabled': false,
+  },
+
   // Open Chassis White-Box Circuit Parameters
   circuitParams: {
     biasMa: 38.5,
@@ -81,6 +95,71 @@ const KNOB_DEFINITIONS = [
   { key: 'masterVol', label: 'MASTER VOL', min: 0, max: 10, defaultVal: 4.5, hasModifier: false },
 ];
 
+let pendingParams = {};
+let syncTimeout = null;
+function syncParamsToBackend(params, immediate = false) {
+  if (!state.params) state.params = {};
+  Object.assign(state.params, params);
+  Object.assign(pendingParams, params);
+  if (immediate) {
+    if (syncTimeout) { clearTimeout(syncTimeout); syncTimeout = null; }
+    flushParams();
+  } else if (!syncTimeout) {
+    syncTimeout = setTimeout(flushParams, 25);
+  }
+}
+async function flushParams() {
+  if (Object.keys(pendingParams).length === 0) return;
+  const payload = { ...pendingParams };
+  pendingParams = {};
+  syncTimeout = null;
+  const token = window.__SONIX_TOKEN__ || document.querySelector('meta[name="sonix-token"]')?.content || '';
+  try {
+    await fetch('/api/params', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sonix-Token': token,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (_) {}
+}
+
+async function loadInitialState() {
+  try {
+    const res = await fetch('/api/state');
+    if (res.ok) {
+      const st = await res.json();
+      if (!state.params) state.params = {};
+      Object.assign(state.params, st);
+
+      // Atualiza textos de nível, delay e ressonância lidos de /api/state (Spec 022, CA-7)
+      const mic1Lvl = document.getElementById('mic1LevelText');
+      if (mic1Lvl && st['cab_1.mic1.level_db'] !== undefined) {
+        const lvl = st['cab_1.mic1.level_db'];
+        mic1Lvl.textContent = `Nível: ${lvl >= 0 ? '+' : ''}${Number(lvl).toFixed(1)} dB | Fase: 0° Normal`;
+      }
+      const cabRes = document.getElementById('valCabRes');
+      if (cabRes && (st['cab_1.resonance_hz'] !== undefined || st['cabResHz'] !== undefined)) {
+        cabRes.textContent = `${st['cab_1.resonance_hz'] || st['cabResHz']} Hz`;
+      }
+      if (st['cab_1.ir_enabled']) {
+        document.querySelectorAll('.mic-control').forEach(el => {
+          el.disabled = true;
+          el.classList.add('disabled');
+        });
+      }
+    }
+  } catch (_) {}
+}
+
+function setExpressionPedal(normVal) {
+  // Mapeia ganho na faixa 3.0..9.5 (Spec 014, CA-1)
+  const gain = 3.0 + normVal * (9.5 - 3.0);
+  syncParamsToBackend({ 'amp_1.gain': gain }, false);
+}
+
 // ============================================================================
 // 1. RENDER SIGNAL ROUTING MATRIX GRID (4 ROWS x 8 SLOTS)
 // ============================================================================
@@ -94,6 +173,13 @@ function renderSignalGrid() {
   for (let r = 0; r < 4; r++) {
     const rowEl = document.createElement('div');
     rowEl.className = `grid-row ${r <= 1 ? 'active-signal-path' : ''}`;
+
+    const splitBlock = state.blocks.find((b) => b.id === 'blk_split');
+    const isSplitDisabled = splitBlock ? splitBlock.bypassed : false;
+    if (r === 1 && isSplitDisabled) {
+      rowEl.classList.add('split-disabled');
+      rowEl.style.opacity = '0.35';
+    }
 
     const inTerm = document.createElement('div');
     inTerm.className = `io-terminal ${r <= 1 ? 'active-io' : ''}`;
@@ -127,10 +213,13 @@ function renderSignalGrid() {
           updateSelectedBlockHeader(block);
           renderSignalGrid();
           renderFootswitches();
+          openBlockEditor(block);
 
-          // Switch view automatically if user clicks CAB block
-          if (block.cat === 'CAB') {
+          // Switch view automatically if user clicks CAB or AMP block
+          if (block.cat === 'CAB' || block.id === 'blk_cab_1' || block.id === 'blk_cab_2') {
             switchMainWorkspaceView('cab-room');
+          } else if (block.cat === 'AMP' || block.id === 'blk_amp_1' || block.id === 'blk_amp_2') {
+            switchMainWorkspaceView('amp');
           }
         });
 
@@ -140,6 +229,9 @@ function renderSignalGrid() {
           updateCpuBudget();
           renderSignalGrid();
           renderFootswitches();
+          if (block.id === 'blk_drive') {
+            syncParamsToBackend({ 'drive.enabled': !block.bypassed }, false);
+          }
         });
       } else {
         slotEl.className = 'grid-slot';
@@ -155,6 +247,109 @@ function renderSignalGrid() {
     rowEl.appendChild(outTerm);
 
     container.appendChild(rowEl);
+  }
+
+  // Aviso de sinal direto no caminho B quando sem amp nem cab ativos (Spec 024, CA-11)
+  const splitBlock = state.blocks.find((b) => b.id === 'blk_split');
+  const isSplitActive = splitBlock ? !splitBlock.bypassed : false;
+  const amp2Block = state.blocks.find((b) => b.id === 'blk_amp_2');
+  const cab2Block = state.blocks.find((b) => b.id === 'blk_cab_2');
+  const isDirectB = isSplitActive && (!amp2Block || amp2Block.bypassed) && (!cab2Block || cab2Block.bypassed);
+
+  let directWarn = document.getElementById('gridDirectWarning');
+  if (!directWarn) {
+    directWarn = document.createElement('div');
+    directWarn.id = 'gridDirectWarning';
+    directWarn.className = 'grid-direct-warning';
+    container.parentNode.appendChild(directWarn);
+  }
+  directWarn.textContent = 'caminho B sem amp/cab: sinal direto';
+  directWarn.style.display = isDirectB ? 'block' : 'none';
+}
+
+function openBlockEditor(block) {
+  const panel = document.getElementById('blockEditor');
+  const title = document.getElementById('blockEditorTitle');
+  const badge = document.getElementById('blockEditorStatus');
+  const body = document.getElementById('blockEditorBody');
+  if (!panel || !body) return;
+
+  panel.style.display = 'block';
+
+  if (block.id === 'blk_drive') {
+    if (title) title.textContent = `PEDAL: ${block.name.toUpperCase()} (DRIVE)`;
+    if (badge) badge.textContent = 'INSPIRADO NO CIRCUITO 808';
+
+    const driveVal = state.params['drive.drive'] !== undefined ? state.params['drive.drive'] : 5.0;
+    const toneVal = state.params['drive.tone'] !== undefined ? state.params['drive.tone'] : 5.0;
+    const levelVal = state.params['drive.level'] !== undefined ? state.params['drive.level'] : 7.0;
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid">
+        <div class="pedal-knob-box">
+          <label>DRIVE</label>
+          <input type="range" id="pedalDriveSlider" min="0" max="10" step="0.1" value="${driveVal}">
+          <span class="pedal-val" id="pedalDriveVal">${Number(driveVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>TONE</label>
+          <input type="range" id="pedalToneSlider" min="0" max="10" step="0.1" value="${toneVal}">
+          <span class="pedal-val" id="pedalToneVal">${Number(toneVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>LEVEL</label>
+          <input type="range" id="pedalLevelSlider" min="0" max="10" step="0.1" value="${levelVal}">
+          <span class="pedal-val" id="pedalLevelVal">${Number(levelVal).toFixed(1)}</span>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('pedalDriveSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('pedalDriveVal').textContent = v.toFixed(1);
+      state.params['drive.drive'] = v;
+      syncParamsToBackend({ 'drive.drive': v }, false);
+    });
+    document.getElementById('pedalToneSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('pedalToneVal').textContent = v.toFixed(1);
+      state.params['drive.tone'] = v;
+      syncParamsToBackend({ 'drive.tone': v }, false);
+    });
+    document.getElementById('pedalLevelSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('pedalLevelVal').textContent = v.toFixed(1);
+      state.params['drive.level'] = v;
+      syncParamsToBackend({ 'drive.level': v }, false);
+    });
+  } else if (block.id === 'blk_comp_2' || block.cat === 'COMP') {
+    if (title) title.textContent = 'COMPRESSOR: FET 1176 (comp_2)';
+    if (badge) badge.textContent = 'STUDIO LIMITER';
+    body.innerHTML = '<div class="block-editor-content">Controles comp_2: input, output, attack, release, ratio</div>';
+  } else if (block.id === 'blk_eq_1' || block.cat === 'EQ') {
+    if (title) title.textContent = 'EQUALIZADOR: 8-BAND (eq_1)';
+    if (badge) badge.textContent = 'PARAMETRIC';
+    body.innerHTML = '<div class="block-editor-content">Controles eq_1: 8 bandas paramétricas</div>';
+  } else if (block.id === 'blk_mod_2' || block.cat === 'MOD') {
+    if (title) title.textContent = 'MODULAÇÃO: TRI-CHORUS (mod_2)';
+    if (badge) badge.textContent = 'CHORUS BBD';
+    body.innerHTML = '<div class="block-editor-content">Controles mod_2: rate_hz, depth, mix</div>';
+  } else if (block.id === 'blk_dly_1' || block.cat === 'DELAY') {
+    if (title) title.textContent = 'DELAY: TAPE ECHO (dly_1)';
+    if (badge) badge.textContent = 'TAPE 201';
+    body.innerHTML = '<div class="block-editor-content">Controles dly_1: heads, repeat_rate, intensity, echo_volume, spillover</div>';
+  } else if (block.id === 'blk_rev_1' || block.cat === 'REVERB') {
+    if (title) title.textContent = 'REVERB: VINTAGE PLATE (rev_1)';
+    if (badge) badge.textContent = 'STUDIO PLATE';
+    body.innerHTML = '<div class="block-editor-content">Controles rev_1: decay_s, predelay_ms, damping, mix, spillover</div>';
+  } else if (block.id === 'blk_split' || block.cat === 'SPLIT') {
+    if (title) title.textContent = 'ROUTING: SPLIT / MERGE';
+    if (badge) badge.textContent = 'A/B CROSSOVER';
+    body.innerHTML = '<div class="block-editor-content">Controles split / merge: mode, crossover_hz, row_1_level_db, row_1_phase_invert</div>';
+  } else {
+    if (title) title.textContent = `${block.cat}: ${block.name.toUpperCase()}`;
+    if (badge) badge.textContent = 'BLOCO SELECIONADO';
+    body.innerHTML = '<div class="block-editor-empty">sem controles nesta versão</div>';
   }
 }
 
@@ -293,18 +488,23 @@ function updateTubeIncandescence() {
 }
 
 // ============================================================================
-// 4. TEKTRONIX-STYLE REAL-TIME CRT OSCILLOSCOPE & TRANSFER CURVE
+// 4. TEKTRONIX-STYLE REAL-TIME CRT OSCILLOSCOPE & TRANSFER CURVE (/api/scope)
 // ============================================================================
 let scopePhase = 0;
 
-function nonLinearTubeStage(x, drive, asym, sagFactor) {
-  // Asymmetric White-Box Triode + Pentode Transfer Function
-  const k = 1 + drive * 0.45;
-  const shifted = x + asym * 0.28;
-  const pos = Math.tanh(k * shifted);
-  const neg = Math.tanh(k * 0.72 * shifted);
-  const biased = shifted >= 0 ? pos : neg;
-  return biased * (1 - sagFactor * 0.035);
+async function pollScopeFromBackend() {
+  try {
+    const res = await fetch('/api/scope');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.transfer_curve && Array.isArray(data.transfer_curve)) {
+        state.scopeTransferCurve = data.transfer_curve;
+      }
+      if (data.waveform && Array.isArray(data.waveform)) {
+        state.scopeWaveform = data.waveform;
+      }
+    }
+  } catch (_) {}
 }
 
 function drawCrtScope() {
@@ -366,7 +566,7 @@ function drawCrtScope() {
       for (let x = 0; x < w; x++) {
         const t = (x / w) * Math.PI * 4 + scopePhase;
         const inSig = Math.sin(t) * 0.65 + Math.sin(t * 2) * 0.22;
-        const outSig = nonLinearTubeStage(inSig, drive, asym, sag);
+        const outSig = Math.tanh(inSig * 1.8);
         const y = h / 2 - outSig * (h * 0.38);
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
@@ -375,18 +575,30 @@ function drawCrtScope() {
     ctx.stroke();
     ctx.shadowBlur = 0;
   } else if (state.scopeMode === 'transfer') {
-    // X-Y Non-Linear Transfer Curve (Waveshaper Knee & Bias Operating Point)
+    // Curva de transferência real obtida do motor DSP (/api/scope)
     ctx.strokeStyle = '#ffca28';
     ctx.shadowColor = '#ff9100';
     ctx.shadowBlur = 10;
     ctx.lineWidth = 2.5;
     ctx.beginPath();
-    for (let px = 0; px < w; px++) {
-      const xNorm = (px / w) * 2 - 1; // -1 to +1
-      const yNorm = nonLinearTubeStage(xNorm, drive, asym, sag);
-      const py = h / 2 - yNorm * (h * 0.4);
-      if (px === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+    const curve = state.scopeTransferCurve || [];
+    if (curve.length > 0) {
+      const step = curve.length / w;
+      for (let px = 0; px < w; px++) {
+        const idx = Math.min(curve.length - 1, Math.floor(px * step));
+        const yNorm = curve[idx] || 0;
+        const py = h / 2 - yNorm * (h * 0.4);
+        if (px === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+    } else {
+      for (let px = 0; px < w; px++) {
+        const xNorm = (px / w) * 2 - 1;
+        const yNorm = Math.tanh(xNorm * 1.6);
+        const py = h / 2 - yNorm * (h * 0.4);
+        if (px === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
     }
     ctx.stroke();
     ctx.shadowBlur = 0;
@@ -484,6 +696,15 @@ function renderFootswitches() {
 
     unit.addEventListener('click', () => {
       blk.bypassed = !blk.bypassed;
+      const keyMap = {
+        'blk_drive': 'drive.enabled',
+        'blk_mod_2': 'mod_2.enabled',
+        'blk_dly_1': 'dly_1.enabled',
+        'blk_rev_1': 'rev_1.enabled',
+      };
+      if (keyMap[blk.id]) {
+        syncParamsToBackend({ [keyMap[blk.id]]: !blk.bypassed }, true);
+      }
       updateCpuBudget();
       renderSignalGrid();
       renderFootswitches();
@@ -519,7 +740,7 @@ function renderFootswitches() {
 // ============================================================================
 // 6. GAPLESS SCENE SWITCHING (< 1ms Crossfade State Transition)
 // ============================================================================
-function activateSceneGapless(sceneIdx) {
+async function activateSceneGapless(sceneIdx) {
   state.activeScene = sceneIdx;
   const sc = state.scenes[sceneIdx];
   if (!sc) return;
@@ -546,17 +767,60 @@ function activateSceneGapless(sceneIdx) {
   updateKnobValue('inputGain', sc.gain);
   updateKnobValue('overdrive', sc.od);
 
+  // Sincroniza parâmetros de cena para o motor DSP (Spec 014, CA-2; Spec 024, CA-10; Spec 025, CA-6)
+  const delta = {
+    'amp_1.gain': sc.gain,
+    'amp_1.overdrive': sc.od,
+    'drive.enabled': !sc.driveBypass,
+    'dly_1.enabled': !sc.dlyBypass,
+    'scene.active': sc.id,
+  };
+  syncParamsToBackend(delta, true);
+
+  let transitionMs = 1.2;
+  try {
+    const res = await fetch('/api/scenes/select', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sonix-Token': window.__SONIX_TOKEN__ || '',
+      },
+      body: JSON.stringify({ scene: sc.id }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.transition_ms !== undefined) {
+        transitionMs = data.transition_ms;
+      }
+    }
+  } catch (_) {}
+
   // Update Faceplate Material Theme (Brushed Brass, Chrome, or Blackout)
   const faceplate = document.getElementById('ampFaceplate');
   faceplate.className = `amp-faceplate ${sc.faceplate}`;
   document.getElementById('ampBrandLogoText').textContent = sc.logo;
 
   const badge = document.getElementById('gaplessStatusBadge');
-  badge.textContent = `⚡ SCENE ${sc.id} (${sc.name}) — GAPLESS CROSSFADE 1.1ms + SPILLOVER`;
+  if (badge) {
+    badge.textContent = `⚡ SCENE ${sc.id} (${sc.name}) — GAPLESS CROSSFADE ${transitionMs}ms + SPILLOVER`;
+  }
 
   updateCpuBudget();
   renderSignalGrid();
   renderFootswitches();
+}
+
+async function saveCurrentScene() {
+  const sc = state.scenes[state.activeScene];
+  if (!sc) return;
+  if (state.ampParams && state.ampParams.gain !== undefined) {
+    sc.gain = state.ampParams.gain;
+  }
+  const delta = {
+    'amp_1.gain': sc.gain,
+    'scene.active': sc.id,
+  };
+  await syncParamsToBackend(delta, true);
 }
 
 // ============================================================================
@@ -571,11 +835,7 @@ function updateCpuBudget() {
       total += b.cpu * factor;
     }
   });
-  const cpuText = document.getElementById('cpuMeterText');
-  if (cpuText) {
-    cpuText.textContent = `${total.toFixed(1)}%`;
-    cpuText.style.color = total > 75 ? '#ff5252' : '#00e5ff';
-  }
+  state.estimatedCpu = total;
 }
 
 // ============================================================================
@@ -605,12 +865,15 @@ function initDraggableCabMics() {
       handle.style.left = `${xPct}%`;
       handle.style.top = `${yPct}%`;
 
-      // Distance from center (50%, 50%) = Cap-to-Edge %
-      const distFromCenter = Math.min(100, Math.round(Math.hypot(xPct - 50, yPct - 50) * 1.8));
-      const distanceCm = ((yPct / 100) * 12).toFixed(1);
+      // Distance from center (50%, 50%) = Cap-to-Edge % (Spec 022, CA-7: não altera distance_cm)
+      const distNorm = Math.min(1.0, Math.max(0.0, Math.hypot(xPct - 50, yPct - 50) * 1.8 / 100));
+      const distFromCenter = Math.round(distNorm * 100);
+      const micIdx = handle.id === 'mic1Handle' ? 1 : 2;
+      syncParamsToBackend({ [`cab_1.mic${micIdx}.position`]: distNorm });
+
       const readout = document.getElementById(readoutId);
       if (readout) {
-        readout.textContent = `${labelPrefix} ${distFromCenter}% | ${distanceCm}cm`;
+        readout.textContent = `${labelPrefix} ${distFromCenter}%`;
       }
     });
 
@@ -755,22 +1018,46 @@ function initEventListeners() {
     updateKnobValue('inputGain', mappedGain);
   });
 
-  // Toggle Test Signal DSP Generator
-  const btnRiff = document.getElementById('btnToggleRiff');
-  btnRiff.addEventListener('click', () => {
-    state.testRiffPlaying = !state.testRiffPlaying;
-    btnRiff.classList.toggle('active-riff', state.testRiffPlaying);
-    btnRiff.textContent = state.testRiffPlaying ? '■ Stop Test Signal' : '▶ Test Signal DSP';
-    toggleTestRiffAudio(state.testRiffPlaying);
-  });
+  // Toggle Test Signal DSP Generator (Spec 019, CA-5)
+  const btnRiff = document.getElementById('testSignalBtn') || document.getElementById('btnToggleRiff');
+  if (btnRiff) {
+    btnRiff.addEventListener('click', () => {
+      state.testRiffPlaying = !state.testRiffPlaying;
+      btnRiff.classList.toggle('active-riff', state.testRiffPlaying);
+      btnRiff.textContent = state.testRiffPlaying ? '■ Stop Test Signal' : '▶ Test Signal DSP';
+      toggleTestRiffAudio(state.testRiffPlaying);
+    });
+  }
 
-  // Toggle Tuner Bar
+  // Model Selection handler (Spec 020, CA-3, CA-7)
+  const ampModelSel = document.getElementById('ampModelSelect');
+  if (ampModelSel) {
+    ampModelSel.addEventListener('change', (e) => {
+      const model = e.target.value;
+      state.ampParams.model = model;
+      syncParamsToBackend({ 'amp_1.model': model }, false);
+    });
+  }
+
+  // Audio Input Channel Selection handler (Spec 018, CA-8)
+  const audioInputChannelSelect = document.getElementById('audioInputChannelSelect');
+  if (audioInputChannelSelect) {
+    audioInputChannelSelect.addEventListener('change', (e) => {
+      syncParamsToBackend({ 'audio.input_channel': e.target.value }, false);
+    });
+  }
+
+  // Toggle Tuner Bar (Spec 026, CA-4, CA-5)
   const btnTuner = document.getElementById('btnToggleTuner');
-  btnTuner.addEventListener('click', () => {
-    state.tunerVisible = !state.tunerVisible;
-    btnTuner.classList.toggle('active-mode', state.tunerVisible);
-    document.getElementById('tunerBar').classList.toggle('visible', state.tunerVisible);
-  });
+  if (btnTuner) {
+    btnTuner.addEventListener('click', () => {
+      state.tunerVisible = !state.tunerVisible;
+      btnTuner.classList.toggle('active-mode', state.tunerVisible);
+      const tunerBar = document.getElementById('tunerBar');
+      if (tunerBar) tunerBar.classList.toggle('visible', state.tunerVisible);
+      syncParamsToBackend({ 'tuner.enabled': state.tunerVisible }, false);
+    });
+  }
 
   // Toggle Hardware Floorboard Shell Mode
   const btnShell = document.getElementById('btnHardwareShell');
@@ -780,130 +1067,86 @@ function initEventListeners() {
     document.body.classList.toggle('hardware-shell-mode', state.hardwareShellMode);
   });
 
-  // Export Offline JSON Preset
-  document.getElementById('btnExportPreset').addEventListener('click', () => {
-    const payload = {
-      schemaVersion: '1.0.0',
-      presetName: document.getElementById('presetSelect').value,
-      activeScene: state.activeScene,
-      oversampling: state.oversampling,
-      ampParams: state.ampParams,
-      circuitParams: state.circuitParams,
-      blocks: state.blocks,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${payload.presetName}.sonixpreset.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  });
+  // Preset selection handler (Spec 025, CA-1, CA-2)
+  const presetSel = document.getElementById('presetSelect');
+  if (presetSel) {
+    presetSel.addEventListener('change', async (e) => {
+      const presetId = e.target.value;
+      try {
+        const res = await fetch('/api/presets/load', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Sonix-Token': window.__SONIX_TOKEN__ || '',
+          },
+          body: JSON.stringify({ id: presetId }),
+        });
+        if (res.ok) {
+          const badge = document.getElementById('presetBankBadge');
+          if (badge) {
+            const idx = presetSel.selectedIndex + 1;
+            badge.textContent = `P0${idx}`;
+          }
+          await loadInitialState();
+        }
+      } catch (_) {}
+    });
+  }
+
+  // Export Preset via backend engine (Spec 025, CA-4)
+  const btnExport = document.getElementById('btnExportPreset');
+  if (btnExport) {
+    btnExport.addEventListener('click', async () => {
+      const presetId = document.getElementById('presetSelect')?.value || 'brit800';
+      try {
+        const res = await fetch(`/api/presets/${presetId}/export`);
+        if (res.ok) {
+          const data = await res.json();
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${presetId}.sonixpreset`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+      } catch (_) {}
+    });
+  }
 }
 
 // ============================================================================
-// WEB AUDIO GUITAR TEST RIFF SYNTHESIZER
+// DSP MOTOR GUITAR TEST RIFF (Spec 019, CA-5)
 // ============================================================================
-let riffAudioCtx = null;
-let riffInterval = null;
-
 function toggleTestRiffAudio(start) {
-  if (!start) {
-    if (riffInterval) { clearInterval(riffInterval); riffInterval = null; }
-    if (riffAudioCtx) {
-      try { riffAudioCtx.close(); } catch (_) {}
-      riffAudioCtx = null;
-    }
-    return;
-  }
-
-  try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    riffAudioCtx = new AudioCtx();
-    const ctx = riffAudioCtx;
-
-    // Distorção valvulada simulada via WaveShaper
-    const shaper = ctx.createWaveShaper();
-    const curve = new Float32Array(256);
-    for (let i = 0; i < 256; i++) {
-      const x = (i * 2) / 256 - 1;
-      curve[i] = (Math.PI + 4) * x / (Math.PI + 4 * Math.abs(x));
-    }
-    shaper.curve = curve;
-
-    const cabFilter = ctx.createBiquadFilter();
-    cabFilter.type = 'lowpass';
-    cabFilter.frequency.setValueAtTime(4200, ctx.currentTime);
-
-    const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(0.28, ctx.currentTime);
-
-    shaper.connect(cabFilter);
-    cabFilter.connect(masterGain);
-    masterGain.connect(ctx.destination);
-
-    // Riff estilo rock clássico (E2, G2, A2, Bb2, B2)
-    const notes = [82.41, 82.41, 98.0, 110.0, 116.54, 110.0, 98.0, 82.41];
-    let step = 0;
-
-    riffInterval = setInterval(() => {
-      if (!riffAudioCtx || riffAudioCtx.state === 'closed') return;
-      const osc = ctx.createOscillator();
-      const oscGain = ctx.createGain();
-      const freq = notes[step % notes.length];
-      step++;
-
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-
-      oscGain.gain.setValueAtTime(0.35, ctx.currentTime);
-      oscGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.32);
-
-      osc.connect(oscGain);
-      oscGain.connect(shaper);
-
-      osc.start();
-      osc.stop(ctx.currentTime + 0.33);
-    }, 280);
-  } catch (e) {
-    console.warn('Web Audio sintetizador não suportado:', e);
-  }
+  syncParamsToBackend({ "input.source": start ? "test_riff" : "device" }, false);
 }
 
 // ============================================================================
-// REAL-TIME TELEMETRY & STROBE TUNER
+// REAL-TIME TELEMETRY & STROBE TUNER (Spec 026, CA-5, CA-6, CA-7)
 // ============================================================================
-function updateStrobeTunerFromSignal() {
+async function updateStrobeTunerFromSignal() {
   const tunerEl = document.getElementById('tunerNoteText');
   const needle = document.querySelector('.strobe-center-needle');
   if (!tunerEl || !needle || !state.tunerVisible) return;
 
-  if (state.liveWaveform && state.liveWaveform.length > 300 && state.liveInputDb > -52) {
-    const wave = state.liveWaveform;
-    const sampleRate = 48000;
-    let bestR = 0;
-    let bestLag = 0;
-    for (let lag = 100; lag < 600; lag += 2) {
-      let r = 0;
-      for (let i = 0; i < 200; i += 2) {
-        r += wave[i] * wave[i + lag];
-      }
-      if (r > bestR) {
-        bestR = r;
-        bestLag = lag;
+  try {
+    const res = await fetch('/api/tuner');
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.note_name || data.note_name === '---' || data.frequency_hz <= 0) {
+        tunerEl.textContent = '—';
+        needle.style.transform = 'translateX(0px)';
+      } else {
+        const sign = data.cents_deviation > 0 ? '+' : '';
+        const cents = Number(data.cents_deviation).toFixed(1);
+        tunerEl.textContent = `${data.note_name} (${sign}${cents}¢)`;
+        const offset = Math.min(48, Math.max(-48, data.cents_deviation * 0.5));
+        needle.style.transform = `translateX(${offset}px)`;
       }
     }
-    if (bestLag > 0 && bestR > 0.05) {
-      const freq = sampleRate / bestLag;
-      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-      const midiNum = 69 + 12 * Math.log2(freq / 440);
-      const roundedMidi = Math.round(midiNum);
-      const centDiff = ((midiNum - roundedMidi) * 100).toFixed(1);
-      const noteName = noteNames[(roundedMidi % 12 + 12) % 12];
-      const octave = Math.floor(roundedMidi / 12) - 1;
-      tunerEl.textContent = `${noteName}${octave} (${centDiff > 0 ? '+' : ''}${centDiff}¢)`;
-      needle.style.transform = `translateX(${Math.min(48, Math.max(-48, centDiff * 0.5))}px)`;
-    }
+  } catch (_) {
+    tunerEl.textContent = '—';
   }
 }
 
@@ -914,10 +1157,19 @@ async function pollBackendTelemetry() {
       const data = await res.json();
       state.liveInputDb = data.input_peak_db;
       state.liveOutputDb = data.output_peak_db;
+      if (typeof data.adc_clips === 'number' && data.adc_clips > 0) {
+        state.adcClips = data.adc_clips;
+        const clipEl = document.getElementById('vuInClip');
+        if (clipEl) {
+          clipEl.classList.add('clipping');
+          setTimeout(() => clipEl.classList.remove('clipping'), 1000);
+        }
+      }
       if (data.waveform && data.waveform.length > 0) {
         state.liveWaveform = data.waveform;
       }
       updateStrobeTunerFromSignal();
+      pollScopeFromBackend();
     }
   } catch (_) {}
 }

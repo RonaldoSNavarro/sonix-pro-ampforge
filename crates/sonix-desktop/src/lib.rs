@@ -1,6 +1,7 @@
 //! SONIX PRO // AMPFORGE™ Desktop Host Standalone (Tauri v2 + Rust)
 
 pub mod audio;
+pub mod calibration;
 pub mod midi;
 pub mod server;
 

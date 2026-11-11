@@ -3,18 +3,35 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreampTube {
-    Ax7A,   // mu = 100
-    Ecc83S, // mu = 100
-    At7,    // mu = 60
-    Ay7,    // mu = 45
-    Ef86,   // high-gain pentode
+    Ax7A,
+    At7,
+    Ay7,
+    Ef86,
 }
 
 impl PreampTube {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ax7A => "12ax7",
+            Self::At7 => "12at7",
+            Self::Ay7 => "12ay7",
+            Self::Ef86 => "ef86_variant",
+        }
+    }
+
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s {
+            "12ax7" | "ecc83" => Some(Self::Ax7A),
+            "12at7" => Some(Self::At7),
+            "12ay7" => Some(Self::Ay7),
+            "ef86_variant" | "ef86" => Some(Self::Ef86),
+            _ => None,
+        }
+    }
+
     pub fn amplification_factor(&self) -> f32 {
         match self {
             Self::Ax7A => 100.0,
-            Self::Ecc83S => 100.0,
             Self::At7 => 60.0,
             Self::Ay7 => 45.0,
             Self::Ef86 => 90.0,
@@ -24,11 +41,37 @@ impl PreampTube {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToneStackTopology {
-    PassiveJamesBaxandall,
-    FenderTmbMidScoop,
+    Model,
     MarshallCathodeFollower,
+    FenderTmbMidScoop,
     VoxTopBoost,
+    PassiveJamesBaxandall,
     MesaMarkPreGain,
+}
+
+impl ToneStackTopology {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::MarshallCathodeFollower => "marshall",
+            Self::FenderTmbMidScoop => "fender",
+            Self::VoxTopBoost => "vox",
+            Self::PassiveJamesBaxandall => "baxandall",
+            Self::MesaMarkPreGain => "mesa_mark",
+        }
+    }
+
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s {
+            "model" => Some(Self::Model),
+            "marshall" => Some(Self::MarshallCathodeFollower),
+            "fender" => Some(Self::FenderTmbMidScoop),
+            "vox" => Some(Self::VoxTopBoost),
+            "baxandall" => Some(Self::PassiveJamesBaxandall),
+            "mesa_mark" => Some(Self::MesaMarkPreGain),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,9 +85,32 @@ pub enum ToneStackPosition {
 pub enum PowerTube {
     El34,
     Tube6L6Gc,
+    Tube6V6,
     Kt88,
     El84,
-    Tube6V6,
+}
+
+impl PowerTube {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::El34 => "el34",
+            Self::Tube6L6Gc => "6l6gc",
+            Self::Tube6V6 => "6v6",
+            Self::Kt88 => "kt88",
+            Self::El84 => "el84_variant",
+        }
+    }
+
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s {
+            "el34" => Some(Self::El34),
+            "6l6gc" | "6l6" => Some(Self::Tube6L6Gc),
+            "6v6" => Some(Self::Tube6V6),
+            "kt88" => Some(Self::Kt88),
+            "el84_variant" | "el84" => Some(Self::El84),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +124,49 @@ pub enum RectifierType {
     SolidStateDiode,
     Gz34_5Ar4,
     Dual5U4Gb,
+}
+
+impl RectifierType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SolidStateDiode => "diode",
+            Self::Gz34_5Ar4 => "gz34",
+            Self::Dual5U4Gb => "5u4gb",
+        }
+    }
+
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s {
+            "diode" | "solid_state" => Some(Self::SolidStateDiode),
+            "gz34" | "5ar4" => Some(Self::Gz34_5Ar4),
+            "5u4gb" | "5u4g" => Some(Self::Dual5U4Gb),
+            _ => None,
+        }
+    }
+
+    pub fn internal_resistance(&self) -> f64 {
+        match self {
+            Self::SolidStateDiode => 0.15,
+            Self::Gz34_5Ar4 => 0.45,
+            Self::Dual5U4Gb => 0.70,
+        }
+    }
+
+    pub fn attack_time_sec(&self) -> f64 {
+        match self {
+            Self::SolidStateDiode => 0.010,
+            Self::Gz34_5Ar4 => 0.030,
+            Self::Dual5U4Gb => 0.040,
+        }
+    }
+
+    pub fn release_time_sec(&self) -> f64 {
+        match self {
+            Self::SolidStateDiode => 0.020,
+            Self::Gz34_5Ar4 => 0.080,
+            Self::Dual5U4Gb => 0.120,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,5 +475,32 @@ impl ChassisWorkbench {
                 }
             }
         }
+    }
+
+    pub fn compute_static_transfer_sample(x: f64, asym: f64, plate_v: f64) -> f64 {
+        let v_scale = (plate_v / 250.0).max(0.1);
+        let x_scaled = x / v_scale;
+        let x_asym = if asym > 1e-4 {
+            if x_scaled >= 0.0 {
+                x_scaled * (1.0 + 0.5 * asym)
+            } else {
+                x_scaled * (1.0 - 0.5 * asym)
+            }
+        } else {
+            x_scaled
+        };
+        (x_asym / (1.0 + x_asym.abs())) * v_scale
+    }
+
+    pub fn compute_transfer_curve(&self, num_points: usize) -> Vec<(f32, f32)> {
+        let mut pts = Vec::with_capacity(num_points);
+        let n = num_points.max(2);
+        for i in 0..n {
+            let norm = i as f64 / (n - 1) as f64;
+            let x = -1.0 + norm * 2.0;
+            let y = Self::compute_static_transfer_sample(x, self.triode_asymmetry as f64, self.plate_voltage as f64);
+            pts.push((x as f32, y as f32));
+        }
+        pts
     }
 }

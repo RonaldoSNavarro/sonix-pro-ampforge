@@ -187,11 +187,16 @@ impl SplitNode {
         match &self.mode {
             SplitMode::BalanceAb { ratio } => {
                 let r = ratio.clamp(0.0, 1.0);
-                let gain_a = (1.0 - r).sqrt();
-                let gain_b = r.sqrt();
-                for i in 0..input.len() {
-                    out_a[i] = input[i] * gain_a;
-                    out_b[i] = input[i] * gain_b;
+                if (r - 0.5).abs() < 1e-4 {
+                    out_a.copy_from_slice(input);
+                    out_b.copy_from_slice(input);
+                } else {
+                    let gain_a = (1.0 - r).sqrt();
+                    let gain_b = r.sqrt();
+                    for i in 0..input.len() {
+                        out_a[i] = input[i] * gain_a;
+                        out_b[i] = input[i] * gain_b;
+                    }
                 }
             }
             SplitMode::Crossover { freq_hz } => {

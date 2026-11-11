@@ -33,7 +33,7 @@
             <option value="brit800">Brit 800 Modded Studio Rig</option>
             <option value="usdeluxe">US Blackface Edge & Shimmer</option>
             <option value="recto">Cali Dual Recto Modern Metal</option>
-            <option value="ac30">UK Chime Top Boost Stereo</option>
+            <option value="ac30">UK 30 Top Boost Stereo</option>
           </select>
         </div>
       </div>
@@ -60,13 +60,33 @@
           <div class="vu-bar-track"><div class="vu-bar-fill" id="vuOutFill"></div></div>
         </div>
 
-        <div class="meter-pill" title="Orçamento de DSP/CPU em Tempo Real (48kHz / 64 samples / 1.3ms)">
-          <span>DSP: <strong class="cpu-badge" id="cpuMeterText">34.2%</strong></span>
-          <span style="color:#7c8798">| 1.28ms</span>
+        <div class="meter-pill" title="Orçamento de DSP/CPU em Tempo Real">
+          <span>DSP: <strong class="cpu-badge" id="cpuMeterText">0.0%</strong></span>
+          <span class="engine-badge" id="engineLinkBadge" style="margin-left:6px; font-size:10px; color:#00e5ff; font-weight:bold;">ONLINE</span>
         </div>
 
-        <button class="hw-btn" id="btnToggleRiff" title="Ativar gerador de sinal para ver/ouvir o circuito reagindo ao vivo">
+        <!-- Painel de Configurações de Áudio e Latência Mínima (Spec 018, CA-8) -->
+        <div class="audio-settings-panel" id="audioSettingsPanel" style="display:inline-flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:11px; background:#11151c; padding:3px 8px; border-radius:4px; border:1px solid #232c3d;">
+          <span id="audioModeText" style="color:#00e5ff;">wasapi_shared_low_latency</span>
+          <span style="color:#4a5568">|</span>
+          <span id="audioSampleRateText">48000 Hz</span>
+          <span style="color:#4a5568">|</span>
+          <span id="audioPeriodsText">128/128</span>
+          <span style="color:#4a5568">|</span>
+          <span id="audioMeasuredRoundtripText" style="color:#f6ad55;">não medida</span>
+          <select id="audioInputChannelSelect" class="hw-select" style="background:#1a202c; color:#fff; border:1px solid #4a5568; font-size:10px; padding:2px 4px; border-radius:3px;">
+            <option value="left" selected>IN: Left</option>
+            <option value="right">IN: Right</option>
+            <option value="sum">IN: Sum (L+R)</option>
+          </select>
+        </div>
+
+        <button class="hw-btn" id="testSignalBtn" title="Ativar gerador de sinal para ver/ouvir o circuito reagindo ao vivo">
           ▶ Test Signal DSP
+        </button>
+
+        <button class="hw-btn" id="btnCalibrateInput" title="Calibrar ganho de entrada e gate para o microfone P2/onboard">
+          ⚖ Calibrar Entrada
         </button>
 
         <button class="hw-btn" id="btnToggleTuner">
@@ -92,6 +112,26 @@
         <div class="strobe-center-needle"></div>
       </div>
       <div class="tuner-note-display" id="tunerNoteText">E2 (-0.1¢)</div>
+    </div>
+
+    <!-- Assistente de Calibração de Entrada (Spec 019, CA-1 a CA-3) -->
+    <div id="inputCalibrationWizard" class="calibration-wizard-modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:#18181b; border:1px solid #3f3f46; border-radius:8px; padding:20px; z-index:9999; width:420px; box-shadow:0 8px 32px rgba(0,0,0,0.8); color:#f4f4f5; font-family:var(--font-sans, sans-serif);">
+      <h3 style="margin-top:0; color:#00e5ff; font-size:14px; text-transform:uppercase;">⚖ Assistente de Calibração de Entrada</h3>
+      <p style="font-size:12px; color:#a1a1aa; line-height:1.4;">Calibre o nível do captador e o threshold de ruído para sua placa onboard (P2 3.5mm).</p>
+      <div id="calibStep1" style="margin:12px 0; padding:10px; background:#27272a; border-radius:4px; font-size:12px;">
+        <strong>Passo 1:</strong> Fique em silêncio com as cordas abafadas por 3s para medir o piso de ruído e hum.
+      </div>
+      <div id="calibStep2" style="margin:12px 0; padding:10px; background:#27272a; border-radius:4px; font-size:12px; display:none;">
+        <strong>Passo 2:</strong> Toque acordes com força por 5s para medir o pico real da palhetada.
+      </div>
+      <div id="calibStep3" style="margin:12px 0; padding:10px; background:#27272a; border-radius:4px; font-size:12px; display:none;">
+        <div id="calibResultText" style="color:#22c55e; font-weight:bold; margin-bottom:8px;"></div>
+        <div id="calibDiagnosticText" style="color:#f59e0b; margin-bottom:8px;"></div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+        <button id="btnStartCalib" class="hw-btn" style="background:#00e5ff; color:#000;">Iniciar Calibração</button>
+        <button id="btnCloseCalib" class="hw-btn">Fechar</button>
+      </div>
     </div>
 
     <!-- Sub-Navegação: Workspace do Rig vs Catálogo Técnico do Design System -->
@@ -135,6 +175,17 @@
       <div class="grid-matrix-container" id="gridMatrixContainer">
         <!-- Renderizado dinamicamente pelo app.js (Linhas 1 a 4 com blocos clicáveis) -->
       </div>
+
+      <!-- Editor do Bloco Selecionado (Spec 023) -->
+      <div class="block-editor-panel" id="blockEditor" style="display:none;">
+        <div class="block-editor-header">
+          <span class="block-editor-title" id="blockEditorTitle">PEDAL: SCREAMER 808 (DRIVE)</span>
+          <span class="block-editor-badge" id="blockEditorStatus">INSPIRADO NO CIRCUITO 808</span>
+        </div>
+        <div class="block-editor-body" id="blockEditorBody">
+          <!-- Injetado dinamicamente pelo app.js -->
+        </div>
+      </div>
     </section>
 
     <!-- ====================================================================
@@ -145,10 +196,11 @@
         <div class="active-unit-breadcrumb">
           <span class="unit-badge" id="selectedBlockBadge">AMP 1 // CANAL C</span>
           <select class="unit-model-select" id="ampModelSelect" aria-label="Modelo de Circuito White-Box">
-            <option value="brit800">Brit JCM 800 2203 (100W EL34 Push-Pull)</option>
-            <option value="plexisuper">1959 Super Lead Plexi (jumped channels)</option>
-            <option value="usdeluxe">US Twin Blackface '65 (2x 6L6GC Clean)</option>
-            <option value="calirecto">Cali Dual Rectifier Rev-F (High Gain 6L6/GZ34)</option>
+            <option value="jcm800_2203">Marshall JCM800 2203 (100W EL34)</option>
+            <option value="plexi_1959">Marshall 1959 Super Lead Plexi (Jumped)</option>
+            <option value="twin_ab763">Fender Twin Reverb AB763 (6L6 Clean)</option>
+            <option value="dual_rect">Mesa/Boogie Dual Rectifier Rev-F</option>
+            <option value="ac30_tb">Vox AC30 Top Boost (EL84 Class A)</option>
           </select>
           <span style="font-family:var(--font-mono); font-size:11px; color:#9ba6b8;" id="coupledImpedanceBadge">
             ⚡ Acoplado: Curva Impedância 4x12 UK Greenback (Res: 98Hz / +6.8dB)
@@ -237,19 +289,18 @@
             <div class="tech-select-group">
               <label for="preampTubeSelect">Válvulas de Preamp (V1/V2)</label>
               <select class="tech-select" id="preampTubeSelect">
-                <option value="12AX7A">12AX7A High-Mu (100 Gain)</option>
-                <option value="ECC83S" selected>JJ ECC83S Warm Asymmetric</option>
-                <option value="12AT7">12AT7 Lower Gain (60 Mu)</option>
-                <option value="EF86">EF86 Pentode Vintage</option>
+                <option value="12ax7" selected>12AX7 / ECC83 — μ ≈ 100</option>
+                <option value="12at7">12AT7 — μ ≈ 60</option>
+                <option value="ef86_variant">EF86 — Pentodo de entrada</option>
               </select>
             </div>
             <div class="tech-select-group">
               <label for="powerTubeSelect">Válvulas de Power Amp (V4–V7)</label>
               <select class="tech-select" id="powerTubeSelect">
-                <option value="EL34" selected>Mullard EL34 Pentode (Brit Crunch)</option>
-                <option value="6L6GC">RCA 6L6GC Beam Tetrode (US Punch)</option>
-                <option value="KT88">Genalex KT88 High Headroom</option>
-                <option value="EL84">Vox EL84 Class-A Chime</option>
+                <option value="el34" selected>EL34 — Pentodo de Potência</option>
+                <option value="6l6gc">6L6GC — Tetrodo de Feixe</option>
+                <option value="kt88">KT88 — Tetrodo Kinkless</option>
+                <option value="el84_variant">EL84 — Pentodo Noval</option>
               </select>
             </div>
           </div>
@@ -259,6 +310,7 @@
         <div class="circuit-trimpots-panel">
           <div class="panel-tech-header">
             <span class="panel-tech-title">⚙️ PARÂMETROS DE CIRCUITO WHITE-BOX (MOD SHOP)</span>
+            <span class="mod-badge" id="modBadge" style="display:none; background:#ff9100; color:#000; font-weight:bold; font-size:10px; padding:2px 6px; border-radius:3px;">MOD</span>
             <span style="font-family:var(--font-mono); font-size:10px; color:#8c97a8;">SOLVER: 64-BIT NEWTON-RAPHSON</span>
           </div>
 
@@ -384,23 +436,33 @@
             <div class="trimpot-card">
               <div class="trimpot-header">
                 <span class="trimpot-name" style="color:#ffc400;">MIC 1: Dynamic 57</span>
-                <span class="trimpot-val" id="mic1CoordText">Cap 32% | 2.5cm</span>
+                <span class="trimpot-val" id="mic1CoordText">Cap 20%</span>
               </div>
-              <small style="font-family:var(--font-mono); color:#8c97a8;">Nível: 0.0 dB | Fase: 0° Normal</small>
+              <small id="mic1LevelText" style="font-family:var(--font-mono); color:#8c97a8;">Nível: 0.0 dB | Fase: 0° Normal</small>
+              <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+                <span style="font-size:10px; color:#8c97a8;">Distância:</span>
+                <input type="range" class="trimpot-slider mic-control" id="sliderMic1Dist" min="0" max="30" step="0.5" value="2.0" style="flex:1;" />
+                <span id="valMic1Dist" style="font-size:10px; font-family:var(--font-mono); color:#ffc400;">2.0 cm</span>
+              </div>
             </div>
 
             <div class="trimpot-card">
               <div class="trimpot-header">
                 <span class="trimpot-name" style="color:#00e5ff;">MIC 2: Ribbon 121</span>
-                <span class="trimpot-val" id="mic2CoordText">Edge 64% | 6.0cm</span>
+                <span class="trimpot-val" id="mic2CoordText">Edge 50%</span>
               </div>
-              <small style="font-family:var(--font-mono); color:#8c97a8;">Nível: -3.5 dB | Delay: 0.08 ms</small>
+              <small id="mic2DelayText" style="font-family:var(--font-mono); color:#8c97a8;">Nível: 0.0 dB | Delay: 0.15 ms</small>
+              <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+                <span style="font-size:10px; color:#8c97a8;">Distância:</span>
+                <input type="range" class="trimpot-slider mic-control" id="sliderMic2Dist" min="0" max="30" step="0.5" value="5.0" style="flex:1;" />
+                <span id="valMic2Dist" style="font-size:10px; font-family:var(--font-mono); color:#00e5ff;">5.0 cm</span>
+              </div>
             </div>
 
             <div class="trimpot-card">
               <div class="trimpot-header">
                 <span class="trimpot-name">Low Resonance Peak</span>
-                <span class="trimpot-val" id="valCabRes">98 Hz (+6.8dB)</span>
+                <span class="trimpot-val" id="valCabRes">98 Hz</span>
               </div>
               <input type="range" class="trimpot-slider" id="sliderCabRes" min="65" max="135" value="98" />
             </div>
@@ -412,6 +474,14 @@
               </div>
               <input type="range" class="trimpot-slider" id="sliderCabHiCut" min="3.5" max="18.0" step="0.1" value="8.2" />
             </div>
+          </div>
+
+          <div style="margin: 10px 0; padding: 8px 12px; background: rgba(0,0,0,0.3); border-radius: 4px; display: flex; align-items: center; justify-content: space-between;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:12px; color:#ffc400; cursor:pointer;">
+              <input type="checkbox" id="checkCabIrEnabled" />
+              <span>Ativar Convolução de IR (Bypass Microfonação Física)</span>
+            </label>
+            <span id="irStatusText" style="font-family:var(--font-mono); font-size:11px; color:#8c97a8;">IR: Nenhuma</span>
           </div>
 
           <div class="tube-selector-row">

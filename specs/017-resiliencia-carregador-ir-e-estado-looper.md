@@ -1,7 +1,7 @@
 ---
 spec: 017
 titulo: Carregador de IR entra em pânico com cabeçalho malformado e o redo/undo do looper perde camadas
-status: rascunho
+status: implementada
 atualizado: 2026-11-09
 ---
 # 017 — Resiliência do Carregador de IR e Undo/Redo Fiel do Looper
@@ -114,9 +114,7 @@ WAV channels=1, rate 1 Hz     → Ok, 16 amostras viram 768.000          (sem li
 - Spec 008 CA-5 (undo/redo da última camada): mantida e agora fiel ao áudio.
 
 ## Testes que cobrem esta spec
-Planejados (red → green): `crates/ampforge-dsp/tests/contract_017_resilience_ir_looper.rs`
-(CA-1…CA-10). Red esperado antes da implementação: CA-1, CA-2, CA-3, CA-4 (pânico/`Ok` indevido),
-CA-5, CA-6, CA-7 (camada perdida). CA-8, CA-9 e CA-10 são não-regressão e já passam.
+Implementados em `crates/ampforge-dsp/tests/contract_017_resilience_ir_looper.rs` (10 CAs aprovados, 100% verde).
 
 ## Notas
 - A versão anterior desta spec propunha `LooperProcessor::clear()` e

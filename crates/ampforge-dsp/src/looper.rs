@@ -28,7 +28,7 @@ pub struct LooperProcessor {
     play_pos: f32,
     reverse: bool,
     half_speed: bool,
-    has_overdub: bool,
+    can_undo: bool,
     can_redo: bool,
 }
 
@@ -57,7 +57,7 @@ impl LooperProcessor {
             play_pos: 0.0,
             reverse: false,
             half_speed: false,
-            has_overdub: false,
+            can_undo: false,
             can_redo: false,
         }
     }
@@ -107,7 +107,7 @@ impl LooperProcessor {
     }
 
     pub fn can_undo(&self) -> bool {
-        self.has_overdub
+        self.can_undo
     }
 
     pub fn can_redo(&self) -> bool {
@@ -118,7 +118,7 @@ impl LooperProcessor {
         self.state = LooperState::Record;
         self.loop_length = 0;
         self.play_pos = 0.0;
-        self.has_overdub = false;
+        self.can_undo = false;
         self.can_redo = false;
     }
 
@@ -134,10 +134,10 @@ impl LooperProcessor {
 
     pub fn overdub(&mut self) {
         if self.loop_length > 0 {
-            // Backup current overdub for undo
-            self.undo_buffer.copy_from_slice(&self.overdub_buffer);
+            // Backup current overdub for undo: copia apenas as loop_length amostras (Spec 017 CA-6, CA-9)
+            self.undo_buffer[..self.loop_length].copy_from_slice(&self.overdub_buffer[..self.loop_length]);
             self.state = LooperState::Overdub;
-            self.has_overdub = true;
+            self.can_undo = true;
             self.can_redo = false;
         }
     }
@@ -148,17 +148,23 @@ impl LooperProcessor {
     }
 
     pub fn undo(&mut self) {
-        if self.has_overdub {
-            // Restore previous overdub
-            self.overdub_buffer.copy_from_slice(&self.undo_buffer);
-            self.has_overdub = false;
+        if self.state == LooperState::Overdub {
+            // Encerra a gravação e descarta a camada em andamento, voltando para Play e restaurando undo_buffer (Spec 017 CA-7)
+            self.state = LooperState::Play;
+            self.overdub_buffer[..self.loop_length].copy_from_slice(&self.undo_buffer[..self.loop_length]);
+            self.can_redo = false;
+        } else if self.can_undo {
+            // Troca referências O(1) sem alocação (Spec 017 CA-3, CA-5, CA-6)
+            std::mem::swap(&mut self.overdub_buffer, &mut self.undo_buffer);
+            self.can_undo = false;
             self.can_redo = true;
         }
     }
 
     pub fn redo(&mut self) {
         if self.can_redo {
-            self.has_overdub = true;
+            std::mem::swap(&mut self.overdub_buffer, &mut self.undo_buffer);
+            self.can_undo = true;
             self.can_redo = false;
         }
     }
@@ -175,6 +181,7 @@ impl LooperProcessor {
                     if self.loop_length < self.max_capacity {
                         self.base_buffer[self.loop_length] = input[i];
                         self.overdub_buffer[self.loop_length] = 0.0;
+                        self.undo_buffer[self.loop_length] = 0.0;
                         self.loop_length += 1;
                         output[i] = input[i];
                     } else {
@@ -201,11 +208,7 @@ impl LooperProcessor {
                     let read_idx = if self.reverse { (len - 1) - idx } else { idx };
 
                     let base_sample = self.base_buffer[read_idx];
-                    let overdub_sample = if self.has_overdub {
-                        self.overdub_buffer[read_idx]
-                    } else {
-                        0.0
-                    };
+                    let overdub_sample = self.overdub_buffer[read_idx];
                     let loop_out = base_sample + overdub_sample;
 
                     if self.state == LooperState::Overdub {

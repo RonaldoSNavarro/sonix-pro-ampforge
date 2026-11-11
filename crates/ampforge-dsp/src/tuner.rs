@@ -125,11 +125,28 @@ impl TunerProcessor {
             };
         }
 
-        // YIN Algorithm:
-        // 1. Difference function
         let n = signal.len();
-        let max_lag = (n / 2).min((self.sample_rate / 40.0) as usize); // Down to 40 Hz (bass E1)
-        let min_lag = (self.sample_rate / 1000.0).floor() as usize;   // Up to 1000 Hz
+        let rms = (signal.iter().map(|&s| s * s).sum::<f32>() / n as f32).sqrt();
+        if rms < 0.005 {
+            return TunerPitchResult {
+                note_name: "---".to_string(),
+                cents_deviation: 0.0,
+                frequency_hz: 0.0,
+            };
+        }
+
+        // YIN Algorithm:
+        // Cobre de 58 Hz a 1450 Hz (Spec 026: 60 Hz a 1.4 kHz)
+        let max_lag = (n / 2).min((self.sample_rate / 58.0).ceil() as usize);
+        let min_lag = (self.sample_rate / 1450.0).floor() as usize;
+
+        if max_lag <= min_lag {
+            return TunerPitchResult {
+                note_name: "---".to_string(),
+                cents_deviation: 0.0,
+                frequency_hz: 0.0,
+            };
+        }
 
         let mut d = vec![0.0f32; max_lag];
         for tau in 1..max_lag {
@@ -181,11 +198,20 @@ impl TunerProcessor {
             }
         }
 
-        // 4. Parabolic interpolation for sub-sample accuracy
+        // Se a periodicidade for fraca (ruído ou não-harmônico)
+        if best_tau == 0 || d_prime[best_tau] > 0.40 {
+            return TunerPitchResult {
+                note_name: "---".to_string(),
+                cents_deviation: 0.0,
+                frequency_hz: 0.0,
+            };
+        }
+
+        // 4. Parabolic interpolation for sub-sample accuracy on symmetric difference function d
         let tau_sub = if best_tau > min_lag && best_tau + 1 < max_lag {
-            let s0 = d_prime[best_tau - 1];
-            let s1 = d_prime[best_tau];
-            let s2 = d_prime[best_tau + 1];
+            let s0 = d[best_tau - 1];
+            let s1 = d[best_tau];
+            let s2 = d[best_tau + 1];
             let denom = 2.0 * (s0 - 2.0 * s1 + s2);
             if denom.abs() > 1e-9 {
                 best_tau as f32 + (s0 - s2) / denom
@@ -197,6 +223,14 @@ impl TunerProcessor {
         };
 
         let freq = self.sample_rate / tau_sub;
+
+        if freq < 60.0 || freq > 1400.0 {
+            return TunerPitchResult {
+                note_name: "---".to_string(),
+                cents_deviation: 0.0,
+                frequency_hz: 0.0,
+            };
+        }
 
         // Convert freq to MIDI note and cents deviation from nearest semitone
         let midi_float = 69.0 + 12.0 * (freq / self.a4_ref).log2();
@@ -238,7 +272,15 @@ impl TunerProcessor {
     pub fn process_audio(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), output.len());
         if !self.is_active {
-            output.copy_from_slice(input);
+            if self.mute_gain < 1.0 {
+                let ramp_step = 1.0 / (0.005 * self.sample_rate);
+                for i in 0..input.len() {
+                    self.mute_gain = (self.mute_gain + ramp_step).min(1.0);
+                    output[i] = input[i] * self.mute_gain;
+                }
+            } else {
+                output.copy_from_slice(input);
+            }
             return;
         }
 

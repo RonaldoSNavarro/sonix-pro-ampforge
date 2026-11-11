@@ -2,14 +2,21 @@
 //! Host de Áudio Nativo Desktop Standalone e Duplex Real-Time (WASAPI, ASIO, CoreAudio, ALSA, JACK)
 //! Suporte a captura física P2/P3 e processamento lock-free em tempo real (Spec 012 & Spec 013)
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use ampforge_dsp::amp::{AmpModelId, WhiteBoxAmpProcessor};
 use ampforge_dsp::cab::VirtualCabProcessor;
-use ampforge_dsp::fx::dynamics::{NoiseGateMode, NoiseGateProcessor};
+use ampforge_dsp::dag::{MixerChannelConfig, MixerNode, SplitMode, SplitNode};
+use ampforge_dsp::fx::delay::{DelayModel, DelayProcessor};
+use ampforge_dsp::fx::drive::{DriveModel, DriveProcessor};
+use ampforge_dsp::fx::dynamics::{CompressorProcessor, CompressorTopology, NoiseGateMode, NoiseGateProcessor};
+use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
+use ampforge_dsp::fx::modulation::{ModModel, ModulationProcessor};
+use ampforge_dsp::fx::reverb::{ReverbModel, ReverbProcessor};
+use ampforge_dsp::tuner::{TunerOutputMode, TunerPitchResult, TunerProcessor};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
 
@@ -30,6 +37,435 @@ pub enum AudioBackendType {
     CoreAudio,
     Alsa,
     Jack,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioMode {
+    Auto,
+    WasapiExclusive,
+    WasapiSharedLowLatency,
+    WasapiShared,
+    Asio,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputChannel {
+    Left,
+    Right,
+    Sum,
+}
+
+impl InputChannel {
+    pub fn convert_interleaved(&self, interleaved: &[f32], channels: usize, out: &mut [f32]) {
+        let ch = channels.max(1);
+        let frames = out.len().min(interleaved.len() / ch);
+        match self {
+            InputChannel::Left => {
+                for i in 0..frames {
+                    out[i] = interleaved[i * ch];
+                }
+            }
+            InputChannel::Right => {
+                for i in 0..frames {
+                    out[i] = if ch >= 2 {
+                        interleaved[i * ch + 1]
+                    } else {
+                        interleaved[i * ch]
+                    };
+                }
+            }
+            InputChannel::Sum => {
+                for i in 0..frames {
+                    out[i] = if ch >= 2 {
+                        0.5 * (interleaved[i * ch] + interleaved[i * ch + 1])
+                    } else {
+                        interleaved[i * ch]
+                    };
+                }
+            }
+        }
+    }
+}
+
+/// Snapshot de Telemetria de Áudio Completo (Spec 018, CA-7)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AudioStatusTelemetry {
+    pub backend: String,
+    pub mode: String,
+    pub fallback_reason: Option<String>,
+    pub raw_processing: bool,
+    pub sample_rate: u32,
+    pub input_period_frames: u32,
+    pub output_period_frames: u32,
+    pub input_device: String,
+    pub output_device: String,
+    pub driver_input_latency_ms: f32,
+    pub driver_output_latency_ms: f32,
+    pub cpu_avg_pct: f32,
+    pub cpu_peak_pct: f32,
+    pub underruns: u64,
+    pub overruns: u64,
+    pub panics: u64,
+    pub adc_clips: u64,
+    pub measured_roundtrip_ms: Option<f32>,
+    #[serde(default)]
+    pub algorithmic_latency_samples: u32,
+}
+
+/// Buffer SPSC Lock-Free Seguro em Rust (Zero Locks, Zero Allocations) (Spec 018, CA-3)
+pub struct LockFreeSpscRingBuffer {
+    buffer: Box<[AtomicU32]>,
+    capacity: usize,
+    mask: usize,
+    write_idx: AtomicUsize,
+    read_idx: AtomicUsize,
+}
+
+impl LockFreeSpscRingBuffer {
+    pub fn new(capacity: usize) -> Self {
+        let cap = capacity.next_power_of_two();
+        let mut storage = Vec::with_capacity(cap);
+        for _ in 0..cap {
+            storage.push(AtomicU32::new(0));
+        }
+        Self {
+            buffer: storage.into_boxed_slice(),
+            capacity: cap,
+            mask: cap - 1,
+            write_idx: AtomicUsize::new(0),
+            read_idx: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub fn occupied(&self) -> usize {
+        let w = self.write_idx.load(Ordering::Acquire);
+        let r = self.read_idx.load(Ordering::Acquire);
+        w.wrapping_sub(r)
+    }
+
+    pub fn is_lock_free(&self) -> bool {
+        true
+    }
+
+    pub fn push_slice(&self, slice: &[f32]) -> usize {
+        let w = self.write_idx.load(Ordering::Relaxed);
+        let r = self.read_idx.load(Ordering::Acquire);
+        let occupied = w.wrapping_sub(r);
+        let available = self.capacity.saturating_sub(occupied);
+        let to_push = slice.len().min(available);
+
+        for (i, &sample) in slice[..to_push].iter().enumerate() {
+            let slot = (w.wrapping_add(i)) & self.mask;
+            self.buffer[slot].store(sample.to_bits(), Ordering::Relaxed);
+        }
+
+        self.write_idx.store(w.wrapping_add(to_push), Ordering::Release);
+        to_push
+    }
+
+    pub fn pop_slice(&self, slice: &mut [f32]) -> usize {
+        let w = self.write_idx.load(Ordering::Acquire);
+        let r = self.read_idx.load(Ordering::Relaxed);
+        let occupied = w.wrapping_sub(r);
+        let to_pop = slice.len().min(occupied);
+
+        for (i, out) in slice[..to_pop].iter_mut().enumerate() {
+            let slot = (r.wrapping_add(i)) & self.mask;
+            let bits = self.buffer[slot].load(Ordering::Relaxed);
+            *out = f32::from_bits(bits);
+        }
+
+        for out in slice[to_pop..].iter_mut() {
+            *out = 0.0;
+        }
+
+        self.read_idx.store(r.wrapping_add(to_pop), Ordering::Release);
+        to_pop
+    }
+}
+
+/// Medição de latência por correlação cruzada com limiar de detecção (Spec 018, CA-9)
+pub fn measure_loopback_latency(
+    test_signal: &[f32],
+    response_signal: &[f32],
+    _sample_rate: f32,
+) -> Result<u32, &'static str> {
+    if test_signal.is_empty() || response_signal.len() < test_signal.len() {
+        return Err("sinal de retorno não detectado");
+    }
+
+    let test_energy: f32 = test_signal.iter().map(|&x| x * x).sum();
+    if test_energy < 1e-9 {
+        return Err("sinal de retorno não detectado");
+    }
+
+    let max_lag = response_signal.len() - test_signal.len();
+    let mut best_lag = 0usize;
+    let mut max_corr = 0.0f32;
+
+    for lag in 0..=max_lag {
+        let mut corr = 0.0f32;
+        let mut resp_energy = 0.0f32;
+
+        for (i, &t) in test_signal.iter().enumerate() {
+            let r = response_signal[lag + i];
+            corr += t * r;
+            resp_energy += r * r;
+        }
+
+        if resp_energy > 1e-9 {
+            let norm_corr = corr / (test_energy * resp_energy).sqrt();
+            if norm_corr > max_corr {
+                max_corr = norm_corr;
+                best_lag = lag;
+            }
+        }
+    }
+
+    if max_corr >= 0.25 {
+        Ok(best_lag as u32)
+    } else {
+        Err("sinal de retorno não detectado")
+    }
+}
+
+/// Host de Áudio Simulado para Testes de Contrato de Tempo Real e Baixa Latência (Spec 018)
+pub struct SimulatedAudioHost {
+    sample_rate: u32,
+    period_frames: usize,
+    buffer: Arc<LockFreeSpscRingBuffer>,
+    phase: f32,
+    drift_ppm: f32,
+    drift_fraction: f32,
+    current_mode: AudioMode,
+    fallback_reason: Option<String>,
+    exclusive_supported: bool,
+    shared_low_latency_supported: bool,
+    panics: Arc<AtomicU64>,
+    test_panic_triggered: bool,
+    device_lost: bool,
+    dsp_chain: RealtimeDspChain,
+}
+
+impl SimulatedAudioHost {
+    pub fn new(sample_rate: u32, period_frames: usize) -> Self {
+        let buffer_cap = (period_frames * 8).next_power_of_two();
+        let ring = Arc::new(LockFreeSpscRingBuffer::new(buffer_cap));
+        // Pré-carrega o buffer com exatamente 1 período para iniciar equilibrado
+        let warmup = vec![0.0f32; period_frames];
+        ring.push_slice(&warmup);
+
+        let mut chain = RealtimeDspChain::new(sample_rate as f32);
+        chain.prepare(sample_rate as f32, period_frames);
+
+        Self {
+            sample_rate,
+            period_frames,
+            buffer: ring,
+            phase: 0.0,
+            drift_ppm: 0.0,
+            drift_fraction: 0.0,
+            current_mode: AudioMode::Auto,
+            fallback_reason: None,
+            exclusive_supported: true,
+            shared_low_latency_supported: true,
+            panics: Arc::new(AtomicU64::new(0)),
+            test_panic_triggered: false,
+            device_lost: false,
+            dsp_chain: chain,
+        }
+    }
+
+    pub fn queue_occupancy(&self) -> usize {
+        self.buffer.occupied()
+    }
+
+    pub fn set_drift_ppm(&mut self, ppm: f32) {
+        self.drift_ppm = ppm;
+    }
+
+    pub fn trigger_test_panic(&mut self) {
+        self.test_panic_triggered = true;
+    }
+
+    pub fn panic_count(&self) -> u64 {
+        self.panics.load(Ordering::Relaxed)
+    }
+
+    pub fn is_device_lost(&self) -> bool {
+        self.device_lost
+    }
+
+    pub fn simulate_device_disconnect(&mut self) {
+        self.device_lost = true;
+    }
+
+    pub fn simulate_device_reconnected(&mut self, elapsed_s: f32) -> bool {
+        if elapsed_s <= 2.5 {
+            self.device_lost = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn open_stream_with_rates(
+        &mut self,
+        in_rate: u32,
+        out_rate: u32,
+        mode: AudioMode,
+    ) -> Result<(), String> {
+        if in_rate != out_rate && mode == AudioMode::WasapiExclusive {
+            return Err(format!(
+                "Taxas de amostragem incompatíveis no modo exclusivo: captura={}Hz, reprodução={}Hz",
+                in_rate, out_rate
+            ));
+        }
+        self.current_mode = mode;
+        self.sample_rate = out_rate;
+        self.dsp_chain.prepare(out_rate as f32, self.period_frames);
+        Ok(())
+    }
+
+    pub fn current_mode(&self) -> AudioMode {
+        self.current_mode
+    }
+
+    pub fn set_exclusive_supported(&mut self, supported: bool) {
+        self.exclusive_supported = supported;
+    }
+
+    pub fn set_shared_low_latency_supported(&mut self, supported: bool) {
+        self.shared_low_latency_supported = supported;
+    }
+
+    pub fn fallback_reason(&self) -> Option<String> {
+        self.fallback_reason.clone()
+    }
+
+    pub fn initialize_auto_backend(&mut self) -> AudioMode {
+        if self.exclusive_supported {
+            self.current_mode = AudioMode::WasapiExclusive;
+        } else if self.shared_low_latency_supported {
+            self.fallback_reason = Some("Modo exclusivo não suportado; recuando para compartilhado baixa latência".to_string());
+            self.current_mode = AudioMode::WasapiSharedLowLatency;
+        } else {
+            self.fallback_reason = Some("Recuo para compartilhado padrão: sem suporte exclusivo ou baixa latência".to_string());
+            self.current_mode = AudioMode::WasapiShared;
+        }
+        self.current_mode
+    }
+
+    pub fn tick_callback_pair(&mut self, sample_val: f32) {
+        let period = self.period_frames;
+        
+        // Simulação de deriva de relógio no produtor (captura)
+        let drift_step = self.drift_ppm * 1e-6 * (period as f32);
+        self.drift_fraction += drift_step;
+        
+        let mut in_count = period;
+        if self.drift_fraction >= 1.0 {
+            in_count += 1;
+            self.drift_fraction -= 1.0;
+        } else if self.drift_fraction <= -1.0 {
+            in_count = in_count.saturating_sub(1);
+            self.drift_fraction += 1.0;
+        }
+
+        let in_buf = vec![sample_val; in_count];
+        self.buffer.push_slice(&in_buf);
+
+        // Alvo em repouso = 1 período (128). Ocupação transitória pós-push = 2 períodos (256)
+        let occ = self.buffer.occupied();
+        let expected_transient = period * 2;
+
+        let mut samples_to_consume = period;
+        if occ > expected_transient + 16 {
+            samples_to_consume += 1;
+        } else if occ < expected_transient.saturating_sub(16) {
+            samples_to_consume = samples_to_consume.saturating_sub(1);
+        }
+
+        let mut out_buf = vec![0.0f32; samples_to_consume];
+        self.buffer.pop_slice(&mut out_buf);
+    }
+
+    pub fn tick_sine_1khz(&mut self) -> Vec<f32> {
+        let period = self.period_frames;
+        let mut out = vec![0.0f32; period];
+
+        if self.device_lost {
+            return out;
+        }
+
+        // Simulação de deriva de relógio no produtor (captura)
+        let drift_step = self.drift_ppm * 1e-6 * (period as f32);
+        self.drift_fraction += drift_step;
+
+        let mut in_count = period;
+        if self.drift_fraction >= 1.0 {
+            in_count += 1;
+            self.drift_fraction -= 1.0;
+        } else if self.drift_fraction <= -1.0 {
+            in_count = in_count.saturating_sub(1);
+            self.drift_fraction += 1.0;
+        }
+
+        let w = 2.0 * std::f32::consts::PI * 1000.0 / (self.sample_rate as f32);
+        let mut in_buf = vec![0.0f32; in_count];
+        for i in 0..in_count {
+            in_buf[i] = (self.phase).sin();
+            self.phase += w;
+            if self.phase > 2.0 * std::f32::consts::PI {
+                self.phase -= 2.0 * std::f32::consts::PI;
+            }
+        }
+
+        // Simula captura produzindo na fila
+        self.buffer.push_slice(&in_buf);
+
+        // Simula reprodução consumindo da fila
+        let occ = self.buffer.occupied();
+        let expected_transient = period * 2;
+
+        let mut consume_len = period;
+        if occ > expected_transient + 16 {
+            consume_len += 1;
+        } else if occ < expected_transient.saturating_sub(16) {
+            consume_len = consume_len.saturating_sub(1);
+        }
+
+        let mut raw_slice = vec![0.0f32; consume_len];
+        self.buffer.pop_slice(&mut raw_slice);
+
+        // Reamostragem suave de interpolação linear para exatamente `period` amostras
+        let mut popped = vec![0.0f32; period];
+        for i in 0..period {
+            let pos = (i as f32 / period as f32) * (raw_slice.len() as f32);
+            let idx = (pos as usize).min(raw_slice.len().saturating_sub(1));
+            let frac = pos - idx as f32;
+            let next_idx = (idx + 1).min(raw_slice.len().saturating_sub(1));
+            popped[i] = raw_slice[idx] * (1.0 - frac) + raw_slice[next_idx] * frac;
+        }
+
+        // Processamento DSP e transporte com proteção contra pânico (Spec 018, CA-2 & CA-11)
+        if self.test_panic_triggered {
+            self.test_panic_triggered = false;
+            self.panics.fetch_add(1, Ordering::Relaxed);
+            out.fill(0.0);
+        } else {
+            // Entrega sinal que atravessou a fila com reamostragem contínua anti-deriva
+            out.copy_from_slice(&popped);
+        }
+
+        out
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -404,63 +840,351 @@ impl RealtimeDuplexEngine {
     }
 }
 
-/// Cadeia DSP Ativa em Tempo Real: Filtro DC + Boost + Noise Gate + White-Box Amp + Cab IR (Spec 013, CA-4)
+/// Cadeia DSP Ativa em Tempo Real: Filtro DC + Boost + Noise Gate + White-Box Amp + Cab IR (Spec 013, CA-4 & Spec 014)
 pub struct RealtimeDspChain {
     sample_rate: f32,
     gate: NoiseGateProcessor,
     gate_enabled: bool,
+    drive: DriveProcessor,
+    drive_enabled: bool,
     amp: WhiteBoxAmpProcessor,
+    amp_enabled: bool,
     cab: VirtualCabProcessor,
     cab_enabled: bool,
     input_boost: f32,
     dc_x1: f32,
     dc_y1: f32,
     temp_boost_buf: Vec<f32>,
+    temp_source_buf: Vec<f32>,
     temp_gate_buf: Vec<f32>,
+    temp_drive_buf: Vec<f32>,
     temp_amp_buf: Vec<f32>,
+    gain_smoother: ampforge_dsp::smoother::OnePoleSmoother,
+    // Crossfade coefficients para bypass sem estalos (Spec 014, CA-9)
+    cab_fade: f32,
+    cab_target_fade: f32,
+    fade_step: f32,
+    // Spec 019: Clipping no conversor e seleção de fonte de sinal
+    adc_clips: Arc<AtomicU64>,
+    input_source: String,
+    test_riff_buffer: Vec<f32>,
+    test_riff_pos: usize,
+    di_buffer: Vec<f32>,
+    di_pos: usize,
+
+    // Spec 024: Efeitos e Caminho Paralelo do Grid ao Vivo
+    split: SplitNode,
+    split_enabled: bool,
+    split_mode: String,
+    split_crossover_hz: f32,
+    comp_2: CompressorProcessor,
+    comp_2_enabled: bool,
+    amp_2: WhiteBoxAmpProcessor,
+    amp_2_enabled: bool,
+    cab_2: VirtualCabProcessor,
+    cab_2_enabled: bool,
+    mod_2: ModulationProcessor,
+    mod_2_enabled: bool,
+    eq_1: EqProcessor,
+    eq_1_enabled: bool,
+    merge: MixerNode,
+    merge_row_1_level_db: f32,
+    merge_row_1_phase_invert: bool,
+    dly_1: DelayProcessor,
+    dly_1_enabled: bool,
+    rev_1: ReverbProcessor,
+    rev_1_enabled: bool,
+
+    // Buffers intermediários pré-alocados para processamento em tempo real zero-alloc
+    temp_split_a_buf: Vec<f32>,
+    temp_split_b_buf: Vec<f32>,
+    temp_cab_buf: Vec<f32>,
+    temp_comp_buf: Vec<f32>,
+    temp_amp2_buf: Vec<f32>,
+    temp_cab2_buf: Vec<f32>,
+    temp_mod_buf: Vec<f32>,
+    temp_eq_buf: Vec<f32>,
+    temp_merge_l_buf: Vec<f32>,
+    temp_merge_r_buf: Vec<f32>,
+    temp_delay_buf: Vec<f32>,
+    temp_reverb_buf: Vec<f32>,
+
+    // Spec 025: Crossfade de preset sem estalos (20 ms)
+    preset_fade: f32,
+    preset_fade_step: f32,
+    preset_crossfading: bool,
+
+    // Spec 026: Afinador ao vivo conectado na entrada da guitarra
+    tuner: TunerProcessor,
+    tuner_enabled: bool,
+    tuner_output_mode: TunerOutputMode,
+    tuner_latest_result: TunerPitchResult,
+    tuner_input_accum: Vec<f32>,
+    tuner_input_accum_pos: usize,
+    tuner_mute_gain: f32,
 }
 
 impl RealtimeDspChain {
     pub fn new(sample_rate: f32) -> Self {
         let mut gate = NoiseGateProcessor::new(NoiseGateMode::IntelligentNaturalGate);
         gate.set_sample_rate(sample_rate);
-        gate.set_threshold_db(-55.0);
+        gate.set_threshold_db(-65.0);
         gate.set_attack_ms(1.0);
         gate.set_release_ms(30.0);
 
+        let mut drive = DriveProcessor::new(DriveModel::GreenScreamer808);
+        drive.set_sample_rate(sample_rate);
+
         let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
         amp.set_sample_rate(sample_rate);
-        amp.panel_mut().set_input_gain(7.5);
-        amp.panel_mut().set_master_volume(6.0);
-        amp.panel_mut().set_bass(5.5);
-        amp.panel_mut().set_middle(6.0);
-        amp.panel_mut().set_treble(6.5);
+        amp.panel_mut().set_input_gain(8.0);
+        amp.panel_mut().set_master_volume(7.0);
+        amp.panel_mut().set_bass(5.0);
+        amp.panel_mut().set_middle(5.0);
+        amp.panel_mut().set_treble(5.0);
         amp.panel_mut().set_presence(5.0);
 
         let mut cab = VirtualCabProcessor::new();
         cab.set_sample_rate(sample_rate);
 
+        // One-pole smoother com constante de tempo de 10ms (Spec 014, CA-8: >=63% em <=20ms e <63% em <5ms)
+        let smoother = ampforge_dsp::smoother::OnePoleSmoother::new(sample_rate as f64, 0.010, 8.0);
+
+        // 10ms fade step
+        let fade_len_samples = (sample_rate * 0.010).max(1.0);
+        let fade_step = 1.0 / fade_len_samples;
+
+        // 20ms preset fade step (Spec 025, CA-2)
+        let preset_fade_len_samples = (sample_rate * 0.020).max(1.0);
+        let preset_fade_step = 1.0 / preset_fade_len_samples;
+
+        // Spec 024: Inicialização dos nós e processadores do Grid ao Vivo
+        let split = SplitNode::new(SplitMode::BalanceAb { ratio: 0.5 });
+        let comp_2 = CompressorProcessor::new(CompressorTopology::StudioFet1176);
+
+        let mut amp_2 = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
+        amp_2.set_sample_rate(sample_rate);
+        amp_2.panel_mut().set_input_gain(5.0);
+        amp_2.panel_mut().set_master_volume(7.0);
+
+        let mut cab_2 = VirtualCabProcessor::new();
+        cab_2.set_sample_rate(sample_rate);
+        cab_2.set_speaker_model(ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open);
+
+        let mut mod_2 = ModulationProcessor::new(ModModel::AnalogBbdChorus);
+        mod_2.set_sample_rate(sample_rate);
+
+        let mut eq_1 = EqProcessor::new(EqMode::Parametric8Band);
+        eq_1.set_sample_rate(sample_rate);
+
+        let mut merge = MixerNode::new();
+        let mut ch0 = MixerChannelConfig::default();
+        ch0.level_db = 0.0;
+        let mut ch1 = MixerChannelConfig::default();
+        ch1.level_db = -6.0;
+        ch1.phase_invert = false;
+        merge.configure_channel(0, ch0);
+        merge.configure_channel(1, ch1);
+
+        let mut dly_1 = DelayProcessor::new(DelayModel::MultiHeadTapeEcho);
+        dly_1.set_sample_rate(sample_rate);
+        dly_1.set_spillover_enabled(true);
+
+        let mut rev_1 = ReverbProcessor::new(ReverbModel::StudioVintagePlate);
+        rev_1.set_sample_rate(sample_rate);
+        rev_1.set_spillover_enabled(true);
+
+        let mut tuner = TunerProcessor::new();
+        tuner.set_sample_rate(sample_rate);
+
         Self {
             sample_rate,
             gate,
             gate_enabled: true,
+            drive,
+            drive_enabled: false,
             amp,
+            amp_enabled: true,
             cab,
             cab_enabled: true,
-            input_boost: 1.0,
+            input_boost: 2.5,
             dc_x1: 0.0,
             dc_y1: 0.0,
             temp_boost_buf: vec![0.0; 2048],
+            temp_source_buf: vec![0.0; 2048],
             temp_gate_buf: vec![0.0; 2048],
+            temp_drive_buf: vec![0.0; 2048],
             temp_amp_buf: vec![0.0; 2048],
+            gain_smoother: smoother,
+            cab_fade: 1.0,
+            cab_target_fade: 1.0,
+            fade_step,
+            adc_clips: Arc::new(AtomicU64::new(0)),
+            input_source: "device".to_string(),
+            test_riff_buffer: crate::calibration::generate_karplus_strong_riff(sample_rate, 12345),
+            test_riff_pos: 0,
+            di_buffer: Vec::new(),
+            di_pos: 0,
+
+            split,
+            split_enabled: false,
+            split_mode: "ab".to_string(),
+            split_crossover_hz: 500.0,
+            comp_2,
+            comp_2_enabled: false,
+            amp_2,
+            amp_2_enabled: true,
+            cab_2,
+            cab_2_enabled: true,
+            mod_2,
+            mod_2_enabled: false,
+            eq_1,
+            eq_1_enabled: false,
+            merge,
+            merge_row_1_level_db: -6.0,
+            merge_row_1_phase_invert: false,
+            dly_1,
+            dly_1_enabled: false,
+            rev_1,
+            rev_1_enabled: false,
+
+            temp_split_a_buf: vec![0.0; 2048],
+            temp_split_b_buf: vec![0.0; 2048],
+            temp_cab_buf: vec![0.0; 2048],
+            temp_comp_buf: vec![0.0; 2048],
+            temp_amp2_buf: vec![0.0; 2048],
+            temp_cab2_buf: vec![0.0; 2048],
+            temp_mod_buf: vec![0.0; 2048],
+            temp_eq_buf: vec![0.0; 2048],
+            temp_merge_l_buf: vec![0.0; 2048],
+            temp_merge_r_buf: vec![0.0; 2048],
+            temp_delay_buf: vec![0.0; 2048],
+            temp_reverb_buf: vec![0.0; 2048],
+
+            preset_fade: 1.0,
+            preset_fade_step,
+            preset_crossfading: false,
+
+            tuner,
+            tuner_enabled: false,
+            tuner_output_mode: TunerOutputMode::Mute,
+            tuner_latest_result: TunerPitchResult {
+                note_name: "---".to_string(),
+                cents_deviation: 0.0,
+                frequency_hz: 0.0,
+            },
+            tuner_input_accum: vec![0.0; 2048],
+            tuner_input_accum_pos: 0,
+            tuner_mute_gain: 1.0,
         }
+    }
+
+    pub fn adc_clips(&self) -> u64 {
+        self.adc_clips.load(Ordering::Relaxed)
+    }
+
+    pub fn trigger_preset_crossfade(&mut self) {
+        self.preset_crossfading = true;
+        self.preset_fade = 0.0;
+    }
+
+    pub fn is_preset_crossfading(&self) -> bool {
+        self.preset_crossfading
+    }
+
+    pub fn set_tuner_enabled(&mut self, enabled: bool) {
+        self.tuner_enabled = enabled;
+        self.tuner.set_active(enabled);
+        if !enabled {
+            self.tuner_input_accum_pos = 0;
+        }
+    }
+
+    pub fn set_tuner_output_mode(&mut self, mode: TunerOutputMode) {
+        self.tuner_output_mode = mode;
+        self.tuner.set_output_mode(mode);
+    }
+
+    pub fn is_tuner_enabled(&self) -> bool {
+        self.tuner_enabled
+    }
+
+    pub fn tuner_latest_result(&self) -> TunerPitchResult {
+        self.tuner_latest_result.clone()
+    }
+
+    pub fn input_source(&self) -> &str {
+        &self.input_source
+    }
+
+    pub fn set_input_source(&mut self, source: &str) {
+        self.input_source = source.to_string();
+    }
+
+    pub fn load_di_wav(&mut self, samples: Vec<f32>) {
+        self.di_buffer = samples;
+        self.di_pos = 0;
     }
 
     pub fn sample_rate(&self) -> f32 {
         self.sample_rate
     }
 
+    pub fn prepare(&mut self, sample_rate: f32, max_block: usize) {
+        self.sample_rate = sample_rate;
+        self.gate.set_sample_rate(sample_rate);
+        self.drive.set_sample_rate(sample_rate);
+        self.amp.set_sample_rate(sample_rate);
+        self.cab.set_sample_rate(sample_rate);
+        self.split.set_sample_rate(sample_rate);
+        self.comp_2.set_sample_rate(sample_rate);
+        self.amp_2.set_sample_rate(sample_rate);
+        self.cab_2.set_sample_rate(sample_rate);
+        self.mod_2.set_sample_rate(sample_rate);
+        self.eq_1.set_sample_rate(sample_rate);
+        self.dly_1.set_sample_rate(sample_rate);
+        self.rev_1.set_sample_rate(sample_rate);
+
+        self.gain_smoother = ampforge_dsp::smoother::OnePoleSmoother::new(
+            sample_rate as f64,
+            0.010,
+            self.gain_smoother.current_value(),
+        );
+        let fade_len_samples = (sample_rate * 0.010).max(1.0);
+        self.fade_step = 1.0 / fade_len_samples;
+
+        if self.temp_boost_buf.len() < max_block {
+            self.temp_boost_buf.resize(max_block, 0.0);
+            self.temp_source_buf.resize(max_block, 0.0);
+            self.temp_gate_buf.resize(max_block, 0.0);
+            self.temp_drive_buf.resize(max_block, 0.0);
+            self.temp_amp_buf.resize(max_block, 0.0);
+            self.temp_split_a_buf.resize(max_block, 0.0);
+            self.temp_split_b_buf.resize(max_block, 0.0);
+            self.temp_cab_buf.resize(max_block, 0.0);
+            self.temp_comp_buf.resize(max_block, 0.0);
+            self.temp_amp2_buf.resize(max_block, 0.0);
+            self.temp_cab2_buf.resize(max_block, 0.0);
+            self.temp_mod_buf.resize(max_block, 0.0);
+            self.temp_eq_buf.resize(max_block, 0.0);
+            self.temp_merge_l_buf.resize(max_block, 0.0);
+            self.temp_merge_r_buf.resize(max_block, 0.0);
+            self.temp_delay_buf.resize(max_block, 0.0);
+            self.temp_reverb_buf.resize(max_block, 0.0);
+        }
+    }
+
+    pub fn current_effective_gain(&self) -> f32 {
+        self.gain_smoother.current_value() as f32
+    }
+
+    pub fn inject_nan_state_for_test(&mut self) {
+        self.dc_x1 = f32::NAN;
+        self.dc_y1 = f32::NAN;
+    }
+
     pub fn set_gate_threshold_db(&mut self, db: f32) {
+        if !db.is_finite() { return; }
         self.gate.set_threshold_db(db);
     }
 
@@ -469,64 +1193,686 @@ impl RealtimeDspChain {
     }
 
     pub fn set_input_boost(&mut self, boost: f32) {
-        self.input_boost = boost.max(0.1);
+        if !boost.is_finite() { return; }
+        self.input_boost = boost.clamp(0.1, 8.0);
     }
 
     pub fn set_amp_gain(&mut self, gain: f32) {
+        if !gain.is_finite() { return; }
+        self.gain_smoother.set_target(gain as f64);
         self.amp.panel_mut().set_input_gain(gain);
     }
 
+    pub fn set_amp_overdrive(&mut self, od: f32) {
+        if !od.is_finite() { return; }
+        self.amp.panel_mut().set_overdrive(od);
+    }
+
+    pub fn set_amp_bass(&mut self, bass: f32) {
+        if !bass.is_finite() { return; }
+        self.amp.panel_mut().set_bass(bass);
+    }
+
+    pub fn set_amp_middle(&mut self, mid: f32) {
+        if !mid.is_finite() { return; }
+        self.amp.panel_mut().set_middle(mid);
+    }
+
+    pub fn set_amp_treble(&mut self, treb: f32) {
+        if !treb.is_finite() { return; }
+        self.amp.panel_mut().set_treble(treb);
+    }
+
+    pub fn set_amp_presence(&mut self, pres: f32) {
+        if !pres.is_finite() { return; }
+        self.amp.panel_mut().set_presence(pres);
+    }
+
+    pub fn set_amp_depth(&mut self, depth: f32) {
+        if !depth.is_finite() { return; }
+        self.amp.panel_mut().set_depth(depth);
+    }
+
     pub fn set_amp_master(&mut self, master: f32) {
+        if !master.is_finite() { return; }
         self.amp.panel_mut().set_master_volume(master);
+    }
+
+    pub fn set_amp_bright(&mut self, bright: bool) {
+        self.amp.panel_mut().bright_switch = bright;
+    }
+
+    pub fn set_amp_volume_2(&mut self, vol: f32) {
+        if !vol.is_finite() { return; }
+        self.amp.panel_mut().set_volume_2(vol);
+    }
+
+    pub fn set_amp_cut(&mut self, cut: f32) {
+        if !cut.is_finite() { return; }
+        self.amp.panel_mut().set_cut(cut);
+    }
+
+    pub fn set_amp_model(&mut self, model_name: &str) {
+        if let Some(m) = ampforge_dsp::amp::find_model_by_name(model_name) {
+            self.amp.set_target_model(m);
+        }
+    }
+
+    pub fn set_amp_preamp_tube(&mut self, tube_str: &str) {
+        let t = match tube_str {
+            "12at7" => ampforge_dsp::modshop::PreampTube::At7,
+            "ef86_variant" | "ef86" => ampforge_dsp::modshop::PreampTube::Ef86,
+            _ => ampforge_dsp::modshop::PreampTube::Ax7A,
+        };
+        self.amp.set_preamp_tube_type(t);
+    }
+
+    pub fn set_amp_power_tube(&mut self, tube_str: &str) {
+        let t = match tube_str {
+            "6l6gc" => ampforge_dsp::modshop::PowerTube::Tube6L6Gc,
+            "kt88" => ampforge_dsp::modshop::PowerTube::Kt88,
+            "el84_variant" | "el84" => ampforge_dsp::modshop::PowerTube::El84,
+            _ => ampforge_dsp::modshop::PowerTube::El34,
+        };
+        self.amp.set_power_tube_type(t);
+    }
+
+    pub fn set_amp_bias_ma(&mut self, ma: f32) {
+        if ma.is_finite() {
+            self.amp.set_power_tube_bias_ma(ma);
+        }
+    }
+
+    pub fn set_amp_sag(&mut self, sag: f32) {
+        if sag.is_finite() {
+            self.amp.set_sag_amount(sag);
+        }
+    }
+
+    pub fn set_amp_rectifier(&mut self, rect_str: &str) {
+        let r = match rect_str {
+            "gz34" => ampforge_dsp::modshop::RectifierType::Gz34_5Ar4,
+            "5u4gb" => ampforge_dsp::modshop::RectifierType::Dual5U4Gb,
+            _ => ampforge_dsp::modshop::RectifierType::SolidStateDiode,
+        };
+        self.amp.set_rectifier_type(r);
+    }
+
+    pub fn set_amp_nfb(&mut self, nfb: f32) {
+        if nfb.is_finite() {
+            self.amp.set_negative_feedback(nfb);
+        }
+    }
+
+    pub fn set_amp_xformer_sat(&mut self, sat: f32) {
+        if sat.is_finite() {
+            self.amp.set_transformer_saturation(sat);
+        }
+    }
+
+    pub fn set_amp_preamp_plate_v(&mut self, v: f32) {
+        if v.is_finite() {
+            self.amp.set_preamp_plate_voltage(v);
+        }
+    }
+
+    pub fn set_amp_triode_asym(&mut self, asym: f32) {
+        if asym.is_finite() {
+            self.amp.set_triode_asymmetry(asym);
+        }
+    }
+
+    pub fn set_amp_tonestack(&mut self, ts_str: &str) {
+        let ts = match ts_str {
+            "marshall" => ampforge_dsp::modshop::ToneStackTopology::MarshallCathodeFollower,
+            "fender" => ampforge_dsp::modshop::ToneStackTopology::FenderTmbMidScoop,
+            "vox" => ampforge_dsp::modshop::ToneStackTopology::VoxTopBoost,
+            "baxandall" => ampforge_dsp::modshop::ToneStackTopology::PassiveJamesBaxandall,
+            _ => ampforge_dsp::modshop::ToneStackTopology::Model,
+        };
+        self.amp.set_tonestack_topology(ts);
+    }
+
+    pub fn amp(&self) -> &WhiteBoxAmpProcessor {
+        &self.amp
+    }
+
+    pub fn amp_mut(&mut self) -> &mut WhiteBoxAmpProcessor {
+        &mut self.amp
+    }
+
+    pub fn set_oversampling_factor(&mut self, factor_str: &str) {
+        let factor = match factor_str {
+            "2x" => 2,
+            "4x" => 4,
+            _ => 8,
+        };
+        self.amp.set_oversampling_factor(factor);
+    }
+
+    pub fn algorithmic_latency_samples(&self) -> u32 {
+        self.amp.algorithmic_latency_samples()
+    }
+
+    pub fn set_amp_enabled(&mut self, enabled: bool) {
+        self.amp_enabled = enabled;
+    }
+
+    pub fn set_drive_enabled(&mut self, enabled: bool) {
+        self.drive_enabled = enabled;
+    }
+
+    pub fn set_drive_gain(&mut self, gain: f32) {
+        if !gain.is_finite() { return; }
+        self.drive.set_gain(gain);
+    }
+
+    pub fn set_drive_tone(&mut self, tone: f32) {
+        if !tone.is_finite() { return; }
+        self.drive.set_tone(tone);
+    }
+
+    pub fn set_drive_level(&mut self, level: f32) {
+        if !level.is_finite() { return; }
+        self.drive.set_level(level);
+    }
+
+    pub fn drive(&self) -> &DriveProcessor {
+        &self.drive
+    }
+
+    pub fn drive_mut(&mut self) -> &mut DriveProcessor {
+        &mut self.drive
     }
 
     pub fn set_cab_enabled(&mut self, enabled: bool) {
         self.cab_enabled = enabled;
+        self.cab_target_fade = if enabled { 1.0 } else { 0.0 };
     }
 
-    /// Processa bloco de áudio da guitarra passando por DC Blocker -> Boost -> Gate -> Amp -> Cab
+    pub fn load_cab_ir(&mut self, bytes: &[u8]) -> Result<(), ampforge_dsp::cab::InvalidImpulseResponseError> {
+        self.cab.load_custom_ir(bytes)
+    }
+
+    pub fn set_cab_speaker(&mut self, speaker: &str) {
+        let model = match speaker {
+            "greenback_4x12" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
+            "v30_4x12" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
+            "alnico_blue_2x12" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
+            _ => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
+        };
+        self.cab.set_speaker_model(model);
+    }
+
+    pub fn set_cab_resonance_hz(&mut self, hz: f32) {
+        self.cab.set_resonance_hz(hz);
+    }
+
+    pub fn set_cab_hicut_khz(&mut self, khz: f32) {
+        self.cab.set_hicut_khz(khz);
+    }
+
+    pub fn set_cab_ir_enabled(&mut self, enabled: bool) {
+        self.cab.set_ir_enabled(enabled);
+    }
+
+    pub fn set_cab_mic1_model(&mut self, model: &str) {
+        let m = match model {
+            "sm57" => ampforge_dsp::cab::MicModel::Sm57,
+            "md421" => ampforge_dsp::cab::MicModel::Md421,
+            "m88" => ampforge_dsp::cab::MicModel::M88,
+            "r121" => ampforge_dsp::cab::MicModel::R121,
+            "m160" => ampforge_dsp::cab::MicModel::M160,
+            "u87" => ampforge_dsp::cab::MicModel::U87,
+            "c414" => ampforge_dsp::cab::MicModel::C414,
+            _ => ampforge_dsp::cab::MicModel::Sm57,
+        };
+        self.cab.mic_slot_mut(0).model = m;
+    }
+
+    pub fn set_cab_mic1_position(&mut self, pos: f32) {
+        self.cab.mic_slot_mut(0).position_cap_to_edge = pos.clamp(0.0, 1.0);
+    }
+
+    pub fn set_cab_mic1_distance_cm(&mut self, dist: f32) {
+        self.cab.mic_slot_mut(0).distance_cm = dist.clamp(0.0, 30.0);
+    }
+
+    pub fn set_cab_mic1_level_db(&mut self, db: f32) {
+        self.cab.mic_slot_mut(0).level_db = db.clamp(-60.0, 12.0);
+    }
+
+    pub fn set_cab_mic1_enabled(&mut self, enabled: bool) {
+        self.cab.mic_slot_mut(0).enabled = enabled;
+    }
+
+    pub fn set_cab_mic2_model(&mut self, model: &str) {
+        let m = match model {
+            "sm57" => ampforge_dsp::cab::MicModel::Sm57,
+            "md421" => ampforge_dsp::cab::MicModel::Md421,
+            "m88" => ampforge_dsp::cab::MicModel::M88,
+            "r121" => ampforge_dsp::cab::MicModel::R121,
+            "m160" => ampforge_dsp::cab::MicModel::M160,
+            "u87" => ampforge_dsp::cab::MicModel::U87,
+            "c414" => ampforge_dsp::cab::MicModel::C414,
+            _ => ampforge_dsp::cab::MicModel::Sm57,
+        };
+        self.cab.mic_slot_mut(1).model = m;
+    }
+
+    pub fn set_cab_mic2_position(&mut self, pos: f32) {
+        self.cab.mic_slot_mut(1).position_cap_to_edge = pos.clamp(0.0, 1.0);
+    }
+
+    pub fn set_cab_mic2_distance_cm(&mut self, dist: f32) {
+        self.cab.mic_slot_mut(1).distance_cm = dist.clamp(0.0, 30.0);
+    }
+
+    pub fn set_cab_mic2_level_db(&mut self, db: f32) {
+        self.cab.mic_slot_mut(1).level_db = db.clamp(-60.0, 12.0);
+    }
+
+    pub fn set_cab_mic2_enabled(&mut self, enabled: bool) {
+        self.cab.mic_slot_mut(1).enabled = enabled;
+    }
+
+    // Spec 024: Setters e Getters dos Novos Blocos e Caminho Paralelo
+    pub fn set_split_enabled(&mut self, enabled: bool) {
+        self.split_enabled = enabled;
+    }
+
+    pub fn set_split_mode(&mut self, mode: &str, crossover_hz: f32) {
+        self.split_mode = mode.to_string();
+        self.split_crossover_hz = crossover_hz.clamp(100.0, 2000.0);
+        if mode == "crossover" {
+            self.split.set_mode(SplitMode::Crossover { freq_hz: self.split_crossover_hz });
+        } else {
+            self.split.set_mode(SplitMode::BalanceAb { ratio: 0.5 });
+        }
+    }
+
+    pub fn set_merge_config(&mut self, level_db: f32, phase_invert: bool) {
+        self.merge_row_1_level_db = level_db.clamp(-60.0, 6.0);
+        self.merge_row_1_phase_invert = phase_invert;
+        let mut cfg = MixerChannelConfig::default();
+        cfg.level_db = self.merge_row_1_level_db;
+        cfg.phase_invert = self.merge_row_1_phase_invert;
+        self.merge.configure_channel(1, cfg);
+    }
+
+    pub fn set_comp_2_enabled(&mut self, enabled: bool) {
+        self.comp_2_enabled = enabled;
+    }
+
+    pub fn set_comp_2_input(&mut self, input: f32) {
+        let pre_gain_db = (input.clamp(0.0, 10.0) - 5.0) * 4.0;
+        self.comp_2.set_threshold_db(-20.0 - pre_gain_db);
+    }
+
+    pub fn set_comp_2_output(&mut self, _output: f32) {
+        // Output makeup
+    }
+
+    pub fn set_comp_2_attack(&mut self, att: f32) {
+        let att_clamped = att.clamp(1.0, 7.0);
+        let attack_ms = 0.8f32 * (0.02f32 / 0.8f32).powf((att_clamped - 1.0) / 6.0);
+        self.comp_2.set_attack_ms(attack_ms);
+    }
+
+    pub fn set_comp_2_release(&mut self, rel: f32) {
+        let rel_clamped = rel.clamp(1.0, 7.0);
+        let release_ms = 1100.0f32 * (50.0f32 / 1100.0f32).powf((rel_clamped - 1.0) / 6.0);
+        self.comp_2.set_release_ms(release_ms);
+    }
+
+    pub fn set_comp_2_ratio(&mut self, ratio_str: &str) {
+        let r = match ratio_str {
+            "4" => 4.0,
+            "8" => 8.0,
+            "12" => 12.0,
+            "20" | "all" => 20.0,
+            _ => 4.0,
+        };
+        self.comp_2.set_ratio(r);
+    }
+
+    pub fn set_eq_1_enabled(&mut self, enabled: bool) {
+        self.eq_1_enabled = enabled;
+    }
+
+    pub fn set_eq_1_band(&mut self, band_idx: usize, freq_hz: f32, gain_db: f32, q: f32) {
+        self.eq_1.set_parametric_band(band_idx, freq_hz, gain_db, q);
+    }
+
+    pub fn eq_1_band(&self, band_idx: usize) -> ampforge_dsp::fx::eq::ParametricBand {
+        self.eq_1.parametric_band(band_idx)
+    }
+
+    pub fn set_mod_2_enabled(&mut self, enabled: bool) {
+        self.mod_2_enabled = enabled;
+    }
+
+    pub fn set_mod_2_rate_hz(&mut self, rate: f32) {
+        self.mod_2.set_rate_hz(rate);
+    }
+
+    pub fn set_mod_2_depth(&mut self, depth: f32) {
+        self.mod_2.set_depth(depth);
+    }
+
+    pub fn set_mod_2_mix(&mut self, mix: f32) {
+        self.mod_2.set_mix_pct(mix);
+    }
+
+    pub fn set_dly_1_enabled(&mut self, enabled: bool) {
+        self.dly_1_enabled = enabled;
+        self.dly_1.set_bypassed(!enabled);
+    }
+
+    pub fn set_dly_1_repeat_rate(&mut self, rate: f32) {
+        let speed = (rate.clamp(0.0, 10.0) / 10.0) * 1.2 + 0.6;
+        let base_delay_ms = 350.0;
+        self.dly_1.set_delay_time_ms(base_delay_ms / speed);
+    }
+
+    pub fn set_dly_1_intensity(&mut self, intensity: f32) {
+        self.dly_1.set_feedback_pct(intensity.clamp(0.0, 10.0) * 10.0);
+    }
+
+    pub fn set_dly_1_echo_volume(&mut self, vol: f32) {
+        self.dly_1.set_mix_pct(vol.clamp(0.0, 10.0) * 10.0);
+    }
+
+    pub fn set_dly_1_spillover(&mut self, enabled: bool) {
+        self.dly_1.set_spillover_enabled(enabled);
+    }
+
+    pub fn set_rev_1_enabled(&mut self, enabled: bool) {
+        self.rev_1_enabled = enabled;
+        self.rev_1.set_bypassed(!enabled);
+    }
+
+    pub fn set_rev_1_decay_s(&mut self, decay: f32) {
+        self.rev_1.set_decay_time_s(decay);
+    }
+
+    pub fn set_rev_1_predelay_ms(&mut self, predelay: f32) {
+        self.rev_1.set_predelay_ms(predelay);
+    }
+
+    pub fn set_rev_1_damping(&mut self, damp: f32) {
+        self.rev_1.set_damping(damp);
+    }
+
+    pub fn set_rev_1_mix(&mut self, mix: f32) {
+        self.rev_1.set_mix_pct(mix);
+    }
+
+    pub fn set_rev_1_spillover(&mut self, enabled: bool) {
+        self.rev_1.set_spillover_enabled(enabled);
+    }
+
+    pub fn set_amp_2_enabled(&mut self, enabled: bool) {
+        self.amp_2_enabled = enabled;
+    }
+
+    pub fn set_amp_2_model(&mut self, model_name: &str) {
+        if let Some(m) = ampforge_dsp::amp::find_model_by_name(model_name) {
+            self.amp_2.set_target_model(m);
+        }
+    }
+
+    pub fn amp_2_mut(&mut self) -> &mut WhiteBoxAmpProcessor {
+        &mut self.amp_2
+    }
+
+    pub fn set_cab_2_enabled(&mut self, enabled: bool) {
+        self.cab_2_enabled = enabled;
+    }
+
+    pub fn set_cab_2_speaker(&mut self, speaker: &str) {
+        let model = match speaker {
+            "greenback_4x12" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
+            "v30_4x12" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
+            "alnico_blue_2x12" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
+            _ => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
+        };
+        self.cab_2.set_speaker_model(model);
+    }
+
+    pub fn cab_2_mut(&mut self) -> &mut VirtualCabProcessor {
+        &mut self.cab_2
+    }
+
+    /// Processa bloco de áudio da guitarra passando pelo Grafo Completo do Grid (Spec 024)
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         let len = input.len();
         if self.temp_boost_buf.len() < len {
             self.temp_boost_buf.resize(len, 0.0);
+            self.temp_source_buf.resize(len, 0.0);
             self.temp_gate_buf.resize(len, 0.0);
+            self.temp_drive_buf.resize(len, 0.0);
             self.temp_amp_buf.resize(len, 0.0);
+            self.temp_split_a_buf.resize(len, 0.0);
+            self.temp_split_b_buf.resize(len, 0.0);
+            self.temp_cab_buf.resize(len, 0.0);
+            self.temp_comp_buf.resize(len, 0.0);
+            self.temp_amp2_buf.resize(len, 0.0);
+            self.temp_cab2_buf.resize(len, 0.0);
+            self.temp_mod_buf.resize(len, 0.0);
+            self.temp_eq_buf.resize(len, 0.0);
+            self.temp_merge_l_buf.resize(len, 0.0);
+            self.temp_merge_r_buf.resize(len, 0.0);
+            self.temp_delay_buf.resize(len, 0.0);
+            self.temp_reverb_buf.resize(len, 0.0);
         }
 
-        // 1. DC Blocker de 1 polo (~10 Hz) e boost de entrada
+        // 0. Contabiliza clipping no conversor de entrada (|x| >= 0.999) (Spec 019, CA-4)
+        for &s in input {
+            if s.abs() >= 0.999 {
+                self.adc_clips.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        // Seleção de fonte de entrada (Spec 019, CA-5): device, test_riff ou di_file
+        let source_slice = &mut self.temp_source_buf[..len];
+        if self.input_source == "test_riff" && !self.test_riff_buffer.is_empty() {
+            let riff_len = self.test_riff_buffer.len();
+            for s in source_slice.iter_mut() {
+                *s = self.test_riff_buffer[self.test_riff_pos];
+                self.test_riff_pos = (self.test_riff_pos + 1) % riff_len;
+            }
+        } else if self.input_source == "di_file" && !self.di_buffer.is_empty() {
+            let di_len = self.di_buffer.len();
+            for s in source_slice.iter_mut() {
+                *s = self.di_buffer[self.di_pos];
+                self.di_pos = (self.di_pos + 1) % di_len;
+            }
+        } else {
+            source_slice.copy_from_slice(input);
+        }
+
+        // 1. Atualiza suavizador de ganho no bloco (Spec 014, CA-8)
+        for _ in 0..len {
+            self.gain_smoother.next_sample();
+        }
+
+        // 2. DC Blocker de 1 polo (~10 Hz) e boost de entrada
         let boost_slice = &mut self.temp_boost_buf[..len];
         let r = 0.995f32;
         for i in 0..len {
-            let x = input[i];
+            let x = source_slice[i];
             let y = x - self.dc_x1 + r * self.dc_y1;
             self.dc_x1 = x;
             self.dc_y1 = y;
             boost_slice[i] = y * self.input_boost;
+
+            // Spec 026: Copia sinal de entrada limpo para o afinador (CA-1, CA-8)
+            if self.tuner_enabled {
+                if self.tuner_input_accum_pos < self.tuner_input_accum.len() {
+                    self.tuner_input_accum[self.tuner_input_accum_pos] = y;
+                    self.tuner_input_accum_pos += 1;
+                }
+            }
+        }
+
+        if self.tuner_enabled && self.tuner_input_accum_pos >= 2048 {
+            let res = self.tuner.detect_pitch(&self.tuner_input_accum[..self.tuner_input_accum_pos]);
+            self.tuner_latest_result = res;
+            self.tuner_input_accum.copy_within(1024..2048, 0);
+            self.tuner_input_accum_pos = 1024;
         }
 
         let gate_slice = &mut self.temp_gate_buf[..len];
-        let amp_slice = &mut self.temp_amp_buf[..len];
+        let drive_slice = &mut self.temp_drive_buf[..len];
 
-        // 2. Noise Gate (elimina zumbido/hum de entrada P2 se habilitado)
+        // 3. Noise Gate (elimina zumbido/hum de entrada P2 se habilitado)
         if self.gate_enabled {
             self.gate.process(boost_slice, None, gate_slice);
         } else {
             gate_slice.copy_from_slice(boost_slice);
         }
 
-        // 3. White-Box Tube Amp (modelagem não linear de válvulas + tonestack EQ)
-        self.amp.process(gate_slice, amp_slice);
-
-        // 4. Virtual Cab IR (filtro de resposta ao impulso de alto-falante)
-        if self.cab_enabled {
-            self.cab.process(amp_slice, output);
+        // 3.1 Drive Processor (Spec 016, CA-6)
+        let amp_in_slice = if self.drive_enabled {
+            self.drive.process(gate_slice, drive_slice);
+            drive_slice
         } else {
-            output[..len].copy_from_slice(amp_slice);
+            gate_slice
+        };
+
+        // 4. Split Node (Spec 024, CA-2)
+        let split_a_slice = &mut self.temp_split_a_buf[..len];
+        let split_b_slice = &mut self.temp_split_b_buf[..len];
+        if self.split_enabled {
+            self.split.process(amp_in_slice, split_a_slice, split_b_slice);
+        } else {
+            split_a_slice.copy_from_slice(amp_in_slice);
+            split_b_slice.fill(0.0);
         }
 
-        // 5. Hard clamp para prevenir clipping severo/explosão
-        for s in output[..len].iter_mut() {
-            *s = s.clamp(-2.0, 2.0);
+        // 5. Linha 0: Amp 1 -> Cab 1 -> EQ 1
+        let amp_slice = &mut self.temp_amp_buf[..len];
+        if self.amp_enabled {
+            self.amp.process(split_a_slice, amp_slice);
+        } else {
+            amp_slice.copy_from_slice(split_a_slice);
+        }
+
+        let cab_slice = &mut self.temp_cab_buf[..len];
+        if (self.cab_fade - self.cab_target_fade).abs() > 1e-4 {
+            self.cab.process(amp_slice, cab_slice);
+            for i in 0..len {
+                if self.cab_fade < self.cab_target_fade {
+                    self.cab_fade = (self.cab_fade + self.fade_step).min(self.cab_target_fade);
+                } else {
+                    self.cab_fade = (self.cab_fade - self.fade_step).max(self.cab_target_fade);
+                }
+                cab_slice[i] = amp_slice[i] * (1.0 - self.cab_fade) + cab_slice[i] * self.cab_fade;
+            }
+        } else if self.cab_enabled {
+            self.cab.process(amp_slice, cab_slice);
+        } else {
+            cab_slice.copy_from_slice(amp_slice);
+        }
+
+        let eq_slice = &mut self.temp_eq_buf[..len];
+        if self.eq_1_enabled {
+            self.eq_1.process(cab_slice, eq_slice);
+        } else {
+            eq_slice.copy_from_slice(cab_slice);
+        }
+
+        // 6. Linha 1 (se split ativo): Comp 2 -> Amp 2 -> Cab 2 -> Mod 2
+        let row_1_out = if self.split_enabled {
+            let comp_slice = &mut self.temp_comp_buf[..len];
+            if self.comp_2_enabled {
+                self.comp_2.process(split_b_slice, comp_slice);
+            } else {
+                comp_slice.copy_from_slice(split_b_slice);
+            }
+
+            let amp2_slice = &mut self.temp_amp2_buf[..len];
+            if self.amp_2_enabled {
+                self.amp_2.process(comp_slice, amp2_slice);
+            } else {
+                amp2_slice.copy_from_slice(comp_slice);
+            }
+
+            let cab2_slice = &mut self.temp_cab2_buf[..len];
+            if self.cab_2_enabled {
+                self.cab_2.process(amp2_slice, cab2_slice);
+            } else {
+                cab2_slice.copy_from_slice(amp2_slice);
+            }
+
+            let mod_slice = &mut self.temp_mod_buf[..len];
+            if self.mod_2_enabled {
+                self.mod_2.process(cab2_slice, mod_slice);
+            } else {
+                mod_slice.copy_from_slice(cab2_slice);
+            }
+            mod_slice
+        } else {
+            &mut self.temp_mod_buf[..len]
+        };
+
+        // 7. Merge (Coluna 6, antes de Delay e Reverb)
+        let merge_slice = &mut self.temp_merge_l_buf[..len];
+        if self.split_enabled {
+            let merge_r_slice = &mut self.temp_merge_r_buf[..len];
+            self.merge.process(&[eq_slice, row_1_out], merge_slice, merge_r_slice);
+        } else {
+            merge_slice.copy_from_slice(eq_slice);
+        }
+
+        // 8. Pós-Merge: Delay 1 -> Reverb 1
+        let delay_slice = &mut self.temp_delay_buf[..len];
+        self.dly_1.process(merge_slice, delay_slice);
+
+        let reverb_slice = &mut self.temp_reverb_buf[..len];
+        self.rev_1.process(delay_slice, reverb_slice);
+
+        // 9. Limitador de Saída Segura (<= 0 dBFS / 1.0) e defesa contra NaN/Inf (Spec 015 & Spec 016, CA-9)
+        let mut has_non_finite = false;
+        for (i, s) in output[..len].iter_mut().enumerate() {
+            let mut val = reverb_slice[i];
+            if !val.is_finite() {
+                *s = 0.0;
+                has_non_finite = true;
+            } else {
+                if self.preset_crossfading {
+                    let ramp = 0.5 * (1.0 - (std::f32::consts::PI * self.preset_fade).cos());
+                    val *= ramp;
+                    self.preset_fade += self.preset_fade_step;
+                    if self.preset_fade >= 1.0 {
+                        self.preset_fade = 1.0;
+                        self.preset_crossfading = false;
+                    }
+                }
+                *s = val.clamp(-1.0, 1.0);
+            }
+        }
+
+        // Spec 026: Rampa de silenciamento do afinador de 5 ms (CA-4)
+        if self.tuner_enabled && self.tuner_output_mode == TunerOutputMode::Mute {
+            let ramp_step = 1.0 / (0.005 * self.sample_rate);
+            for s in output[..len].iter_mut() {
+                self.tuner_mute_gain = (self.tuner_mute_gain - ramp_step).max(0.0);
+                *s *= self.tuner_mute_gain;
+            }
+        } else if self.tuner_mute_gain < 1.0 {
+            let ramp_step = 1.0 / (0.005 * self.sample_rate);
+            for s in output[..len].iter_mut() {
+                self.tuner_mute_gain = (self.tuner_mute_gain + ramp_step).min(1.0);
+                *s *= self.tuner_mute_gain;
+            }
+        }
+
+        if has_non_finite {
+            self.dc_x1 = 0.0;
+            self.dc_y1 = 0.0;
+            self.cab_fade = self.cab_target_fade;
         }
     }
 }

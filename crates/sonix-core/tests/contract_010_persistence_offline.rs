@@ -187,5 +187,7 @@ fn create_valid_test_preset() -> SonixPresetDoc {
             ],
         },
         modifiers: vec![],
+        params: None,
+        channels: None,
     }
 }

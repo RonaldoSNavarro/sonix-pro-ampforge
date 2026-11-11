@@ -1,8 +1,8 @@
 ---
 spec: 014
 titulo: Controles da interface não alteram o som — ponte de controle UI→DSP em tempo real
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-10
 ---
 # 014 — Ponte de Controle UI→DSP em Tempo Real
 

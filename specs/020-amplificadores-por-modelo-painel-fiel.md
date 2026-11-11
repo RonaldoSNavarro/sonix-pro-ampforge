@@ -1,8 +1,8 @@
 ---
 spec: 020
 titulo: Trocar o modelo de amplificador não muda o som nem o painel, e os rótulos dos modelos têm dados a conferir
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-10
 ---
 # 020 — Amplificadores por Modelo com Painel e Resposta Fiéis à Referência
 

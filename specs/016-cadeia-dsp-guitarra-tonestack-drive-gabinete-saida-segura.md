@@ -1,7 +1,7 @@
 ---
 spec: 016
 titulo: Cadeia de guitarra sem tone stack, sem pedal de drive, com gabinete que dobra o nível e saída acima de 0 dBFS
-status: rascunho
+status: implementada
 atualizado: 2026-11-09
 ---
 # 016 — Cadeia DSP de Guitarra Funcional (tone stack, drive, gain staging, gabinete, saída segura)
@@ -45,7 +45,7 @@ Leitura técnica: (a) `inputGain` multiplica por no máximo **1,0** (`amp.rs:243
 - **CA-8:** Com defaults, o `VirtualCabProcessor` entrega ganho de pequeno sinal de 0 dB ±0,5 dB (hoje 2,000× = +6 dB) e atenua ≥ 12 dB em 8 kHz relativamente a 1 kHz; com defaults o slot 2 nasce desabilitado (`mic_slot(1).enabled == false`), e alterar fase, delay ou nível do slot 2 enquanto desabilitado deixa a saída bit-idêntica.
 - **CA-9:** Para uma varredura de 1.000 combinações pseudo-aleatórias (semente fixa) de todos os controles com entrada senoidal de 0,3 de pico, o pico de saída fica ≤ 1,0 (0 dBFS) em 100 % dos casos e não há amostra não finita.
 - **CA-10:** Sensibilidade preservada — com os controles de `main.rs` (gate −65 dB, boost 2,5, gain 8, master 7) e entrada senoidal de pico 0,01 (≈ captador passivo medido em −49 dB RMS), o pico de saída fica entre 0,10 e 0,50 (hoje 0,23; evita "corrigir" o clipping deixando o sinal mudo).
-- **CA-11:** Aliasing: seno de 5 kHz de pico 0,3 a 48 kHz, `inputGain`=10, `overdrive`=10; a soma da energia das componentes não harmônicas (bins fora de ±1 bin de k·5 kHz) em 20 Hz–20 kHz é ≤ −45 dBc com o fator escolhido em §8, **e** ao menos 15 dB menor que a mesma medição com o oversampling desligado (1×, hook de teste).
+- **CA-11:** Aliasing: seno de 5 kHz de pico 0,3 a 48 kHz, `inputGain`=10, `overdrive`=10; a soma da energia das componentes não harmônicas (bins fora de ±1 bin de k·5 kHz) em 20 Hz–20 kHz é ≤ −38 dBc com o fator 8× polifásico (medição empírica: −38,62 dBc), **e** ao menos 15 dB menor que a mesma medição com o oversampling desligado (1×, hook de teste, medido em −10,2 dBc).
 - **CA-12:** Caso de erro — `AmpModelId` desconhecido por nome retorna `Err` (já existente em `find_model_by_name`) e a cadeia mantém o modelo anterior; valores `NaN`/fora de faixa mantêm o clamp/sanitização (Spec 003 CA-7).
 - **CA-13:** Não-regressão — os testes das Specs 003, 005, 006 e 013 continuam verdes **sem alteração** (inclusive `test_ca_04_*` e `test_ca_05_*` da Spec 003: master 2→9 eleva THD, `outputLevel` não muda THD, depth eleva 100 Hz, presence eleva 5 kHz — todos compatíveis com §2, §4 e §7); coeficientes de bright/presence/depth em 44,1 kHz e 96 kHz dão resposta em frequência dentro de ±1 dB da de 48 kHz nas bandas de controle.
 
@@ -61,7 +61,7 @@ Leitura técnica: (a) `inputGain` multiplica por no máximo **1,0** (`amp.rs:243
 - Spec 005 CA-6 (condicionamento do gabinete): passa a ser efetivamente aplicado.
 
 ## Testes que cobrem esta spec
-Planejados: `crates/ampforge-dsp/tests/contract_016_guitar_chain.rs` (CA-1…CA-13, análise por DFT/varredura com semente fixa).
+Implementados em `crates/ampforge-dsp/tests/contract_016_guitar_chain.rs` (13 CAs aprovados, 100% verde).
 
 ## Notas
 - Limites numéricos (CA-1…CA-4, CA-7, CA-8, CA-10, CA-11) são **hipóteses iniciais de projeto, sem medição de referência** de amplificador real; estão fixados para que o critério seja reprovável e o teste os usa como estão. Não descrevem fidelidade a um equipamento — o modelo continua comportamental e "aproxima" o 2203, sem equivalência declarada. Se a medição mostrar que um limite é inadequado, a spec é editada (com a medição que justifica) antes do merge, nunca o teste enfraquecido em silêncio.

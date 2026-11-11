@@ -1,8 +1,8 @@
 ---
 spec: 021
 titulo: Válvulas, bias, sag, realimentação e osciloscópio da bancada só mudam a tela, não o som
-status: rascunho
-atualizado: 2026-11-09
+status: implementada
+atualizado: 2026-11-10
 ---
 # 021 — Bancada do Chassi Aberto (Mod Shop) e Osciloscópio CRT ao Vivo
 

@@ -47,6 +47,8 @@ pub struct ModulationProcessor {
     tempo_bpm: f32,
     sample_rate: f32,
     lfo_phase: f32,
+    delay_buffer: Vec<f32>,
+    write_pos: usize,
 }
 
 impl ModulationProcessor {
@@ -54,18 +56,36 @@ impl ModulationProcessor {
         Self {
             model,
             rate_hz: 1.5,
-            depth: 0.5,
+            depth: 5.0,
             mix_pct: 50.0,
             tempo_sync: false,
             note_division: NoteDivision::Quarter,
             tempo_bpm: 120.0,
             sample_rate: 48000.0,
             lfo_phase: 0.0,
+            delay_buffer: vec![0.0f32; 4096],
+            write_pos: 0,
         }
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
+    }
+
+    pub fn rate_hz(&self) -> f32 {
+        self.rate_hz
+    }
+
+    pub fn set_rate_hz(&mut self, rate: f32) {
+        self.rate_hz = rate.clamp(0.05, 10.0);
+    }
+
+    pub fn depth(&self) -> f32 {
+        self.depth
+    }
+
+    pub fn set_depth(&mut self, depth: f32) {
+        self.depth = depth.clamp(0.0, 10.0);
     }
 
     pub fn model(&self) -> ModModel {
@@ -74,6 +94,10 @@ impl ModulationProcessor {
 
     pub fn set_model(&mut self, model: ModModel) {
         self.model = model;
+    }
+
+    pub fn mix_pct(&self) -> f32 {
+        self.mix_pct
     }
 
     pub fn set_mix_pct(&mut self, mix: f32) {
@@ -112,17 +136,31 @@ impl ModulationProcessor {
         let dry_ratio = 1.0 - wet_ratio;
         let lfo_freq = self.calculated_lfo_freq_hz();
         let phase_inc = 2.0 * std::f32::consts::PI * lfo_freq / self.sample_rate;
+        let buf_len = self.delay_buffer.len();
+
+        let base_delay_samples = 0.008 * self.sample_rate; // 8 ms centro
+        let mod_depth_samples = (self.depth / 10.0) * 0.004 * self.sample_rate; // modulação até 4 ms
 
         for i in 0..input.len() {
+            let x = input[i];
+            self.delay_buffer[self.write_pos] = x;
+
             let lfo_val = (self.lfo_phase).sin();
             self.lfo_phase += phase_inc;
             if self.lfo_phase > 2.0 * std::f32::consts::PI {
                 self.lfo_phase -= 2.0 * std::f32::consts::PI;
             }
 
-            // Tremolo / Chorus amplitude/phase modulation effect
-            let mod_sig = input[i] * (1.0 + self.depth * 0.5 * lfo_val);
-            output[i] = input[i] * dry_ratio + mod_sig * wet_ratio;
+            let d_samples = (base_delay_samples + mod_depth_samples * lfo_val).clamp(1.0, (buf_len - 2) as f32);
+            let read_pos = (self.write_pos as f32 + buf_len as f32 - d_samples) % buf_len as f32;
+            let idx0 = read_pos.floor() as usize % buf_len;
+            let idx1 = (idx0 + 1) % buf_len;
+            let frac = read_pos - read_pos.floor();
+            let delayed = self.delay_buffer[idx0] * (1.0 - frac) + self.delay_buffer[idx1] * frac;
+
+            self.write_pos = (self.write_pos + 1) % buf_len;
+
+            output[i] = x * dry_ratio + delayed * wet_ratio;
         }
     }
 }

@@ -1377,6 +1377,17 @@ body.hardware-shell-mode .chassis-screws {
   border: 2px solid #fff;
 }
 
+.draggable-mic.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: grayscale(1);
+  box-shadow: none;
+}
+
+.speaker-cone-stage.ir-active {
+  filter: brightness(0.7);
+}
+
 /* ============================================================================
    DESIGN SYSTEM TOKENS & COMPONENT LIBRARY CATALOG TAB
    ============================================================================ */
@@ -1643,4 +1654,70 @@ body.hardware-shell-mode .chassis-screws {
   font-weight: 800;
   color: #00e676;
   text-shadow: 0 0 12px rgba(0, 230, 118, 0.7);
+}
+
+/* ============================================================================
+   BLOCK EDITOR PANEL (SPEC 023)
+   ============================================================================ */
+.block-editor-panel {
+  margin: 12px 0 0 0;
+  padding: 12px 18px;
+  background: rgba(18, 18, 20, 0.95);
+  border: 1px solid #ff9100;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+}
+
+.block-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.block-editor-title {
+  font-family: var(--font-chassis);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #ff9100;
+}
+
+.block-editor-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #8c97a8;
+}
+
+.block-editor-knobs {
+  display: flex;
+  gap: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.pedal-knob-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 90px;
+}
+
+.pedal-knob-label {
+  font-family: var(--font-chassis);
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff9100;
+  letter-spacing: 0.1em;
+}
+
+.pedal-knob-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: #eee;
 }

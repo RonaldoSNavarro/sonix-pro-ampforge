@@ -12,6 +12,7 @@ specs** (que é o changelog do projeto) estão em `specs/README.md` — leia-o a
 - Spec e implementação são revisadas no **mesmo PR**.
 
 
+
 <!-- BEGIN CORTEX RULES -->
 # Regras Promovidas do Projeto Cortex
 

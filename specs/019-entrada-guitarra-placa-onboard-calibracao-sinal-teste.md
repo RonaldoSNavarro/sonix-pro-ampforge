@@ -1,7 +1,7 @@
 ---
 spec: 019
 titulo: Ganho de entrada e gate fixos no código, sem indicação de clipping, e sinal de teste que não passa pelo motor
-status: rascunho
+status: implementada
 atualizado: 2026-11-09
 ---
 # 019 — Entrada de Guitarra na Placa Onboard: Calibração, Clipping e Sinal de Teste pelo Motor
@@ -111,9 +111,7 @@ Brasil, 50 Hz em outros países) e ruído do PC entram junto com o sinal.
 - Spec 017: o mesmo validador de WAV protege o carregamento de DI.
 
 ## Testes que cobrem esta spec
-Planejados (red → green): `crates/sonix-desktop/tests/contract_019_input_calibration.rs` (CA-1…CA-4,
-CA-5 lado Rust, CA-6…CA-9) e `tests/contract/019-entrada-guitarra-placa-onboard-calibracao-sinal-teste.test.js`
-(CA-4 lado UI, CA-5 lado UI).
+Implementados em `crates/sonix-desktop/tests/contract_019_input_calibration.rs` (CA-1…CA-9 ok) e `tests/contract/019-entrada-guitarra-placa-onboard-calibracao-sinal-teste.test.js` (CAs frontend ok).
 
 ## Notas
 - −12 dBFS de pico e +6 dB acima do ruído são pontos de partida de projeto, não medições; a spec é
