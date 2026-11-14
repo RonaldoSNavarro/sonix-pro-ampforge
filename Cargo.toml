@@ -5,6 +5,7 @@ members = [
     "crates/sonix-core",
     "crates/sonix-desktop",
     "crates/sonix-plugin",
+    "apps/sonix-app/src-tauri",
 ]
 
 [workspace.package]

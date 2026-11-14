@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>AMPFORGE — amplificadores</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Oswald:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width:1200px;height:1910px;box-sizing:border-box;padding:36px 50px;display:flex;flex-direction:column;gap:30px;color:#e8eaed;font-family:Inter,'Segoe UI',sans-serif;background:radial-gradient(ellipse at 50% 0%,rgba(255,170,90,.12) 0%,transparent 45%),repeating-linear-gradient(90deg,rgba(255,255,255,.014) 0 1px,transparent 1px 46px),linear-gradient(180deg,#141518,#0a0b0c)">
+<div style="display:flex;align-items:flex-end;gap:16px">
+<div style="display:flex;flex-direction:column;gap:6px;flex:1">
+<span style="font-family:Oswald,sans-serif;font-size:30px;font-weight:600;letter-spacing:.06em">AMPLIFICADORES</span>
+<span style="font-size:13px;color:#a3abb4">Painel de cada modelo com os controles das versões originais (Specs 020 e 031). Todos funcionam: arraste os knobs, clique nas chaves e nas entradas.</span>
+</div>
+</div>
+<sc-for list="{{amps}}" as="a" hint-placeholder-count="5">
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+<span style="font-family:Oswald,sans-serif;font-size:20px;font-weight:600;letter-spacing:.06em">{{a.title}}</span>
+<span style="font-size:12px;color:#ffb978">{{a.ref}}</span>
+<span style="flex:1"></span>
+<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#a3abb4">{{a.tubes}}</span>
+</div>
+<dc-import name="AmpHead" model="{{a.id}}" hint-size="1100px,282px"></dc-import>
+<span style="font-size:12px;color:#a3abb4;line-height:1.5;max-width:1050px">{{a.note}}</span>
+</div>
+</sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1200,"height":1910}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { amps: [
+      { id: 'plexi_1959', title: 'BRIT PLEXI · 1959', ref: 'Ref.: Marshall 1959 Super Lead (1968–69)', tubes: '3× ECC83 · 4× EL34 · ret. estado sólido',
+        note: 'Painel conforme o manual 1959HW: POWER, STANDBY, INDICATOR, PRESENCE, BASS, MIDDLE, TREBLE, VOLUME I, VOLUME II e 4 entradas (High/Low por canal; Low −6 dB). Sem master: os volumes empurram o estágio de potência. JUMPER = guitarra em I-High e cabo de I-Low para II-High, somando os dois canais. Presence atua na realimentação global.' },
+      { id: 'jcm800_2203', title: 'BRIT 800 · 2203', ref: 'Ref.: Marshall JCM800 2203 (1981)', tubes: '3× ECC83 · 4× EL34 · ret. estado sólido',
+        note: 'Painel conforme o manual do 2203 (BOOK-00067-00): POWER e STANDBY (rockers), PRESENCE, BASS, MIDDLE, TREBLE, MASTER VOLUME, PRE-AMP VOLUME e entradas HIGH/LOW empilhadas. Pré em cascata com cold clipper (V1b, cátodo sem bypass) e cathode follower antes do tone stack; Master antes do inversor. Entrada LOW atenua cerca de 6 dB.' },
+      { id: 'twin_ab763', title: 'US TWIN · AB763', ref: 'Ref.: Fender Twin Reverb AB763 (1965)', tubes: '12AX7 + 12AT7 no pré/PI · 4× 6L6GC · ret. estado sólido',
+        note: 'Dois canais com Bright próprio; o canal ativo é o da entrada plugada. Reverb de mola e "Vibrato" (na prática tremolo por variação de bias) só no canal Vibrato. Muito headroom: fixed bias e realimentação global.' },
+      { id: 'dual_rect', title: 'CALI RECTO · DUAL RECTIFIER', ref: 'Ref.: Mesa/Boogie Dual Rectifier (Rev F, 2 canais)', tubes: '5× 12AX7 · 4× 6L6GC · diodo ou 2× 5U4GB',
+        note: 'Modos CLEAN/PUSHED (canal 1) e VINTAGE/MODERN (canal 2) mudam o número de estágios de ganho; no MODERN a realimentação global sai do circuito. Chaves traseiras: RECTIFIER (diodo × válvula 5U4GB) e POWER (Bold × Spongy).' },
+      { id: 'ac30_tb', title: 'UK 30 · TOP BOOST', ref: 'Ref.: Vox AC30/6 Top Boost (anos 60)', tubes: 'ECC83 no pré/PI · 4× EL84 (cátodo) · ret. GZ34',
+        note: 'Sem realimentação global. CUT é um filtro passa-baixas entre os dois lados do inversor de fase, antes das EL84 — não é um treble comum. Tone stack Top Boost (não é FMV), alimentado por cathode follower.' }
+    ] };
+  }
+}
+</script>
+</body>
+</html>

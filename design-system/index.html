@@ -111,7 +111,12 @@
       <div class="strobe-track">
         <div class="strobe-center-needle"></div>
       </div>
-      <div class="tuner-note-display" id="tunerNoteText">E2 (-0.1¢)</div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div class="tuner-note-display" id="tunerNoteText">—</div>
+        <button class="hw-btn" id="btnTunerOutputMode" title="Alternar saída do afinador entre Mute e Bypass" style="padding:3px 8px; font-size:10px;">
+          OUT: MUTE
+        </button>
+      </div>
     </div>
 
     <!-- Assistente de Calibração de Entrada (Spec 019, CA-1 a CA-3) -->

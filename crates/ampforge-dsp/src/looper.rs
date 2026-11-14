@@ -169,6 +169,14 @@ impl LooperProcessor {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.state = LooperState::Idle;
+        self.loop_length = 0;
+        self.play_pos = 0.0;
+        self.can_undo = false;
+        self.can_redo = false;
+    }
+
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), output.len());
 

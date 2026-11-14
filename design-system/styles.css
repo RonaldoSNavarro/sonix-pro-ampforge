@@ -66,6 +66,13 @@
   user-select: none;
 }
 
+html, body {
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
 body {
   background-color: var(--bg-studio-room);
   background-image:
@@ -74,10 +81,11 @@ body {
   color: #e6ebf2;
   font-family: var(--font-ui);
   font-size: 13px;
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 /* ============================================================================
@@ -89,7 +97,10 @@ body {
   width: 100%;
   max-width: 1640px;
   margin: 0 auto;
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+  box-sizing: border-box;
   transition: all 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -156,12 +167,13 @@ body.hardware-shell-mode .chassis-screws {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: clamp(6px, 0.8vw, 12px);
+  padding: clamp(4px, 0.6vh, 8px) clamp(10px, 1.2vw, 16px);
   background: var(--surface-anodized);
   border-bottom: 2px solid #090a0d;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 4px 14px rgba(0, 0, 0, 0.6);
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .brand-cluster {
@@ -391,9 +403,10 @@ body.hardware-shell-mode .chassis-screws {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 16px;
+  padding: clamp(3px, 0.4vh, 6px) clamp(10px, 1.2vw, 16px);
   background: #0d0f13;
   border-bottom: 1px solid #20252e;
+  flex-shrink: 0;
 }
 
 .subnav-tabs {
@@ -436,17 +449,18 @@ body.hardware-shell-mode .chassis-screws {
    ZONA 1: SIGNAL CHAIN MATRIX GRID (4 ROWS x 12 COLUMNS)
    ============================================================================ */
 .signal-grid-section {
-  padding: 10px 16px;
+  padding: clamp(4px, 0.6vh, 8px) clamp(10px, 1.2vw, 16px);
   background: linear-gradient(180deg, #0b0d11 0%, #101319 100%);
   border-bottom: 2px solid #07080a;
   box-shadow: inset 0 -2px 8px rgba(0, 0, 0, 0.7);
+  flex-shrink: 0;
 }
 
 .signal-grid-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: clamp(2px, 0.3vh, 6px);
 }
 
 .signal-grid-title {
@@ -493,17 +507,17 @@ body.hardware-shell-mode .chassis-screws {
   background: #07090c;
   border: 1px solid #1e242e;
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: clamp(3px, 0.4vh, 8px) clamp(6px, 0.8vw, 12px);
   box-shadow: var(--shadow-inset-deep);
   overflow-x: auto;
 }
 
 .grid-row {
   display: grid;
-  grid-template-columns: 74px repeat(8, minmax(112px, 1fr)) 74px;
-  gap: 8px;
+  grid-template-columns: 70px repeat(8, minmax(80px, 1fr)) 70px;
+  gap: clamp(2px, 0.3vh, 6px);
   align-items: center;
-  padding: 4px 0;
+  padding: clamp(1px, 0.15vh, 3px) 0;
   position: relative;
 }
 
@@ -549,7 +563,7 @@ body.hardware-shell-mode .chassis-screws {
 .grid-slot {
   position: relative;
   z-index: 1;
-  height: 50px;
+  height: clamp(28px, 3.4vh, 46px);
   border-radius: 6px;
   background: rgba(16, 20, 26, 0.75);
   border: 1px dashed #242b35;
@@ -564,7 +578,7 @@ body.hardware-shell-mode .chassis-screws {
   border-width: 1px;
   background: linear-gradient(180deg, #1e232b 0%, #12161b 100%);
   cursor: pointer;
-  padding: 5px 8px;
+  padding: clamp(1px, 0.2vh, 4px) clamp(4px, 0.5vw, 8px);
   justify-content: space-between;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.65);
 }
@@ -660,12 +674,14 @@ body.hardware-shell-mode .chassis-screws {
    ZONA 2: PALCO CENTRAL FOTORREALISTA (MAIN STAGE & OPEN CHASSIS MOD SHOP)
    ============================================================================ */
 .main-stage-section {
-  flex: 1;
-  padding: 14px 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: clamp(4px, 0.8vh, 12px) clamp(10px, 1.2vw, 16px);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: clamp(4px, 0.6vh, 10px);
   background: radial-gradient(circle at 50% 35%, #191d24 0%, #0b0d11 75%);
+  overflow-y: auto;
 }
 
 .stage-toolbar {
@@ -750,29 +766,35 @@ body.hardware-shell-mode .chassis-screws {
     radial-gradient(rgba(0, 0, 0, 0.8) 1px, transparent 0);
   background-size: 4px 4px;
   background-position: 0 0, 2px 2px;
-  border-radius: 18px;
-  padding: 20px;
+  border-radius: 14px;
+  padding: clamp(6px, 1vh, 16px);
   border: 3px solid #262930;
   box-shadow:
-    0 24px 60px rgba(0, 0, 0, 0.9),
+    0 16px 40px rgba(0, 0, 0, 0.9),
     inset 0 2px 4px rgba(255, 255, 255, 0.15),
     inset 0 -6px 14px rgba(0, 0, 0, 0.95);
   position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Corner Metal Protectors of Amp Head */
 .amp-head-inner-bezel {
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
-  border: 3px solid #d4af37; /* Gold piping */
-  box-shadow: inset 0 0 25px rgba(0, 0, 0, 0.95);
+  border: 2px solid #d4af37; /* Gold piping */
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.95);
   background: #0b0c0e;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Upper Grill Cloth / Tube Window Area */
 .amp-upper-grille {
   position: relative;
-  height: 120px;
+  height: clamp(26px, 4.8vh, 85px);
   background-color: #161514;
   background-image:
     repeating-linear-gradient(0deg, rgba(210, 180, 120, 0.08) 0px, rgba(210, 180, 120, 0.08) 1px, transparent 1px, transparent 4px),
@@ -780,14 +802,15 @@ body.hardware-shell-mode .chassis-screws {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-bottom: 3px solid #d4af37;
+  border-bottom: 2px solid #d4af37;
   box-shadow: inset 0 10px 28px rgba(0, 0, 0, 0.92);
+  flex-shrink: 0;
 }
 
 .amp-script-logo {
   font-family: 'Georgia', serif;
   font-style: italic;
-  font-size: 42px;
+  font-size: clamp(18px, 2.8vh, 36px);
   font-weight: 700;
   color: #f7f2e7;
   text-shadow:
@@ -810,11 +833,12 @@ body.hardware-shell-mode .chassis-screws {
 /* Lower Brushed Brass Control Faceplate */
 .amp-faceplate {
   background: var(--surface-brushed-brass);
-  padding: 20px 24px;
+  padding: clamp(6px, 1vh, 16px) clamp(10px, 1.2vw, 24px);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: clamp(8px, 1vw, 16px);
+  min-height: 0;
   position: relative;
   box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.45), inset 0 -3px 8px rgba(0, 0, 0, 0.45);
   color: #141109;
@@ -893,7 +917,7 @@ body.hardware-shell-mode .chassis-screws {
   align-items: center;
   justify-content: space-around;
   flex: 1;
-  gap: 14px;
+  gap: clamp(4px, 0.8vw, 14px);
   flex-wrap: wrap;
 }
 
@@ -901,14 +925,14 @@ body.hardware-shell-mode .chassis-screws {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: clamp(2px, 0.3vh, 5px);
   position: relative;
-  min-width: 78px;
+  min-width: clamp(50px, 5.5vw, 76px);
 }
 
 .knob-dial-wrapper {
-  width: 66px;
-  height: 66px;
+  width: clamp(38px, 4.8vh, 64px);
+  height: clamp(38px, 4.8vh, 64px);
   position: relative;
   display: flex;
   align-items: center;
@@ -927,8 +951,8 @@ body.hardware-shell-mode .chassis-screws {
 
 /* Stationary drop shadow of 3D knob */
 .knob-shadow-base {
-  width: 48px;
-  height: 48px;
+  width: clamp(28px, 3.6vh, 46px);
+  height: clamp(28px, 3.6vh, 46px);
   border-radius: 50%;
   box-shadow: var(--shadow-knob);
   position: relative;
@@ -939,8 +963,8 @@ body.hardware-shell-mode .chassis-screws {
 
 /* Rotating body of the Marshall-style skirted knob */
 .knob-rotor {
-  width: 48px;
-  height: 48px;
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   background:
     radial-gradient(circle at 50% 50%, transparent 56%, #141414 58%, #292929 70%, #0d0d0d 100%);
@@ -954,8 +978,8 @@ body.hardware-shell-mode .chassis-screws {
 
 /* Gold/Silver Brushed Cap on top of Knob */
 .knob-cap {
-  width: 30px;
-  height: 30px;
+  width: 62%;
+  height: 62%;
   border-radius: 50%;
   background: conic-gradient(
     from 140deg,
@@ -1471,19 +1495,20 @@ body.hardware-shell-mode .chassis-screws {
 .hardware-footswitch-dock {
   background: linear-gradient(180deg, #1b1f26 0%, #101318 40%, #090b0e 100%);
   border-top: 3px solid #2d3442;
-  padding: 12px 18px;
+  padding: clamp(4px, 0.6vh, 10px) 16px;
   box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.85), inset 0 1px 1px rgba(255, 255, 255, 0.14);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  flex-wrap: wrap;
+  gap: clamp(8px, 1vw, 16px);
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .footswitch-array {
   display: grid;
-  grid-template-columns: repeat(8, minmax(105px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(8, minmax(60px, 1fr));
+  gap: clamp(4px, 0.5vw, 10px);
   flex: 1;
 }
 
@@ -1491,11 +1516,11 @@ body.hardware-shell-mode .chassis-screws {
   background: linear-gradient(180deg, #161920 0%, #0d0f14 100%);
   border: 1px solid #272e3b;
   border-radius: 8px;
-  padding: 8px 6px 10px;
+  padding: clamp(2px, 0.35vh, 6px) clamp(2px, 0.3vw, 5px) clamp(2px, 0.4vh, 8px);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: clamp(2px, 0.25vh, 5px);
   cursor: pointer;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.06), 0 4px 10px rgba(0, 0, 0, 0.7);
   transition: transform 0.1s ease;
@@ -1511,7 +1536,7 @@ body.hardware-shell-mode .chassis-screws {
   background: #030609;
   border: 1px solid #263140;
   border-radius: 4px;
-  padding: 4px 6px;
+  padding: clamp(1px, 0.15vh, 3px) clamp(2px, 0.25vw, 4px);
   text-align: center;
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.95);
 }
@@ -1520,17 +1545,17 @@ body.hardware-shell-mode .chassis-screws {
   display: flex;
   justify-content: space-between;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: clamp(7px, 0.8vh, 8px);
   color: #78909c;
 }
 
 .oled-main-text {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: clamp(8px, 1vh, 10px);
   font-weight: 700;
   color: var(--fs-color, #00e5ff);
   text-shadow: 0 0 6px var(--fs-color, #00e5ff);
-  margin-top: 2px;
+  margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1538,13 +1563,13 @@ body.hardware-shell-mode .chassis-screws {
 
 /* Metallic Actuator + RGB Ring */
 .actuator-ring-rgb {
-  width: 44px;
-  height: 44px;
+  width: clamp(24px, 3.2vh, 40px);
+  height: clamp(24px, 3.2vh, 40px);
   border-radius: 50%;
-  padding: 4px;
+  padding: clamp(2px, 0.25vh, 4px);
   background: var(--fs-color, #00e5ff);
   box-shadow:
-    0 0 14px var(--fs-color, #00e5ff),
+    0 0 12px var(--fs-color, #00e5ff),
     inset 0 0 6px rgba(255, 255, 255, 0.8);
   display: flex;
   align-items: center;
@@ -1558,8 +1583,8 @@ body.hardware-shell-mode .chassis-screws {
 }
 
 .actuator-metal-plunger {
-  width: 32px;
-  height: 32px;
+  width: clamp(16px, 2.2vh, 28px);
+  height: clamp(16px, 2.2vh, 28px);
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #f5f7fa 0%, #9aa5b4 45%, #49525e 85%, #22272e 100%);
   border: 2px solid #1b1f26;
@@ -1568,12 +1593,13 @@ body.hardware-shell-mode .chassis-screws {
 
 /* 3D Expression Pedal Widget */
 .expression-pedal-unit {
-  width: 130px;
-  height: 106px;
+  width: clamp(80px, 8.5vw, 120px);
+  height: auto;
+  max-height: 100%;
   background: linear-gradient(180deg, #232730 0%, #101217 100%);
   border: 2px solid #3c4454;
-  border-radius: 10px;
-  padding: 8px 10px;
+  border-radius: 8px;
+  padding: clamp(3px, 0.4vh, 6px) clamp(4px, 0.5vw, 8px);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1660,8 +1686,8 @@ body.hardware-shell-mode .chassis-screws {
    BLOCK EDITOR PANEL (SPEC 023)
    ============================================================================ */
 .block-editor-panel {
-  margin: 12px 0 0 0;
-  padding: 12px 18px;
+  margin: clamp(3px, 0.4vh, 6px) 0 0 0;
+  padding: clamp(4px, 0.5vh, 8px) clamp(8px, 1vw, 14px);
   background: rgba(18, 18, 20, 0.95);
   border: 1px solid #ff9100;
   border-radius: 6px;
@@ -1673,8 +1699,8 @@ body.hardware-shell-mode .chassis-screws {
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 8px;
-  margin-bottom: 12px;
+  padding-bottom: clamp(2px, 0.25vh, 4px);
+  margin-bottom: clamp(3px, 0.35vh, 6px);
 }
 
 .block-editor-title {
@@ -1720,4 +1746,112 @@ body.hardware-shell-mode .chassis-screws {
   font-size: 12px;
   font-weight: 700;
   color: #eee;
+}
+
+.pedal-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(4px, 0.6vw, 10px);
+  align-items: center;
+}
+
+.pedal-knob-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(1px, 0.2vh, 3px);
+  background: rgba(255, 255, 255, 0.03);
+  padding: clamp(2px, 0.3vh, 5px) clamp(3px, 0.4vw, 6px);
+  border-radius: 4px;
+}
+
+.pedal-knob-box label {
+  font-family: var(--font-chassis);
+  font-size: clamp(8px, 1vh, 10px);
+  font-weight: 700;
+  color: #ff9100;
+  letter-spacing: 0.08em;
+}
+
+.pedal-knob-box input[type="range"] {
+  width: 100%;
+  max-width: 120px;
+  height: clamp(12px, 1.6vh, 18px);
+}
+
+.pedal-knob-box .pedal-val {
+  font-family: var(--font-mono);
+  font-size: clamp(8px, 1vh, 11px);
+  color: #e0e0e0;
+}
+
+@media (max-height: 850px) {
+  .top-master-bar {
+    padding: 3px 12px;
+  }
+  .workspace-subnav {
+    padding: 2px 12px;
+    font-size: 11px;
+  }
+  .signal-grid-section {
+    padding: 3px 12px;
+  }
+  .grid-matrix-container {
+    padding: 3px 8px;
+  }
+  .grid-row {
+    grid-template-columns: 60px repeat(8, minmax(70px, 1fr)) 60px;
+    gap: 3px;
+    padding: 1px 0;
+  }
+  .grid-slot {
+    height: 30px;
+  }
+  .block-editor-panel {
+    margin: 2px 0 0 0;
+    padding: 3px 8px;
+  }
+  .main-stage-section {
+    padding: 4px 12px;
+    gap: 4px;
+    min-height: 0;
+  }
+  .stage-toolbar {
+    gap: 4px;
+  }
+  .amp-head-outer-shell {
+    padding: 6px 10px;
+  }
+  .amp-upper-grille {
+    height: 32px;
+  }
+  .amp-script-logo {
+    font-size: 18px;
+  }
+  .amp-faceplate {
+    padding: 6px 10px;
+  }
+  .knob-dial-wrapper {
+    width: 40px;
+    height: 40px;
+  }
+  .knob-shadow-base {
+    width: 28px;
+    height: 28px;
+  }
+  .hardware-footswitch-dock {
+    padding: 3px 10px;
+  }
+  .footswitch-unit {
+    padding: 2px 3px 3px;
+    gap: 2px;
+  }
+  .actuator-ring-rgb {
+    width: 24px;
+    height: 24px;
+  }
+  .actuator-metal-plunger {
+    width: 16px;
+    height: 16px;
+  }
 }

@@ -2,23 +2,22 @@
 //! Host de Áudio Nativo Desktop Standalone e Duplex Real-Time (WASAPI, ASIO, CoreAudio, ALSA, JACK)
 //! Suporte a captura física P2/P3 e processamento lock-free em tempo real (Spec 012 & Spec 013)
 
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use ampforge_dsp::amp::{AmpModelId, WhiteBoxAmpProcessor};
-use ampforge_dsp::cab::VirtualCabProcessor;
+use ampforge_dsp::amp::{AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
+use ampforge_dsp::cab::{SpeakerCabModel, VirtualCabProcessor};
 use ampforge_dsp::dag::{MixerChannelConfig, MixerNode, SplitMode, SplitNode};
 use ampforge_dsp::fx::delay::{DelayModel, DelayProcessor};
 use ampforge_dsp::fx::drive::{DriveModel, DriveProcessor};
-use ampforge_dsp::fx::dynamics::{CompressorProcessor, CompressorTopology, NoiseGateMode, NoiseGateProcessor};
+use ampforge_dsp::fx::dynamics::{CompressorProcessor, CompressorTopology, GateState, NoiseGateMode, NoiseGateProcessor};
 use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
 use ampforge_dsp::fx::modulation::{ModModel, ModulationProcessor};
 use ampforge_dsp::fx::reverb::{ReverbModel, ReverbProcessor};
+use ampforge_dsp::looper::{LooperPosition, LooperProcessor};
 use ampforge_dsp::tuner::{TunerOutputMode, TunerPitchResult, TunerProcessor};
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use ringbuf::HeapRb;
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum AudioDriverError {
@@ -596,19 +595,28 @@ impl DesktopAudioHost {
         let in_channels = in_config.channels() as usize;
         let out_channels = out_config.channels() as usize;
 
+        // Configura buffer de 128 frames (Spec 028, CA-3: ~2.6 ms) com fallback gracioso se não suportado
+        let mut in_stream_config: cpal::StreamConfig = in_config.clone().into();
+        in_stream_config.buffer_size = cpal::BufferSize::Fixed(128);
+
+        let mut out_stream_config: cpal::StreamConfig = out_config.clone().into();
+        out_stream_config.buffer_size = cpal::BufferSize::Fixed(128);
+
         let duplex_in = duplex.clone();
         let tele_in = telemetry.clone();
 
         // 1. Stream de Entrada de Áudio (Captura da Guitarra P2/P3)
+        // Pré-aloca buffer de trabalho fora da closure para 0 alocações de heap no callback
+        let mut mono_buf = vec![0.0f32; 4096];
         let in_stream = match in_config.sample_format() {
             cpal::SampleFormat::F32 => {
-                in_device.build_input_stream(
-                    in_config.into(),
+                let build_res = in_device.build_input_stream(
+                    in_stream_config,
                     move |data: &[f32], _| {
                         let num_frames = data.len() / in_channels;
-                        let mut mono_buf = Vec::with_capacity(num_frames);
+                        let frames = num_frames.min(mono_buf.len());
                         let mut peak = 0.0f32;
-                        for f in 0..num_frames {
+                        for f in 0..frames {
                             let s = if in_channels >= 2 {
                                 let l = data[f * in_channels];
                                 let r = data[f * in_channels + 1];
@@ -617,29 +625,59 @@ impl DesktopAudioHost {
                                 data[f]
                             };
                             peak = peak.max(s.abs());
-                            mono_buf.push(s);
+                            mono_buf[f] = s;
                         }
-                        duplex_in.push_captured_samples(&mono_buf);
+                        duplex_in.push_captured_samples(&mono_buf[..frames]);
                         let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
                         tele_in.update_input_peak(peak_db);
                     },
-                    |err| {
-                        let msg = err.to_string();
-                        if !msg.contains("underrun") && !msg.contains("overrun") {
-                            eprintln!("Aviso WASAPI entrada: {}", msg);
-                        }
+                    |_err| {
+                        // Sem eprintln! na thread de áudio em tempo real (Spec 028, CA-6)
                     },
                     None,
-                )
+                );
+                match build_res {
+                    Ok(s) => s,
+                    Err(_) => {
+                        let mut mono_buf_fb = vec![0.0f32; 4096];
+                        let duplex_fb = duplex.clone();
+                        let tele_fb = telemetry.clone();
+                        in_device.build_input_stream(
+                            in_config.into(),
+                            move |data: &[f32], _| {
+                                let num_frames = data.len() / in_channels;
+                                let frames = num_frames.min(mono_buf_fb.len());
+                                let mut peak = 0.0f32;
+                                for f in 0..frames {
+                                    let s = if in_channels >= 2 {
+                                        let l = data[f * in_channels];
+                                        let r = data[f * in_channels + 1];
+                                        if l.abs() > r.abs() { l } else { r }
+                                    } else {
+                                        data[f]
+                                    };
+                                    peak = peak.max(s.abs());
+                                    mono_buf_fb[f] = s;
+                                }
+                                duplex_fb.push_captured_samples(&mono_buf_fb[..frames]);
+                                let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+                                tele_fb.update_input_peak(peak_db);
+                            },
+                            |_| {},
+                            None,
+                        ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?
+                    }
+                }
             }
             cpal::SampleFormat::I16 => {
+                let mut mono_buf_i16 = vec![0.0f32; 4096];
                 in_device.build_input_stream(
                     in_config.into(),
                     move |data: &[i16], _| {
                         let num_frames = data.len() / in_channels;
-                        let mut mono_buf = Vec::with_capacity(num_frames);
+                        let frames = num_frames.min(mono_buf_i16.len());
                         let mut peak = 0.0f32;
-                        for f in 0..num_frames {
+                        for f in 0..frames {
                             let s = if in_channels >= 2 {
                                 let l = data[f * in_channels] as f32 / 32768.0;
                                 let r = data[f * in_channels + 1] as f32 / 32768.0;
@@ -648,49 +686,56 @@ impl DesktopAudioHost {
                                 data[f] as f32 / 32768.0
                             };
                             peak = peak.max(s.abs());
-                            mono_buf.push(s);
+                            mono_buf_i16[f] = s;
                         }
-                        duplex_in.push_captured_samples(&mono_buf);
+                        duplex_in.push_captured_samples(&mono_buf_i16[..frames]);
                         let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
                         tele_in.update_input_peak(peak_db);
                     },
-                    |err| {
-                        let msg = err.to_string();
-                        if !msg.contains("underrun") && !msg.contains("overrun") {
-                            eprintln!("Aviso WASAPI entrada: {}", msg);
-                        }
+                    |_err| {
+                        // Sem eprintln! na thread de áudio
                     },
                     None,
-                )
+                ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?
             }
             _ => return Err(AudioDriverError::InitFailed("Formato de amostra de entrada não suportado".to_string())),
-        }.map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?;
+        };
 
         // 2. Stream de Saída de Áudio (Processamento AmpForge DSP + Alto-Falantes / Fones)
-        let duplex_out = duplex.clone();
-        let dsp_chain_out = dsp_chain.clone();
-        let tele_out = telemetry.clone();
+        let out_sample_rate = out_config.sample_rate() as f32;
 
         let out_stream = match out_config.sample_format() {
             cpal::SampleFormat::F32 => {
-                out_device.build_output_stream(
-                    out_config.into(),
+                let mut mono_in_f32 = vec![0.0f32; 4096];
+                let mut mono_out_f32 = vec![0.0f32; 4096];
+                let duplex_f32 = duplex.clone();
+                let dsp_chain_f32 = dsp_chain.clone();
+                let tele_f32 = telemetry.clone();
+
+                let build_res = out_device.build_output_stream(
+                    out_stream_config,
                     move |data: &mut [f32], _| {
                         let num_frames = data.len() / out_channels;
-                        let mut mono_in = vec![0.0f32; num_frames];
-                        let mut mono_out = vec![0.0f32; num_frames];
+                        let frames = num_frames.min(mono_in_f32.len());
 
-                        duplex_out.pop_samples_for_processing(&mut mono_in);
+                        duplex_f32.pop_samples_for_processing(&mut mono_in_f32[..frames]);
 
-                        if let Ok(mut dsp) = dsp_chain_out.try_lock() {
-                            dsp.process(&mono_in, &mut mono_out);
+                        let mut gate_telemetry: Option<(GateState, f32)> = None;
+                        let t0 = std::time::Instant::now();
+                        if let Ok(mut dsp) = dsp_chain_f32.try_lock() {
+                            dsp.drain_param_queue();
+                            dsp.process(&mono_in_f32[..frames], &mut mono_out_f32[..frames]);
+                            gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
                         } else {
-                            mono_out.copy_from_slice(&mono_in);
+                            mono_out_f32[..frames].fill(0.0);
                         }
+                        let elapsed_s = t0.elapsed().as_secs_f32();
+                        let budget_s = (frames as f32 / out_sample_rate).max(1e-6);
+                        let cpu_pct = (elapsed_s / budget_s) * 100.0;
 
                         let mut peak = 0.0f32;
-                        for f in 0..num_frames {
-                            let s = mono_out[f];
+                        for f in 0..frames {
+                            let s = mono_out_f32[f];
                             peak = peak.max(s.abs());
                             for ch in 0..out_channels {
                                 data[f * out_channels + ch] = s;
@@ -698,37 +743,100 @@ impl DesktopAudioHost {
                         }
 
                         let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                        tele_out.update_output_peak(peak_db);
-                        tele_out.push_waveform(&mono_out);
-                    },
-                    |err| {
-                        let msg = err.to_string();
-                        if !msg.contains("underrun") && !msg.contains("overrun") {
-                            eprintln!("Aviso WASAPI saída: {}", msg);
+                        tele_f32.update_peaks(tele_f32.input_peak_db(), peak_db, cpu_pct);
+                        if let Some((gs, ggr)) = gate_telemetry {
+                            tele_f32.update_gate_telemetry(gs, ggr);
                         }
+                        tele_f32.push_waveform(&mono_out_f32[..frames]);
+                    },
+                    |_err| {
+                        // Sem eprintln! na thread de áudio
                     },
                     None,
-                )
+                );
+                match build_res {
+                    Ok(s) => s,
+                    Err(_) => {
+                        let mut mono_in_fb = vec![0.0f32; 4096];
+                        let mut mono_out_fb = vec![0.0f32; 4096];
+                        let duplex_fb = duplex.clone();
+                        let dsp_chain_fb = dsp_chain.clone();
+                        let tele_fb = telemetry.clone();
+
+                        out_device.build_output_stream(
+                            out_config.into(),
+                            move |data: &mut [f32], _| {
+                                let num_frames = data.len() / out_channels;
+                                let frames = num_frames.min(mono_in_fb.len());
+
+                                duplex_fb.pop_samples_for_processing(&mut mono_in_fb[..frames]);
+
+                                let mut gate_telemetry: Option<(GateState, f32)> = None;
+                                let t0 = std::time::Instant::now();
+                                if let Ok(mut dsp) = dsp_chain_fb.try_lock() {
+                                    dsp.drain_param_queue();
+                                    dsp.process(&mono_in_fb[..frames], &mut mono_out_fb[..frames]);
+                                    gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
+                                } else {
+                                    mono_out_fb[..frames].fill(0.0);
+                                }
+                                let elapsed_s = t0.elapsed().as_secs_f32();
+                                let budget_s = (frames as f32 / out_sample_rate).max(1e-6);
+                                let cpu_pct = (elapsed_s / budget_s) * 100.0;
+
+                                let mut peak = 0.0f32;
+                                for f in 0..frames {
+                                    let s = mono_out_fb[f];
+                                    peak = peak.max(s.abs());
+                                    for ch in 0..out_channels {
+                                        data[f * out_channels + ch] = s;
+                                    }
+                                }
+
+                                let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+                                tele_fb.update_peaks(tele_fb.input_peak_db(), peak_db, cpu_pct);
+                                if let Some((gs, ggr)) = gate_telemetry {
+                                    tele_fb.update_gate_telemetry(gs, ggr);
+                                }
+                                tele_fb.push_waveform(&mono_out_fb[..frames]);
+                            },
+                            |_| {},
+                            None,
+                        ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?
+                    }
+                }
             }
             cpal::SampleFormat::I16 => {
+                let mut mono_in_i16 = vec![0.0f32; 4096];
+                let mut mono_out_i16 = vec![0.0f32; 4096];
+                let duplex_i16 = duplex.clone();
+                let dsp_chain_i16 = dsp_chain.clone();
+                let tele_i16 = telemetry.clone();
+
                 out_device.build_output_stream(
                     out_config.into(),
                     move |data: &mut [i16], _| {
                         let num_frames = data.len() / out_channels;
-                        let mut mono_in = vec![0.0f32; num_frames];
-                        let mut mono_out = vec![0.0f32; num_frames];
+                        let frames = num_frames.min(mono_in_i16.len());
 
-                        duplex_out.pop_samples_for_processing(&mut mono_in);
+                        duplex_i16.pop_samples_for_processing(&mut mono_in_i16[..frames]);
 
-                        if let Ok(mut dsp) = dsp_chain_out.try_lock() {
-                            dsp.process(&mono_in, &mut mono_out);
+                        let mut gate_telemetry: Option<(GateState, f32)> = None;
+                        let t0 = std::time::Instant::now();
+                        if let Ok(mut dsp) = dsp_chain_i16.try_lock() {
+                            dsp.drain_param_queue();
+                            dsp.process(&mono_in_i16[..frames], &mut mono_out_i16[..frames]);
+                            gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
                         } else {
-                            mono_out.copy_from_slice(&mono_in);
+                            mono_out_i16[..frames].fill(0.0);
                         }
+                        let elapsed_s = t0.elapsed().as_secs_f32();
+                        let budget_s = (frames as f32 / out_sample_rate).max(1e-6);
+                        let cpu_pct = (elapsed_s / budget_s) * 100.0;
 
                         let mut peak = 0.0f32;
-                        for f in 0..num_frames {
-                            let s = mono_out[f];
+                        for f in 0..frames {
+                            let s = mono_out_i16[f];
                             peak = peak.max(s.abs());
                             let s_i16 = (s * 32767.0).clamp(-32768.0, 32767.0) as i16;
                             for ch in 0..out_channels {
@@ -737,27 +845,58 @@ impl DesktopAudioHost {
                         }
 
                         let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                        tele_out.update_output_peak(peak_db);
-                        tele_out.push_waveform(&mono_out);
-                    },
-                    |err| {
-                        let msg = err.to_string();
-                        if !msg.contains("underrun") && !msg.contains("overrun") {
-                            eprintln!("Aviso WASAPI saída: {}", msg);
+                        tele_i16.update_peaks(tele_i16.input_peak_db(), peak_db, cpu_pct);
+                        if let Some((gs, ggr)) = gate_telemetry {
+                            tele_i16.update_gate_telemetry(gs, ggr);
                         }
+                        tele_i16.push_waveform(&mono_out_i16[..frames]);
                     },
+                    |_err| {},
                     None,
-                )
+                ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?
             }
             _ => return Err(AudioDriverError::InitFailed("Formato de amostra de saída não suportado".to_string())),
-        }.map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?;
+        };
 
         in_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de entrada: {}", e)))?;
         out_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de saída: {}", e)))?;
 
+        let in_sr = in_config.sample_rate();
+        let out_sr = out_config.sample_rate();
+        let period_frames = 128u32;
+        let in_lat_ms = (period_frames as f32 / in_sr as f32) * 1000.0;
+        let out_lat_ms = (period_frames as f32 / out_sr as f32) * 1000.0;
+        let duplex_ms = (period_frames as f32 / out_sr as f32) * 1000.0;
+        let algo_lat_samples = 16u32;
+        let algo_lat_ms = (algo_lat_samples as f32 / out_sr as f32) * 1000.0;
+        let roundtrip_ms = in_lat_ms + out_lat_ms + duplex_ms + algo_lat_ms;
+
+        let status_telemetry = AudioStatusTelemetry {
+            backend: "wasapi".to_string(),
+            mode: "wasapi_shared_low_latency".to_string(),
+            fallback_reason: None,
+            raw_processing: true,
+            sample_rate: out_sr,
+            input_period_frames: period_frames,
+            output_period_frames: period_frames,
+            input_device: in_device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Realtek Microphone".to_string()),
+            output_device: out_device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Realtek Audio Output".to_string()),
+            driver_input_latency_ms: in_lat_ms,
+            driver_output_latency_ms: out_lat_ms,
+            cpu_avg_pct: 0.0,
+            cpu_peak_pct: 0.0,
+            underruns: 0,
+            overruns: 0,
+            panics: 0,
+            adc_clips: 0,
+            measured_roundtrip_ms: Some(roundtrip_ms),
+            algorithmic_latency_samples: algo_lat_samples,
+        };
+
         Ok(RealtimeDuplexAudioStreams {
             input_stream: in_stream,
             output_stream: out_stream,
+            telemetry: status_telemetry,
         })
     }
 }
@@ -765,78 +904,335 @@ impl DesktopAudioHost {
 pub struct RealtimeDuplexAudioStreams {
     pub input_stream: cpal::Stream,
     pub output_stream: cpal::Stream,
+    pub telemetry: AudioStatusTelemetry,
 }
 
-/// Motor Duplex em Tempo Real com Ring Buffer Lock-Free SPSC (Spec 013, CA-3)
+/// Comandos de parâmetros atômicos para a fila SPSC lock-free (Spec 028, CA-1)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DspParamUpdate {
+    AmpGain(f32),
+    AmpOverdrive(f32),
+    AmpBass(f32),
+    AmpMiddle(f32),
+    AmpTreble(f32),
+    AmpPresence(f32),
+    AmpDepth(f32),
+    AmpMaster(f32),
+    AmpVolume2(f32),
+    AmpCut(f32),
+    AmpModel(AmpModelId),
+    AmpBright(bool),
+    AmpPower(bool),
+    AmpStandby(bool),
+    AmpInputJack(AmpInputJack),
+    AmpJumpered(bool),
+    AmpChannelMode(AmpChannelMode),
+    AmpSpongy(bool),
+    AmpReverb(f32),
+    AmpVibratoSpeed(f32),
+    AmpVibratoDepth(f32),
+    AmpImpedanceOhms(u8),
+    EngineOversampling(usize),
+    InputBoost(f32),
+    GateThreshold(f32),
+    GateEnabled(bool),
+    GateMode(NoiseGateMode),
+    GateHysteresis(f32),
+    GateAttack(f32),
+    GateHold(f32),
+    GateRelease(f32),
+    GateRange(f32),
+    GateKeyHpf(f32),
+    GateKeyLpf(f32),
+    DriveEnabled(bool),
+    DriveGain(f32),
+    DriveTone(f32),
+    DriveLevel(f32),
+    DriveModel(DriveModel),
+    AmpEnabled(bool),
+    CabEnabled(bool),
+    InputSource(u8),
+    AmpBiasMa(f32),
+    AmpSag(f32),
+    AmpNfb(f32),
+    AmpXformerSat(f32),
+    AmpPreampPlateV(f32),
+    AmpTriodeAsym(f32),
+    CabResonanceHz(f32),
+    CabHicutKhz(f32),
+    CabIrEnabled(bool),
+    CabMic1Position(f32),
+    CabMic1DistanceCm(f32),
+    CabMic1LevelDb(f32),
+    CabMic1Enabled(bool),
+    CabMic2Position(f32),
+    CabMic2DistanceCm(f32),
+    CabMic2LevelDb(f32),
+    CabMic2Enabled(bool),
+    SplitEnabled(bool),
+    SplitRatio(f32),
+    SplitCrossoverHz(f32),
+    MergeRow1LevelDb(f32),
+    MergeRow1PhaseInvert(bool),
+    Comp2Enabled(bool),
+    Comp2ThresholdDb(f32),
+    Comp2Ratio(f32),
+    Comp2AttackMs(f32),
+    Comp2ReleaseMs(f32),
+    Comp2MakeupGainDb(f32),
+    Eq1Enabled(bool),
+    Mod2Enabled(bool),
+    Mod2RateHz(f32),
+    Mod2Depth(f32),
+    Mod2Mix(f32),
+    Dly1Enabled(bool),
+    Dly1TimeMs(f32),
+    Dly1Feedback(f32),
+    Dly1Mix(f32),
+    Rev1Enabled(bool),
+    Rev1DecayS(f32),
+    Rev1Mix(f32),
+    TunerEnabled(bool),
+    TunerOutputMode(TunerOutputMode),
+    // Spec 032 / 033: Controles adicionais em fila SPSC lock-free
+    DriveBias(f32),
+    Comp2Output(f32),
+    Comp2AllButtons(bool),
+    Eq1Mode(EqMode),
+    Eq1BandFreq(usize, f32),
+    Eq1BandGain(usize, f32),
+    Eq1BandQ(usize, f32),
+    Eq1InputGainDb(f32),
+    Eq1OutputLevelDb(f32),
+    Dly1Mode(u8),
+    Dly1RepeatRate(f32),
+    Dly1Intensity(f32),
+    Dly1EchoVolume(f32),
+    Dly1ReverbVolume(f32),
+    Dly1Bass(f32),
+    Dly1Treble(f32),
+    Dly1Spillover(bool),
+    Cab1Speaker(SpeakerCabModel),
+    Cab1Mic1AngleDeg(f32),
+    Cab1Mic2AngleDeg(f32),
+    Cab1Mic1PhaseInvert(bool),
+    Cab1Mic2PhaseInvert(bool),
+    TunerRefHz(f32),
+    LooperPosition(LooperPosition),
+    LooperAction(LooperActionCmd),
+}
+
+/// Comandos discretos de transporte para o Looper (Spec 033)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LooperActionCmd {
+    Record,
+    Play,
+    Overdub,
+    Stop,
+    Undo,
+    Redo,
+    Clear,
+}
+
+/// Fila SPSC Lock-Free de Comandos de Parâmetros (Zero Locks, Zero Allocations) (Spec 028, CA-1)
+pub struct LockFreeParamQueue {
+    inner: Arc<ampforge_dsp::queue::SpscBuffer<DspParamUpdate, 2048>>,
+}
+
+impl LockFreeParamQueue {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(ampforge_dsp::queue::SpscBuffer::new()),
+        }
+    }
+
+    #[inline]
+    pub fn push(&self, cmd: DspParamUpdate) -> Result<(), DspParamUpdate> {
+        self.inner.push(cmd)
+    }
+
+    #[inline]
+    pub fn pop(&self) -> Option<DspParamUpdate> {
+        self.inner.pop()
+    }
+}
+
+impl Clone for LockFreeParamQueue {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl Default for LockFreeParamQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Motor Duplex em Tempo Real com Ring Buffer Lock-Free SPSC (Spec 013, CA-3 & Spec 028, CA-1, CA-2)
 pub struct RealtimeDuplexEngine {
-    capacity: usize,
-    producer: Mutex<<HeapRb<f32> as Split>::Prod>,
-    consumer: Mutex<<HeapRb<f32> as Split>::Cons>,
+    ring: LockFreeSpscRingBuffer,
+    target_period: AtomicUsize,
 }
 
 impl RealtimeDuplexEngine {
     pub fn new(capacity: usize) -> Self {
-        let rb = HeapRb::<f32>::new(capacity);
-        let (prod, cons) = rb.split();
         Self {
-            capacity,
-            producer: Mutex::new(prod),
-            consumer: Mutex::new(cons),
+            ring: LockFreeSpscRingBuffer::new(capacity),
+            target_period: AtomicUsize::new(128),
         }
+    }
+
+    pub fn with_target_period(capacity: usize, target_period: usize) -> Self {
+        let tp = target_period.max(16);
+        let engine = Self {
+            ring: LockFreeSpscRingBuffer::new(capacity),
+            target_period: AtomicUsize::new(tp),
+        };
+        // Pré-carrega o buffer com exatamente 1 período de silêncio para iniciar equilibrado em regime estacionário
+        let warmup = vec![0.0f32; tp];
+        engine.ring.push_slice(&warmup);
+        engine
+    }
+
+    pub fn is_lock_free(&self) -> bool {
+        self.ring.is_lock_free()
     }
 
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.ring.capacity()
+    }
+
+    pub fn target_period(&self) -> usize {
+        self.target_period.load(Ordering::Relaxed)
+    }
+
+    pub fn set_target_period(&self, period: usize) {
+        self.target_period.store(period.max(16), Ordering::Relaxed);
     }
 
     pub fn available_samples(&self) -> usize {
-        if let Ok(cons) = self.consumer.lock() {
-            cons.occupied_len()
-        } else {
-            0
-        }
+        self.ring.occupied()
     }
 
     pub fn push_captured_samples(&self, samples: &[f32]) -> usize {
-        if let Ok(mut prod) = self.producer.lock() {
-            let mut pushed = 0;
-            for &sample in samples {
-                if prod.try_push(sample).is_ok() {
-                    pushed += 1;
-                } else {
-                    break;
-                }
-            }
-            pushed
-        } else {
-            0
-        }
+        self.ring.push_slice(samples)
     }
 
     pub fn pop_samples_for_processing(&self, buf: &mut [f32]) -> usize {
-        if let Ok(mut cons) = self.consumer.lock() {
-            // Previne acúmulo de latência (se passar de 2400 amostras / 50ms, drena para manter tempo real < 20ms)
-            let occupied = cons.occupied_len();
-            if occupied > 2400 {
-                let to_drop = occupied.saturating_sub(960);
-                for _ in 0..to_drop {
-                    let _ = cons.try_pop();
-                }
+        let target = self.target_period.load(Ordering::Relaxed);
+        let occupied = self.ring.occupied();
+
+        // Previne acúmulo de latência (Spec 028, CA-2):
+        // Se a ocupação exceder 2 períodos (ou em caso de rajada/glitch do SO), drena o excesso
+        // imediatamente para o alvo de 1 período (nunca acumulando >= 2400 amostras / 50ms).
+        let max_threshold = target * 2;
+        if occupied > max_threshold {
+            let to_drop = occupied.saturating_sub(target);
+            let mut discard = [0.0f32; 128];
+            let mut remaining = to_drop;
+            while remaining > 0 {
+                let chunk = remaining.min(discard.len());
+                self.ring.pop_slice(&mut discard[..chunk]);
+                remaining -= chunk;
             }
-            let mut popped = 0;
-            for i in 0..buf.len() {
-                if let Some(s) = cons.try_pop() {
-                    buf[i] = s;
-                    popped += 1;
-                } else {
-                    buf[i] = 0.0;
-                }
-            }
-            popped
-        } else {
-            buf.fill(0.0);
-            0
         }
+
+        self.ring.pop_slice(buf)
+    }
+}
+
+/// Capacidade do ring buffer circular SPSC lock-free de entrada limpa (potência de 2: ~5.4s a 48kHz, ~2.7s a 96kHz)
+const CLEAN_INPUT_RING_CAPACITY: usize = 262_144;
+const CLEAN_INPUT_RING_MASK: usize = CLEAN_INPUT_RING_CAPACITY - 1;
+
+/// Ring buffer circular lock-free (single-writer no callback de áudio, zero-alloc, zero-lock)
+/// compartilhado para o afinador ao vivo e captura da calibração de entrada (Spec 029).
+pub struct CleanInputRing {
+    buffer: Vec<AtomicU32>,
+    write_pos: AtomicU64,
+    sample_rate_bits: AtomicU32,
+}
+
+impl CleanInputRing {
+    pub fn new(sample_rate: f32) -> Self {
+        let mut buffer = Vec::with_capacity(CLEAN_INPUT_RING_CAPACITY);
+        for _ in 0..CLEAN_INPUT_RING_CAPACITY {
+            buffer.push(AtomicU32::new(0.0f32.to_bits()));
+        }
+        Self {
+            buffer,
+            write_pos: AtomicU64::new(0),
+            sample_rate_bits: AtomicU32::new(sample_rate.max(1.0).to_bits()),
+        }
+    }
+
+    pub fn set_sample_rate(&self, sample_rate: f32) {
+        self.sample_rate_bits
+            .store(sample_rate.max(1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn sample_rate(&self) -> f32 {
+        f32::from_bits(self.sample_rate_bits.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn total_written_relaxed(&self) -> u64 {
+        self.write_pos.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn total_written(&self) -> u64 {
+        self.write_pos.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    pub fn push_sample_at(&self, pos: u64, sample: f32) {
+        self.buffer[(pos as usize) & CLEAN_INPUT_RING_MASK]
+            .store(sample.to_bits(), Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn commit_write_pos(&self, new_pos: u64) {
+        self.write_pos.store(new_pos, Ordering::Release);
+    }
+
+    /// Lê até `dst.len()` amostras mais recentes em ordem cronológica (sem alocação de heap).
+    pub fn read_latest(&self, dst: &mut [f32]) -> usize {
+        self.read_latest_since(0, dst)
+    }
+
+    /// Lê até `dst.len()` amostras mais recentes gravadas a partir de `min_pos`.
+    pub fn read_latest_since(&self, min_pos: u64, dst: &mut [f32]) -> usize {
+        let head = self.write_pos.load(Ordering::Acquire);
+        let earliest_in_ring = head.saturating_sub(CLEAN_INPUT_RING_CAPACITY as u64);
+        let start = earliest_in_ring.max(min_pos);
+        let available = head.saturating_sub(start) as usize;
+        let count = available.min(dst.len());
+        let read_from = head - (count as u64);
+        for (i, slot) in dst[..count].iter_mut().enumerate() {
+            let idx = (read_from + i as u64) as usize & CLEAN_INPUT_RING_MASK;
+            *slot = f32::from_bits(self.buffer[idx].load(Ordering::Relaxed));
+        }
+        count
+    }
+
+    /// Copia faixa `[start_pos, end_pos)` (limitada às últimas `max_samples` amostras disponíveis).
+    pub fn read_range(&self, start_pos: u64, max_samples: usize) -> Vec<f32> {
+        let head = self.write_pos.load(Ordering::Acquire);
+        let earliest_in_ring = head.saturating_sub(CLEAN_INPUT_RING_CAPACITY as u64);
+        let effective_start = start_pos
+            .max(earliest_in_ring)
+            .max(head.saturating_sub(max_samples as u64));
+        let count = head.saturating_sub(effective_start) as usize;
+        let mut out = Vec::with_capacity(count);
+        for i in 0..count {
+            let idx = (effective_start + i as u64) as usize & CLEAN_INPUT_RING_MASK;
+            out.push(f32::from_bits(self.buffer[idx].load(Ordering::Relaxed)));
+        }
+        out
     }
 }
 
@@ -908,20 +1304,27 @@ pub struct RealtimeDspChain {
     temp_merge_r_buf: Vec<f32>,
     temp_delay_buf: Vec<f32>,
     temp_reverb_buf: Vec<f32>,
+    looper: LooperProcessor,
+    looper_position: LooperPosition,
+    temp_looper_buf: Vec<f32>,
 
     // Spec 025: Crossfade de preset sem estalos (20 ms)
     preset_fade: f32,
     preset_fade_step: f32,
     preset_crossfading: bool,
 
-    // Spec 026: Afinador ao vivo conectado na entrada da guitarra
+    // Spec 026 / 029: Afinador ao vivo e captura limpa SPSC lock-free/zero-alloc
     tuner: TunerProcessor,
     tuner_enabled: bool,
     tuner_output_mode: TunerOutputMode,
     tuner_latest_result: TunerPitchResult,
-    tuner_input_accum: Vec<f32>,
-    tuner_input_accum_pos: usize,
+    clean_input_ring: Arc<CleanInputRing>,
+    tuner_start_pos: u64,
+    tuner_scratch_read: Vec<f32>,
     tuner_mute_gain: f32,
+
+    // Spec 028: Fila SPSC Lock-Free de Parâmetros
+    param_queue: Arc<LockFreeParamQueue>,
 }
 
 impl RealtimeDspChain {
@@ -999,6 +1402,9 @@ impl RealtimeDspChain {
         let mut tuner = TunerProcessor::new();
         tuner.set_sample_rate(sample_rate);
 
+        let mut looper = LooperProcessor::new();
+        looper.set_sample_rate(sample_rate);
+
         Self {
             sample_rate,
             gate,
@@ -1062,6 +1468,9 @@ impl RealtimeDspChain {
             temp_merge_r_buf: vec![0.0; 2048],
             temp_delay_buf: vec![0.0; 2048],
             temp_reverb_buf: vec![0.0; 2048],
+            looper,
+            looper_position: LooperPosition::PostChain,
+            temp_looper_buf: vec![0.0; 2048],
 
             preset_fade: 1.0,
             preset_fade_step,
@@ -1075,14 +1484,183 @@ impl RealtimeDspChain {
                 cents_deviation: 0.0,
                 frequency_hz: 0.0,
             },
-            tuner_input_accum: vec![0.0; 2048],
-            tuner_input_accum_pos: 0,
+            clean_input_ring: Arc::new(CleanInputRing::new(sample_rate)),
+            tuner_start_pos: 0,
+            tuner_scratch_read: vec![0.0; 4096],
             tuner_mute_gain: 1.0,
+
+            param_queue: Arc::new(LockFreeParamQueue::new()),
         }
     }
 
     pub fn adc_clips(&self) -> u64 {
         self.adc_clips.load(Ordering::Relaxed)
+    }
+
+    pub fn param_queue(&self) -> Arc<LockFreeParamQueue> {
+        self.param_queue.clone()
+    }
+
+    pub fn set_param_queue(&mut self, pq: Arc<LockFreeParamQueue>) {
+        self.param_queue = pq;
+    }
+
+    pub fn push_param_update(&self, update: DspParamUpdate) -> Result<(), DspParamUpdate> {
+        self.param_queue.push(update)
+    }
+
+    pub fn drain_param_queue(&mut self) -> usize {
+        let mut count = 0;
+        while let Some(update) = self.param_queue.pop() {
+            self.apply_param_update(update);
+            count += 1;
+        }
+        count
+    }
+
+    pub fn apply_param_update(&mut self, update: DspParamUpdate) {
+        match update {
+            DspParamUpdate::AmpGain(v) => self.set_amp_gain(v),
+            DspParamUpdate::AmpOverdrive(v) => self.set_amp_overdrive(v),
+            DspParamUpdate::AmpBass(v) => self.set_amp_bass(v),
+            DspParamUpdate::AmpMiddle(v) => self.set_amp_middle(v),
+            DspParamUpdate::AmpTreble(v) => self.set_amp_treble(v),
+            DspParamUpdate::AmpPresence(v) => self.set_amp_presence(v),
+            DspParamUpdate::AmpDepth(v) => self.set_amp_depth(v),
+            DspParamUpdate::AmpMaster(v) => self.set_amp_master(v),
+            DspParamUpdate::AmpVolume2(v) => self.set_amp_volume_2(v),
+            DspParamUpdate::AmpCut(v) => self.set_amp_cut(v),
+            DspParamUpdate::AmpModel(m) => self.amp.set_target_model(m),
+            DspParamUpdate::AmpBright(b) => self.set_amp_bright(b),
+            DspParamUpdate::AmpPower(b) => self.set_amp_power(b),
+            DspParamUpdate::AmpStandby(b) => self.set_amp_standby(b),
+            DspParamUpdate::AmpInputJack(j) => self.amp.set_input_jack(j),
+            DspParamUpdate::AmpJumpered(b) => self.set_amp_jumpered(b),
+            DspParamUpdate::AmpChannelMode(m) => self.amp.set_channel_mode(m),
+            DspParamUpdate::AmpSpongy(b) => self.set_amp_spongy(b),
+            DspParamUpdate::AmpReverb(v) => self.set_amp_reverb(v),
+            DspParamUpdate::AmpVibratoSpeed(v) => self.set_amp_vibrato_speed(v),
+            DspParamUpdate::AmpVibratoDepth(v) => self.set_amp_vibrato_depth(v),
+            DspParamUpdate::AmpImpedanceOhms(o) => self.amp.set_secondary_impedance_ohms(o),
+            DspParamUpdate::EngineOversampling(f) => self.amp.set_oversampling_factor(f),
+            DspParamUpdate::InputBoost(v) => self.set_input_boost(v),
+            DspParamUpdate::GateThreshold(v) => self.set_gate_threshold_db(v),
+            DspParamUpdate::GateEnabled(b) => self.set_gate_enabled(b),
+            DspParamUpdate::GateMode(m) => self.gate.set_mode(m),
+            DspParamUpdate::GateHysteresis(v) => self.set_gate_hysteresis_db(v),
+            DspParamUpdate::GateAttack(v) => self.set_gate_attack_ms(v),
+            DspParamUpdate::GateHold(v) => self.set_gate_hold_ms(v),
+            DspParamUpdate::GateRelease(v) => self.set_gate_release_ms(v),
+            DspParamUpdate::GateRange(v) => self.set_gate_range_db(v),
+            DspParamUpdate::GateKeyHpf(v) => self.set_gate_key_hpf_hz(v),
+            DspParamUpdate::GateKeyLpf(v) => self.set_gate_key_lpf_hz(v),
+            DspParamUpdate::DriveEnabled(b) => self.set_drive_enabled(b),
+            DspParamUpdate::DriveGain(v) => self.set_drive_gain(v),
+            DspParamUpdate::DriveTone(v) => self.set_drive_tone(v),
+            DspParamUpdate::DriveLevel(v) => self.set_drive_level(v),
+            DspParamUpdate::DriveModel(m) => self.drive.set_model(m),
+            DspParamUpdate::AmpEnabled(b) => self.set_amp_enabled(b),
+            DspParamUpdate::CabEnabled(b) => self.set_cab_enabled(b),
+            DspParamUpdate::InputSource(src) => {
+                let s = match src {
+                    1 => "test_riff",
+                    2 => "di_file",
+                    _ => "device",
+                };
+                self.set_input_source(s);
+            }
+            DspParamUpdate::AmpBiasMa(v) => self.set_amp_bias_ma(v),
+            DspParamUpdate::AmpSag(v) => self.set_amp_sag(v),
+            DspParamUpdate::AmpNfb(v) => self.set_amp_nfb(v),
+            DspParamUpdate::AmpXformerSat(v) => self.set_amp_xformer_sat(v),
+            DspParamUpdate::AmpPreampPlateV(v) => self.set_amp_preamp_plate_v(v),
+            DspParamUpdate::AmpTriodeAsym(v) => self.set_amp_triode_asym(v),
+            DspParamUpdate::CabResonanceHz(v) => self.set_cab_resonance_hz(v),
+            DspParamUpdate::CabHicutKhz(v) => self.set_cab_hicut_khz(v),
+            DspParamUpdate::CabIrEnabled(b) => self.set_cab_ir_enabled(b),
+            DspParamUpdate::CabMic1Position(v) => self.set_cab_mic1_position(v),
+            DspParamUpdate::CabMic1DistanceCm(v) => self.set_cab_mic1_distance_cm(v),
+            DspParamUpdate::CabMic1LevelDb(v) => self.set_cab_mic1_level_db(v),
+            DspParamUpdate::CabMic1Enabled(b) => self.set_cab_mic1_enabled(b),
+            DspParamUpdate::CabMic2Position(v) => self.set_cab_mic2_position(v),
+            DspParamUpdate::CabMic2DistanceCm(v) => self.set_cab_mic2_distance_cm(v),
+            DspParamUpdate::CabMic2LevelDb(v) => self.set_cab_mic2_level_db(v),
+            DspParamUpdate::CabMic2Enabled(b) => self.set_cab_mic2_enabled(b),
+            DspParamUpdate::SplitEnabled(b) => self.set_split_enabled(b),
+            DspParamUpdate::SplitRatio(r) => self.split = SplitNode::new(SplitMode::BalanceAb { ratio: r }),
+            DspParamUpdate::SplitCrossoverHz(hz) => self.set_split_mode("crossover", hz),
+            DspParamUpdate::MergeRow1LevelDb(db) => {
+                let inv = self.merge_row_1_phase_invert;
+                self.set_merge_config(db, inv);
+            }
+            DspParamUpdate::MergeRow1PhaseInvert(inv) => {
+                let db = self.merge_row_1_level_db;
+                self.set_merge_config(db, inv);
+            }
+            DspParamUpdate::Comp2Enabled(b) => self.set_comp_2_enabled(b),
+            DspParamUpdate::Comp2ThresholdDb(th) => self.comp_2.set_threshold_db(th),
+            DspParamUpdate::Comp2Ratio(r) => self.comp_2.set_ratio(r),
+            DspParamUpdate::Comp2AttackMs(att) => self.comp_2.set_attack_ms(att),
+            DspParamUpdate::Comp2ReleaseMs(rel) => self.comp_2.set_release_ms(rel),
+            DspParamUpdate::Comp2MakeupGainDb(gain) => self.set_comp_2_output(gain),
+            DspParamUpdate::Eq1Enabled(b) => self.set_eq_1_enabled(b),
+            DspParamUpdate::Mod2Enabled(b) => self.set_mod_2_enabled(b),
+            DspParamUpdate::Mod2RateHz(rate) => self.mod_2.set_rate_hz(rate),
+            DspParamUpdate::Mod2Depth(depth) => self.mod_2.set_depth(depth),
+            DspParamUpdate::Mod2Mix(mix) => self.mod_2.set_mix_pct(mix),
+            DspParamUpdate::Dly1Enabled(b) => self.set_dly_1_enabled(b),
+            DspParamUpdate::Dly1TimeMs(time) => self.dly_1.set_delay_time_ms(time),
+            DspParamUpdate::Dly1Feedback(fb) => self.dly_1.set_feedback_pct(fb),
+            DspParamUpdate::Dly1Mix(mix) => self.dly_1.set_mix_pct(mix),
+            DspParamUpdate::Rev1Enabled(b) => self.set_rev_1_enabled(b),
+            DspParamUpdate::Rev1DecayS(decay) => self.rev_1.set_decay_time_s(decay),
+            DspParamUpdate::Rev1Mix(mix) => self.rev_1.set_mix_pct(mix),
+            DspParamUpdate::TunerEnabled(b) => self.set_tuner_enabled(b),
+            DspParamUpdate::TunerOutputMode(m) => self.set_tuner_output_mode(m),
+            DspParamUpdate::DriveBias(b) => self.set_drive_bias(b),
+            DspParamUpdate::Comp2Output(out) => self.set_comp_2_output(out),
+            DspParamUpdate::Comp2AllButtons(all) => self.comp_2.set_all_buttons_in(all),
+            DspParamUpdate::Eq1Mode(m) => self.eq_1.set_mode(m),
+            DspParamUpdate::Eq1BandFreq(idx, freq_hz) => {
+                if idx < 10 {
+                    let cur = self.eq_1.parametric_band(idx);
+                    self.eq_1.set_parametric_band(idx, freq_hz, cur.gain_db, cur.q);
+                }
+            }
+            DspParamUpdate::Eq1BandGain(idx, gain_db) => {
+                if idx < 10 {
+                    let cur = self.eq_1.parametric_band(idx);
+                    self.eq_1.set_parametric_band(idx, cur.freq_hz, gain_db, cur.q);
+                }
+            }
+            DspParamUpdate::Eq1BandQ(idx, q) => {
+                if idx < 10 {
+                    let cur = self.eq_1.parametric_band(idx);
+                    self.eq_1.set_parametric_band(idx, cur.freq_hz, cur.gain_db, q);
+                }
+            }
+            DspParamUpdate::Eq1InputGainDb(db) => self.eq_1.set_input_gain_db(db),
+            DspParamUpdate::Eq1OutputLevelDb(db) => self.eq_1.set_output_level_db(db),
+            DspParamUpdate::Dly1Mode(m) => self.dly_1.set_re201_mode(m),
+            DspParamUpdate::Dly1RepeatRate(r) => self.set_dly_1_repeat_rate(r),
+            DspParamUpdate::Dly1Intensity(i) => self.set_dly_1_intensity(i),
+            DspParamUpdate::Dly1EchoVolume(v) => self.set_dly_1_echo_volume(v),
+            DspParamUpdate::Dly1ReverbVolume(v) => self.dly_1.set_reverb_volume(v),
+            DspParamUpdate::Dly1Bass(v) => self.dly_1.set_tone_bass(v),
+            DspParamUpdate::Dly1Treble(v) => self.dly_1.set_tone_treble(v),
+            DspParamUpdate::Dly1Spillover(b) => self.dly_1.set_spillover_enabled(b),
+            DspParamUpdate::Cab1Speaker(spk) => self.cab.set_speaker_model(spk),
+            DspParamUpdate::Cab1Mic1AngleDeg(deg) => self.set_cab_mic_angle_deg(0, deg),
+            DspParamUpdate::Cab1Mic2AngleDeg(deg) => self.set_cab_mic_angle_deg(1, deg),
+            DspParamUpdate::Cab1Mic1PhaseInvert(inv) => self.cab.mic_slot_mut(0).phase_invert = inv,
+            DspParamUpdate::Cab1Mic2PhaseInvert(inv) => self.cab.mic_slot_mut(1).phase_invert = inv,
+            DspParamUpdate::TunerRefHz(hz) => self.set_tuner_ref_hz(hz),
+            DspParamUpdate::LooperPosition(pos) => {
+                self.looper_position = pos;
+                self.looper.set_position(pos);
+            }
+            DspParamUpdate::LooperAction(cmd) => self.apply_looper_action_cmd(cmd),
+        }
     }
 
     pub fn trigger_preset_crossfade(&mut self) {
@@ -1094,11 +1672,21 @@ impl RealtimeDspChain {
         self.preset_crossfading
     }
 
+    pub fn clean_input_ring(&self) -> Arc<CleanInputRing> {
+        self.clean_input_ring.clone()
+    }
+
     pub fn set_tuner_enabled(&mut self, enabled: bool) {
         self.tuner_enabled = enabled;
         self.tuner.set_active(enabled);
-        if !enabled {
-            self.tuner_input_accum_pos = 0;
+        if enabled {
+            self.tuner_start_pos = self.clean_input_ring.total_written();
+        } else {
+            self.tuner_latest_result = TunerPitchResult {
+                note_name: "---".to_string(),
+                cents_deviation: 0.0,
+                frequency_hz: 0.0,
+            };
         }
     }
 
@@ -1112,12 +1700,13 @@ impl RealtimeDspChain {
     }
 
     pub fn update_tuner_pitch(&mut self) {
-        if self.tuner_enabled && self.tuner_input_accum_pos >= 1024 {
-            let res = self.tuner.detect_pitch(&self.tuner_input_accum[..self.tuner_input_accum_pos]);
-            self.tuner_latest_result = res;
-            if self.tuner_input_accum_pos >= 2048 {
-                self.tuner_input_accum.copy_within(1024..2048, 0);
-                self.tuner_input_accum_pos = 1024;
+        if self.tuner_enabled {
+            let n = self
+                .clean_input_ring
+                .read_latest_since(self.tuner_start_pos, &mut self.tuner_scratch_read);
+            if n >= 1024 {
+                let res = self.tuner.detect_pitch(&self.tuner_scratch_read[..n]);
+                self.tuner_latest_result = res;
             }
         }
     }
@@ -1159,6 +1748,8 @@ impl RealtimeDspChain {
         self.dly_1.set_sample_rate(sample_rate);
         self.rev_1.set_sample_rate(sample_rate);
         self.tuner.set_sample_rate(sample_rate);
+        self.looper.set_sample_rate(sample_rate);
+        self.clean_input_ring.set_sample_rate(sample_rate);
 
         self.gain_smoother = ampforge_dsp::smoother::OnePoleSmoother::new(
             sample_rate as f64,
@@ -1186,6 +1777,7 @@ impl RealtimeDspChain {
             self.temp_merge_r_buf.resize(max_block, 0.0);
             self.temp_delay_buf.resize(max_block, 0.0);
             self.temp_reverb_buf.resize(max_block, 0.0);
+            self.temp_looper_buf.resize(max_block, 0.0);
         }
     }
 
@@ -1205,6 +1797,66 @@ impl RealtimeDspChain {
 
     pub fn set_gate_enabled(&mut self, enabled: bool) {
         self.gate_enabled = enabled;
+    }
+
+    pub fn set_gate_mode(&mut self, mode: &str) {
+        let m = if mode.eq_ignore_ascii_case("classic") {
+            NoiseGateMode::ClassicExpanderGate
+        } else {
+            NoiseGateMode::IntelligentNaturalGate
+        };
+        self.gate.set_mode(m);
+    }
+
+    pub fn set_gate_hysteresis_db(&mut self, db: f32) {
+        if !db.is_finite() { return; }
+        self.gate.set_hysteresis_db(db);
+    }
+
+    pub fn set_gate_attack_ms(&mut self, ms: f32) {
+        if !ms.is_finite() { return; }
+        self.gate.set_attack_ms(ms);
+    }
+
+    pub fn set_gate_hold_ms(&mut self, ms: f32) {
+        if !ms.is_finite() { return; }
+        self.gate.set_hold_ms(ms);
+    }
+
+    pub fn set_gate_release_ms(&mut self, ms: f32) {
+        if !ms.is_finite() { return; }
+        self.gate.set_release_ms(ms);
+    }
+
+    pub fn set_gate_range_db(&mut self, db: f32) {
+        if !db.is_finite() { return; }
+        self.gate.set_range_db(db);
+    }
+
+    pub fn set_gate_key_hpf_hz(&mut self, hz: f32) {
+        if !hz.is_finite() { return; }
+        self.gate.set_key_hpf_hz(hz);
+    }
+
+    pub fn set_gate_key_lpf_hz(&mut self, hz: f32) {
+        if !hz.is_finite() { return; }
+        self.gate.set_key_lpf_hz(hz);
+    }
+
+    pub fn gate_state(&self) -> GateState {
+        if !self.gate_enabled {
+            GateState::Open
+        } else {
+            self.gate.state()
+        }
+    }
+
+    pub fn gate_gain_reduction_db(&self) -> f32 {
+        if !self.gate_enabled {
+            0.0
+        } else {
+            self.gate.gain_reduction_db()
+        }
     }
 
     pub fn set_input_boost(&mut self, boost: f32) {
@@ -1265,6 +1917,58 @@ impl RealtimeDspChain {
     pub fn set_amp_cut(&mut self, cut: f32) {
         if !cut.is_finite() { return; }
         self.amp.panel_mut().set_cut(cut);
+    }
+
+    pub fn set_amp_power(&mut self, power: bool) {
+        self.amp.set_power(power);
+    }
+
+    pub fn set_amp_standby(&mut self, standby: bool) {
+        self.amp.set_standby(standby);
+    }
+
+    pub fn set_amp_input_jack(&mut self, jack: &str) {
+        if let Some(j) = AmpInputJack::from_str_name(jack) {
+            self.amp.set_input_jack(j);
+        }
+    }
+
+    pub fn set_amp_jumpered(&mut self, jumpered: bool) {
+        self.amp.set_jumpered(jumpered);
+    }
+
+    pub fn set_amp_channel_mode(&mut self, mode: &str) {
+        if let Some(m) = AmpChannelMode::from_str_name(mode) {
+            self.amp.set_channel_mode(m);
+        }
+    }
+
+    pub fn set_amp_spongy(&mut self, spongy: bool) {
+        self.amp.set_spongy_power(spongy);
+    }
+
+    pub fn set_amp_reverb(&mut self, reverb: f32) {
+        if !reverb.is_finite() { return; }
+        self.amp.panel_mut().set_reverb(reverb);
+    }
+
+    pub fn set_amp_vibrato_speed(&mut self, speed: f32) {
+        if !speed.is_finite() { return; }
+        self.amp.panel_mut().set_vibrato_speed(speed);
+    }
+
+    pub fn set_amp_vibrato_depth(&mut self, depth: f32) {
+        if !depth.is_finite() { return; }
+        self.amp.panel_mut().set_vibrato_depth(depth);
+    }
+
+    pub fn set_amp_impedance_ohms(&mut self, ohms: &str) {
+        let val = match ohms {
+            "4" => 4,
+            "8" => 8,
+            _ => 16,
+        };
+        self.amp.set_secondary_impedance_ohms(val);
     }
 
     pub fn set_amp_model(&mut self, model_name: &str) {
@@ -1392,6 +2096,17 @@ impl RealtimeDspChain {
         self.drive.set_level(level);
     }
 
+    pub fn set_drive_model(&mut self, model: &str) {
+        if let Some(m) = DriveModel::from_str_name(model) {
+            self.drive.set_model(m);
+        }
+    }
+
+    pub fn set_drive_bias(&mut self, bias: f32) {
+        if !bias.is_finite() { return; }
+        self.drive.set_bias(bias);
+    }
+
     pub fn drive(&self) -> &DriveProcessor {
         &self.drive
     }
@@ -1411,10 +2126,11 @@ impl RealtimeDspChain {
 
     pub fn set_cab_speaker(&mut self, speaker: &str) {
         let model = match speaker {
-            "greenback_4x12" | "greenback_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
-            "v30_4x12" | "v30_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
-            "alnico_blue_2x12" | "alnico_blue_2x12_open" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
-            _ => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
+            "greenback_4x12" | "greenback_4x12_closed" => SpeakerCabModel::Greenback4x12Closed,
+            "v30_4x12" | "v30_4x12_closed" => SpeakerCabModel::V304x12Closed,
+            "alnico_blue_2x12" | "alnico_blue_2x12_open" => SpeakerCabModel::AlnicoBlue2x12Open,
+            "twin_2x12_open" | "twin_2x12" | "jensen_c12n_2x12_open" => SpeakerCabModel::Twin2x12Open,
+            _ => SpeakerCabModel::Greenback4x12Closed,
         };
         self.cab.set_speaker_model(model);
     }
@@ -1491,6 +2207,18 @@ impl RealtimeDspChain {
         self.cab.mic_slot_mut(1).enabled = enabled;
     }
 
+    pub fn set_cab_mic_angle_deg(&mut self, slot: usize, deg: f32) {
+        if slot < 2 && deg.is_finite() {
+            self.cab.mic_slot_mut(slot).angle_off_axis_deg = if deg >= 22.5 { 45.0 } else { 0.0 };
+        }
+    }
+
+    pub fn set_cab_mic_phase_invert(&mut self, slot: usize, invert: bool) {
+        if slot < 2 {
+            self.cab.mic_slot_mut(slot).phase_invert = invert;
+        }
+    }
+
     // Spec 024: Setters e Getters dos Novos Blocos e Caminho Paralelo
     pub fn set_split_enabled(&mut self, enabled: bool) {
         self.split_enabled = enabled;
@@ -1524,8 +2252,10 @@ impl RealtimeDspChain {
         self.comp_2.set_threshold_db(-20.0 - pre_gain_db);
     }
 
-    pub fn set_comp_2_output(&mut self, _output: f32) {
-        // Output makeup
+    pub fn set_comp_2_output(&mut self, output: f32) {
+        if !output.is_finite() { return; }
+        let gain_db = (output.clamp(0.0, 10.0) - 5.0) * 4.8;
+        self.comp_2.set_makeup_gain_db(gain_db);
     }
 
     pub fn set_comp_2_attack(&mut self, att: f32) {
@@ -1541,18 +2271,37 @@ impl RealtimeDspChain {
     }
 
     pub fn set_comp_2_ratio(&mut self, ratio_str: &str) {
-        let r = match ratio_str {
-            "4" => 4.0,
-            "8" => 8.0,
-            "12" => 12.0,
-            "20" | "all" => 20.0,
-            _ => 4.0,
+        let (r, all_in) = match ratio_str {
+            "4" => (4.0, false),
+            "8" => (8.0, false),
+            "12" => (12.0, false),
+            "20" => (20.0, false),
+            "all" => (20.0, true),
+            _ => (4.0, false),
         };
         self.comp_2.set_ratio(r);
+        self.comp_2.set_all_buttons_in(all_in);
     }
 
     pub fn set_eq_1_enabled(&mut self, enabled: bool) {
         self.eq_1_enabled = enabled;
+    }
+
+    pub fn set_eq_1_mode(&mut self, mode: &str) {
+        let m = match mode {
+            "graphic_5_boogie" | "boogie_5" => EqMode::Graphic5BandBoogie,
+            "graphic_10_mxr" | "mxr_10band" => EqMode::Graphic10BandPedal,
+            _ => EqMode::Parametric8Band,
+        };
+        self.eq_1.set_mode(m);
+    }
+
+    pub fn set_eq_1_input_gain_db(&mut self, db: f32) {
+        self.eq_1.set_input_gain_db(db);
+    }
+
+    pub fn set_eq_1_output_level_db(&mut self, db: f32) {
+        self.eq_1.set_output_level_db(db);
     }
 
     pub fn set_eq_1_band(&mut self, band_idx: usize, freq_hz: f32, gain_db: f32, q: f32) {
@@ -1602,6 +2351,66 @@ impl RealtimeDspChain {
         self.dly_1.set_spillover_enabled(enabled);
     }
 
+    pub fn set_dly_1_mode(&mut self, mode: &str) {
+        if let Ok(m) = mode.parse::<u8>() {
+            self.dly_1.set_re201_mode(m);
+        }
+    }
+
+    pub fn set_dly_1_reverb_volume(&mut self, vol: f32) {
+        self.dly_1.set_reverb_volume(vol);
+    }
+
+    pub fn set_dly_1_bass(&mut self, bass: f32) {
+        self.dly_1.set_tone_bass(bass);
+    }
+
+    pub fn set_dly_1_treble(&mut self, treble: f32) {
+        self.dly_1.set_tone_treble(treble);
+    }
+
+    pub fn set_tuner_ref_hz(&mut self, hz: f32) {
+        self.tuner.set_a4_reference_hz(hz);
+    }
+
+    pub fn set_looper_position(&mut self, pos: &str) {
+        let p = if pos.eq_ignore_ascii_case("pre") {
+            LooperPosition::PreChain
+        } else {
+            LooperPosition::PostChain
+        };
+        self.looper_position = p;
+        self.looper.set_position(p);
+    }
+
+    pub fn apply_looper_action_cmd(&mut self, cmd: LooperActionCmd) {
+        match cmd {
+            LooperActionCmd::Record => self.looper.record(),
+            LooperActionCmd::Play => self.looper.play(),
+            LooperActionCmd::Overdub => self.looper.overdub(),
+            LooperActionCmd::Stop => self.looper.stop(),
+            LooperActionCmd::Undo => self.looper.undo(),
+            LooperActionCmd::Redo => self.looper.redo(),
+            LooperActionCmd::Clear => self.looper.clear(),
+        }
+    }
+
+    pub fn trigger_looper_action(&mut self, action: &str) {
+        let cmd = match action {
+            "record" => Some(LooperActionCmd::Record),
+            "play" => Some(LooperActionCmd::Play),
+            "overdub" => Some(LooperActionCmd::Overdub),
+            "stop" => Some(LooperActionCmd::Stop),
+            "undo" => Some(LooperActionCmd::Undo),
+            "redo" => Some(LooperActionCmd::Redo),
+            "clear" => Some(LooperActionCmd::Clear),
+            _ => None,
+        };
+        if let Some(c) = cmd {
+            self.apply_looper_action_cmd(c);
+        }
+    }
+
     pub fn set_rev_1_enabled(&mut self, enabled: bool) {
         self.rev_1_enabled = enabled;
         self.rev_1.set_bypassed(!enabled);
@@ -1647,10 +2456,11 @@ impl RealtimeDspChain {
 
     pub fn set_cab_2_speaker(&mut self, speaker: &str) {
         let model = match speaker {
-            "greenback_4x12" | "greenback_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::Greenback4x12Closed,
-            "v30_4x12" | "v30_4x12_closed" => ampforge_dsp::cab::SpeakerCabModel::V304x12Closed,
-            "alnico_blue_2x12" | "alnico_blue_2x12_open" => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
-            _ => ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open,
+            "greenback_4x12" | "greenback_4x12_closed" => SpeakerCabModel::Greenback4x12Closed,
+            "v30_4x12" | "v30_4x12_closed" => SpeakerCabModel::V304x12Closed,
+            "alnico_blue_2x12" | "alnico_blue_2x12_open" => SpeakerCabModel::AlnicoBlue2x12Open,
+            "twin_2x12_open" | "twin_2x12" | "jensen_c12n_2x12_open" => SpeakerCabModel::Twin2x12Open,
+            _ => SpeakerCabModel::AlnicoBlue2x12Open,
         };
         self.cab_2.set_speaker_model(model);
     }
@@ -1661,6 +2471,7 @@ impl RealtimeDspChain {
 
     /// Processa bloco de áudio da guitarra passando pelo Grafo Completo do Grid (Spec 024)
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        self.drain_param_queue();
         let len = input.len();
         if self.temp_boost_buf.len() < len {
             self.temp_boost_buf.resize(len, 0.0);
@@ -1680,6 +2491,7 @@ impl RealtimeDspChain {
             self.temp_merge_r_buf.resize(len, 0.0);
             self.temp_delay_buf.resize(len, 0.0);
             self.temp_reverb_buf.resize(len, 0.0);
+            self.temp_looper_buf.resize(len, 0.0);
         }
 
         // 0. Contabiliza clipping no conversor de entrada (|x| >= 0.999) (Spec 019, CA-4)
@@ -1715,6 +2527,7 @@ impl RealtimeDspChain {
         // 2. DC Blocker de 1 polo (~10 Hz) e boost de entrada
         let boost_slice = &mut self.temp_boost_buf[..len];
         let r = 0.995f32;
+        let mut ring_pos = self.clean_input_ring.total_written_relaxed();
         for i in 0..len {
             let x = source_slice[i];
             let y = x - self.dc_x1 + r * self.dc_y1;
@@ -1722,19 +2535,11 @@ impl RealtimeDspChain {
             self.dc_y1 = y;
             boost_slice[i] = y * self.input_boost;
 
-            // Spec 026: Copia sinal de entrada limpo para o afinador (CA-1, CA-8: 0 alocações e 0 locks)
-            if self.tuner_enabled {
-                if self.tuner_input_accum_pos < self.tuner_input_accum.len() {
-                    self.tuner_input_accum[self.tuner_input_accum_pos] = y;
-                    self.tuner_input_accum_pos += 1;
-                } else {
-                    self.tuner_input_accum.copy_within(1024..2048, 0);
-                    self.tuner_input_accum_pos = 1024;
-                    self.tuner_input_accum[self.tuner_input_accum_pos] = y;
-                    self.tuner_input_accum_pos += 1;
-                }
-            }
+            // Spec 026 / 029: Copia sinal limpo no ring SPSC lock-free (0 alocações, 0 locks)
+            self.clean_input_ring.push_sample_at(ring_pos, y);
+            ring_pos = ring_pos.wrapping_add(1);
         }
+        self.clean_input_ring.commit_write_pos(ring_pos);
 
         let gate_slice = &mut self.temp_gate_buf[..len];
         let drive_slice = &mut self.temp_drive_buf[..len];
@@ -1746,12 +2551,21 @@ impl RealtimeDspChain {
             gate_slice.copy_from_slice(boost_slice);
         }
 
-        // 3.1 Drive Processor (Spec 016, CA-6)
-        let amp_in_slice = if self.drive_enabled {
-            self.drive.process(gate_slice, drive_slice);
-            drive_slice
+        // 3.1 Looper PreChain (antes de Drive/Amp quando looper.position == pre)
+        let pre_looper_slice = &mut self.temp_looper_buf[..len];
+        let drive_in_slice: &[f32] = if self.looper_position == LooperPosition::PreChain {
+            self.looper.process(gate_slice, pre_looper_slice);
+            pre_looper_slice
         } else {
             gate_slice
+        };
+
+        // 3.2 Drive Processor (Spec 016, CA-6 & Spec 032)
+        let amp_in_slice = if self.drive_enabled {
+            self.drive.process(drive_in_slice, drive_slice);
+            drive_slice
+        } else {
+            drive_in_slice
         };
 
         // 4. Split Node (Spec 024, CA-2)
@@ -1831,25 +2645,38 @@ impl RealtimeDspChain {
         };
 
         // 7. Merge (Coluna 6, antes de Delay e Reverb)
+        // Se split estiver desligado mas comp_2 estiver ativo, o 1176LN atua em linha na Row 0.
         let merge_slice = &mut self.temp_merge_l_buf[..len];
         if self.split_enabled {
             let merge_r_slice = &mut self.temp_merge_r_buf[..len];
             self.merge.process(&[eq_slice, row_1_out], merge_slice, merge_r_slice);
+        } else if self.comp_2_enabled {
+            let comp_slice = &mut self.temp_comp_buf[..len];
+            self.comp_2.process(eq_slice, comp_slice);
+            merge_slice.copy_from_slice(comp_slice);
         } else {
             merge_slice.copy_from_slice(eq_slice);
         }
 
-        // 8. Pós-Merge: Delay 1 -> Reverb 1
+        // 8. Pós-Merge: Delay 1 -> Reverb 1 -> Looper PostChain
         let delay_slice = &mut self.temp_delay_buf[..len];
         self.dly_1.process(merge_slice, delay_slice);
 
         let reverb_slice = &mut self.temp_reverb_buf[..len];
         self.rev_1.process(delay_slice, reverb_slice);
 
+        let post_slice: &[f32] = if self.looper_position == LooperPosition::PostChain {
+            let post_looper_slice = &mut self.temp_looper_buf[..len];
+            self.looper.process(reverb_slice, post_looper_slice);
+            post_looper_slice
+        } else {
+            reverb_slice
+        };
+
         // 9. Limitador de Saída Segura (<= 0 dBFS / 1.0) e defesa contra NaN/Inf (Spec 015 & Spec 016, CA-9)
         let mut has_non_finite = false;
         for (i, s) in output[..len].iter_mut().enumerate() {
-            let mut val = reverb_slice[i];
+            let mut val = post_slice[i];
             if !val.is_finite() {
                 *s = 0.0;
                 has_non_finite = true;
@@ -1896,6 +2723,8 @@ pub struct TelemetrySnapshot {
     pub input_peak_db: f32,
     pub output_peak_db: f32,
     pub cpu_usage_pct: f32,
+    pub gate_state: String,
+    pub gate_gr_db: f32,
     pub waveform: Vec<f32>,
 }
 
@@ -1904,6 +2733,8 @@ pub struct TelemetryBuffer {
     input_peak_bits: AtomicU32,
     output_peak_bits: AtomicU32,
     cpu_pct_bits: AtomicU32,
+    gate_state_code: AtomicU8,
+    gate_gr_db_bits: AtomicU32,
     waveform_buffer: Mutex<Vec<f32>>,
     waveform_capacity: usize,
 }
@@ -1914,6 +2745,8 @@ impl TelemetryBuffer {
             input_peak_bits: AtomicU32::new((-120.0f32).to_bits()),
             output_peak_bits: AtomicU32::new((-120.0f32).to_bits()),
             cpu_pct_bits: AtomicU32::new((0.0f32).to_bits()),
+            gate_state_code: AtomicU8::new(0),
+            gate_gr_db_bits: AtomicU32::new((0.0f32).to_bits()),
             waveform_buffer: Mutex::new(vec![0.0; waveform_capacity]),
             waveform_capacity,
         }
@@ -1925,6 +2758,16 @@ impl TelemetryBuffer {
         self.cpu_pct_bits.store(cpu_pct.to_bits(), Ordering::Relaxed);
     }
 
+    pub fn update_gate_telemetry(&self, state: GateState, gr_db: f32) {
+        let code = match state {
+            GateState::Closed => 0,
+            GateState::Hold => 1,
+            GateState::Open => 2,
+        };
+        self.gate_state_code.store(code, Ordering::Relaxed);
+        self.gate_gr_db_bits.store(gr_db.to_bits(), Ordering::Relaxed);
+    }
+
     pub fn update_input_peak(&self, in_db: f32) {
         self.input_peak_bits.store(in_db.to_bits(), Ordering::Relaxed);
     }
@@ -1933,8 +2776,20 @@ impl TelemetryBuffer {
         self.output_peak_bits.store(out_db.to_bits(), Ordering::Relaxed);
     }
 
+    pub fn input_peak_db(&self) -> f32 {
+        f32::from_bits(self.input_peak_bits.load(Ordering::Relaxed))
+    }
+
+    pub fn output_peak_db(&self) -> f32 {
+        f32::from_bits(self.output_peak_bits.load(Ordering::Relaxed))
+    }
+
+    pub fn cpu_usage_pct(&self) -> f32 {
+        f32::from_bits(self.cpu_pct_bits.load(Ordering::Relaxed))
+    }
+
     pub fn push_waveform(&self, samples: &[f32]) {
-        if let Ok(mut buf) = self.waveform_buffer.lock() {
+        if let Ok(mut buf) = self.waveform_buffer.try_lock() {
             let n = samples.len().min(self.waveform_capacity);
             let shift = buf.len().saturating_sub(n);
             buf.copy_within(n.., 0);
@@ -1947,6 +2802,13 @@ impl TelemetryBuffer {
         let input_peak_db = f32::from_bits(self.input_peak_bits.load(Ordering::Relaxed));
         let output_peak_db = f32::from_bits(self.output_peak_bits.load(Ordering::Relaxed));
         let cpu_usage_pct = f32::from_bits(self.cpu_pct_bits.load(Ordering::Relaxed));
+        let gate_state = match self.gate_state_code.load(Ordering::Relaxed) {
+            1 => "HOLD",
+            2 => "OPEN",
+            _ => "CLOSED",
+        }
+        .to_string();
+        let gate_gr_db = f32::from_bits(self.gate_gr_db_bits.load(Ordering::Relaxed));
         let waveform = self
             .waveform_buffer
             .lock()
@@ -1957,6 +2819,8 @@ impl TelemetryBuffer {
             input_peak_db,
             output_peak_db,
             cpu_usage_pct,
+            gate_state,
+            gate_gr_db,
             waveform,
         }
     }

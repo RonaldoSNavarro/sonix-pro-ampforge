@@ -137,6 +137,7 @@ pub enum SpeakerCabModel {
     Greenback4x12Closed,
     V304x12Closed,
     AlnicoBlue2x12Open,
+    Twin2x12Open,
 }
 
 impl SpeakerCabModel {
@@ -145,11 +146,12 @@ impl SpeakerCabModel {
             Self::Greenback4x12Closed => 98.0,
             Self::V304x12Closed => 108.0,
             Self::AlnicoBlue2x12Open => 82.0,
+            Self::Twin2x12Open => 90.0,
         }
     }
 
     pub fn is_open_back(&self) -> bool {
-        matches!(self, Self::AlnicoBlue2x12Open)
+        matches!(self, Self::AlnicoBlue2x12Open | Self::Twin2x12Open)
     }
 
     pub fn default_impedance_curve(&self) -> ImpedanceCurve {
@@ -171,6 +173,12 @@ impl SpeakerCabModel {
                 resonance_q: 1.8,
                 low_resonance_gain_db: 5.5,
                 high_inductance_rise_db: 3.5,
+            },
+            Self::Twin2x12Open => ImpedanceCurve {
+                low_resonance_hz: 90.0,
+                resonance_q: 1.7,
+                low_resonance_gain_db: 5.0,
+                high_inductance_rise_db: 4.5,
             },
         }
     }
@@ -504,10 +512,13 @@ pub struct VirtualCabProcessor {
     hicut_filter1: BiquadFilter,
     hicut_filter2: BiquadFilter,
     open_back_hp: BiquadFilter,
+    speaker_voicing_filter: BiquadFilter,
     mic1_pos_filter: BiquadFilter,
     mic2_pos_filter: BiquadFilter,
     mic1_prox_filter: BiquadFilter,
     mic2_prox_filter: BiquadFilter,
+    mic1_angle_filter: BiquadFilter,
+    mic2_angle_filter: BiquadFilter,
 }
 
 impl Default for VirtualCabProcessor {
@@ -545,10 +556,13 @@ impl VirtualCabProcessor {
             hicut_filter1: BiquadFilter::default(),
             hicut_filter2: BiquadFilter::default(),
             open_back_hp: BiquadFilter::default(),
+            speaker_voicing_filter: BiquadFilter::default(),
             mic1_pos_filter: BiquadFilter::default(),
             mic2_pos_filter: BiquadFilter::default(),
             mic1_prox_filter: BiquadFilter::default(),
             mic2_prox_filter: BiquadFilter::default(),
+            mic1_angle_filter: BiquadFilter::default(),
+            mic2_angle_filter: BiquadFilter::default(),
         };
         s.update_filters();
         s
@@ -694,6 +708,22 @@ impl VirtualCabProcessor {
         } else {
             self.open_back_hp.update_coeffs(BiquadFilter::default());
         }
+
+        // Voicing acústico por falante (Jensen Twin 2x12 Open brilhante; Greenback neutro para manter precisão de hicut)
+        match self.speaker_model {
+            SpeakerCabModel::Twin2x12Open => {
+                self.speaker_voicing_filter.update_coeffs(BiquadFilter::high_shelf(2200.0, 3.8, sr));
+            }
+            SpeakerCabModel::AlnicoBlue2x12Open => {
+                self.speaker_voicing_filter.update_coeffs(BiquadFilter::high_shelf(2800.0, 2.0, sr));
+            }
+            SpeakerCabModel::V304x12Closed => {
+                self.speaker_voicing_filter.update_coeffs(BiquadFilter::high_shelf(2500.0, 1.5, sr));
+            }
+            SpeakerCabModel::Greenback4x12Closed => {
+                self.speaker_voicing_filter.update_coeffs(BiquadFilter::default());
+            }
+        }
     }
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
@@ -745,7 +775,20 @@ impl VirtualCabProcessor {
                 &mut self.mic2_prox_filter
             };
 
-            // Atraso de propagação do microfone: delta t = d_cm * 0.01 / 343.0 s
+            // Filtro de eixo off-axis (0° plano, 45° atenua brilho extremo > 3.5 kHz)
+            let angle_norm = (mic.angle_off_axis_deg / 45.0).clamp(0.0, 1.0) as f64;
+            let angle_cut_db = -6.0 * angle_norm;
+            let angle_filter = if slot_idx == 0 {
+                self.mic1_angle_filter
+                    .update_coeffs(BiquadFilter::high_shelf(3200.0, angle_cut_db, sr));
+                &mut self.mic1_angle_filter
+            } else {
+                self.mic2_angle_filter
+                    .update_coeffs(BiquadFilter::high_shelf(3200.0, angle_cut_db, sr));
+                &mut self.mic2_angle_filter
+            };
+
+            // Atraso de propagação de microfone: delta t = d_cm * 0.01 / 343.0 s
             let delay_sec = (dist_cm * 0.01) / 343.0;
             let delay_samples = delay_sec * sr;
 
@@ -774,15 +817,17 @@ impl VirtualCabProcessor {
                 let mut s = delayed as f64;
                 s = pos_filter.process(s);
                 s = prox_filter.process(s);
+                s = angle_filter.process(s);
 
                 output[i] += (s * total_gain) as f32;
             }
         }
 
-        // Condicionamento acústico do gabinete: corte de agudos e cancelamento open-back
+        // Condicionamento acústico do gabinete: voicing do falante, corte de agudos e open-back
         for s in output.iter_mut() {
             let mut v = *s as f64;
             v = self.open_back_hp.process(v);
+            v = self.speaker_voicing_filter.process(v);
             v = self.hicut_filter1.process(v);
             *s = v as f32;
         }

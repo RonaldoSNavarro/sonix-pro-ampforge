@@ -11,6 +11,9 @@ specs** (que é o changelog do projeto) estão em `specs/README.md` — leia-o a
 - **Regime SDD + TDD estrito:** cada `CA-n` vira um teste que falha antes da implementação (*red → green*).
 - Spec e implementação são revisadas no **mesmo PR**.
 
+> **Trabalho em andamento (2026-11-13):** Spec 033 — app desktop Tauri v2 com as telas do design e todo controle ligado ao motor. Instruções para o agente implementador em `docs/handoff/ANTIGRAVITY-033-desktop-tauri.md`; design de referência em `docs/ui-desktop/canvas/`.
+
+
 
 
 
@@ -40,4 +43,28 @@ O projeto **SONIX PRO // AMPFORGE™** (`simulador-de-efeitos`) adota formalment
 3. **Execução Desacoplada da Thread de Áudio**: A análise pesada de pitch é disparada sob demanda ou em taxa de telemetria (30 a 60 Hz) na thread de I/O / API HTTP, garantindo que o callback de áudio mantenha jitter determinístico e latência ultrabaixa (< 1.5 ms).
 4. **Verificação Automatizada**: Todo novo componente de análise de áudio deve incluir teste de contrato específico (`test_ca_08_audio_callback_zero_alloc_and_zero_locks`) validando ausência de alocação de memória e invariância de desempenho sob carga contínua.
 
+## Rule [20261113-195929-regra-0a2f]
+# Todo controle visível funciona no backend como o equipamento real
+
+**Origem:** pedido explícito do usuário (2026-11-13): "cada componente, botões, pedais e etc devem ter todos os controles funcionando no backend como o equipamento real".
+
+## Regra
+Não existe controle decorativo. Todo knob, chave, jack, botão, pedal, footswitch ou controle de rack visível na UI precisa ter:
+1. **entrada no registro único** `controls.registry.ts`: `id`, chave do parâmetro no namespace da Spec 014, tipo, faixa, padrão, unidade e **efeito esperado do equipamento real**;
+2. **chave aceita e validada pelo backend** (tabela única da Spec 014, validação atômica);
+3. **teste de efeito**: mover o controle de ponta a ponta (ou trocar a opção) com sinal de teste definido muda a saída de forma mensurável **no sentido do equipamento real**. Exemplos:
+   - `standby` silencia;
+   - entrada LOW fica 6 dB abaixo da HIGH;
+   - footswitch em bypass deixa a saída igual à entrada;
+   - BASS/MIDDLE/TREBLE interagem como a rede FMV.
+
+## Como aplicar
+- Teste de inventário: reprova controle visível sem registro ou com chave rejeitada pelo backend.
+- Controle cujo DSP ainda não existe aparece **desabilitado** com a dica "em implementação — Spec 0NN" e conta como **pendência**. A spec só vai para `implementada` sem pendências.
+- Divergência de nome entre UI e motor (ex.: `decay` do pedal de gate → `release_ms`) fica no registro como mapeamento, sem chave duplicada.
+- Controles só visuais (ex.: seletor do VU do compressor) são declarados como tal no registro.
+
+Referência: Spec 033 §3, CA-4 e CA-5.
+
 <!-- END CORTEX RULES -->
+

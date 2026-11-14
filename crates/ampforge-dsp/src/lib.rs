@@ -14,6 +14,7 @@ pub mod cpu;
 pub mod engine;
 pub mod dag;
 pub mod amp;
+pub mod tonestack;
 pub mod modshop;
 pub mod cab;
 pub mod fx;

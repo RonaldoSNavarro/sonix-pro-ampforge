@@ -61,8 +61,8 @@ impl TunerProcessor {
             a4_ref: 440.0,
             sample_rate: 48000.0,
             mute_gain: 1.0,
-            d_scratch: vec![0.0; 2048],
-            d_prime_scratch: vec![0.0; 2048],
+            d_scratch: vec![0.0; 4096],
+            d_prime_scratch: vec![0.0; 4096],
         }
     }
 
@@ -131,7 +131,7 @@ impl TunerProcessor {
 
         let n = signal.len();
         let rms = (signal.iter().map(|&s| s * s).sum::<f32>() / n as f32).sqrt();
-        if rms < 0.005 {
+        if rms < 0.00063 {
             return TunerPitchResult {
                 note_name: "---".to_string(),
                 cents_deviation: 0.0,
@@ -208,7 +208,7 @@ impl TunerProcessor {
         }
 
         // Se a periodicidade for fraca (ruído ou não-harmônico)
-        if best_tau == 0 || self.d_prime_scratch[best_tau] > 0.40 {
+        if best_tau == 0 || self.d_prime_scratch[best_tau] > 0.35 {
             return TunerPitchResult {
                 note_name: "---".to_string(),
                 cents_deviation: 0.0,

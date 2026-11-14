@@ -118,7 +118,10 @@ fn test_ca_03_frequency_range_c2_to_e6_and_rejection_below_60_hz() {
 #[test]
 fn test_ca_04_mute_output_with_5ms_ramp_and_bypass_mode() {
     let mut dsp = RealtimeDspChain::new(48000.0);
-    let in_buf = vec![0.5f32; 256];
+    // Sinal AC real de guitarra (440 Hz) para não depender do transiente DC bloqueado pelo filtro HPF
+    let in_buf: Vec<f32> = (0..256)
+        .map(|i| (2.0 * std::f32::consts::PI * 440.0 * (i as f32 / 48000.0)).sin() * 0.5)
+        .collect();
     let mut out_buf = vec![0.0f32; 256];
 
     // Ativa afinador no modo Mute (padrão)
@@ -137,18 +140,22 @@ fn test_ca_04_mute_output_with_5ms_ramp_and_bypass_mode() {
     // Desativa afinador -> saída retorna suavemente
     dsp.set_tuner_enabled(false);
     dsp.process(&in_buf, &mut out_buf);
+    let restored_peak = out_buf[240..].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(
-        out_buf[255].abs() > 0.1,
-        "Saída deve retornar após fechar afinador"
+        restored_peak > 0.1,
+        "Saída deve retornar após fechar afinador (pico={})",
+        restored_peak
     );
 
     // Modo Bypass não altera sinal
     dsp.set_tuner_enabled(true);
     dsp.set_tuner_output_mode(TunerOutputMode::Bypass);
     dsp.process(&in_buf, &mut out_buf);
+    let bypass_peak = out_buf[240..].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     assert!(
-        out_buf[255].abs() > 0.1,
-        "Modo Bypass não deve silenciar sinal"
+        bypass_peak > 0.1,
+        "Modo Bypass não deve silenciar sinal (pico={})",
+        bypass_peak
     );
 }
 

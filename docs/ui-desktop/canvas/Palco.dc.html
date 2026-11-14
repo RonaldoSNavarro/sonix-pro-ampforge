@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>AMPFORGE — modo palco</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Oswald:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+button{font-family:inherit;cursor:pointer}
+.p-mono{font-family:'JetBrains Mono',Consolas,monospace}
+.p-osw{font-family:Oswald,'Arial Narrow',sans-serif}
+.p-lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#a3abb4;font-weight:700}
+.p-alu{background:repeating-linear-gradient(90deg,rgba(255,255,255,.06) 0 1px,rgba(0,0,0,.03) 1px 2px,transparent 2px 4px),linear-gradient(180deg,#5b6168,#3a3f45 50%,#2a2e33)}
+.p-screw{position:absolute;width:12px;height:12px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f0f0f0,#8a8a8a 55%,#333)}
+.p-well{border-radius:10px;background:linear-gradient(180deg,#101214,#08090a);box-shadow:inset 0 3px 10px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.08)}
+.p-oled{background:#020304;border:1px solid #000;border-radius:4px;box-shadow:inset 0 1px 4px #000}
+.p-btn{border-radius:6px;border:1px solid #000;background:linear-gradient(180deg,#30353c,#1a1d21);color:#e0e4e8;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 2px 3px rgba(0,0,0,.5);font-weight:700}
+.p-btn[aria-pressed="true"]{background:linear-gradient(180deg,#3a2414,#22140a);color:#ffd2b0;border-color:#ff8a3d;box-shadow:0 0 12px rgba(255,138,61,.4)}
+.p-btn:focus-visible,.p-fs:focus-visible{outline:2px solid #3dd8ff;outline-offset:2px}
+.p-fs{width:66px;height:66px;border-radius:50%;border:0;padding:0;cursor:pointer;background:radial-gradient(circle at 38% 32%,#ffffff 0%,#d6d6d6 22%,#909090 55%,#4a4a4a 82%,#2a2a2a 100%);box-shadow:0 0 0 6px #8f949a,0 0 0 7px #2a2a2a,0 8px 14px rgba(0,0,0,.7)}
+.p-fs:active{transform:scale(.95)}
+</style>
+</helmet>
+<div class="p-alu" style="width:1440px;height:900px;position:relative;box-sizing:border-box;padding:22px;color:#e8eaed;font-family:Inter,'Segoe UI',sans-serif;user-select:none;overflow:hidden;border-radius:6px">
+<span class="p-screw" style="left:8px;top:8px"></span><span class="p-screw" style="right:8px;top:8px"></span><span class="p-screw" style="left:8px;bottom:8px"></span><span class="p-screw" style="right:8px;bottom:8px"></span>
+<div style="position:absolute;inset:14px;border-radius:10px;background:linear-gradient(180deg,#16181b,#0c0d0f);box-shadow:inset 0 2px 0 rgba(255,255,255,.06),0 0 0 2px #000"></div>
+
+<div style="position:relative;height:100%;display:flex;flex-direction:column;gap:16px;padding:14px 18px">
+
+<!-- HEADER LCD -->
+<div style="display:flex;gap:16px;height:128px">
+<div class="p-oled" style="flex:1;padding:14px 20px;display:flex;flex-direction:column;justify-content:space-between;background:radial-gradient(ellipse at 30% 0%,#2a1a06 0%,#0d0702 70%)">
+<div class="p-mono" style="display:flex;gap:18px;font-size:13px;color:#ffb347;text-shadow:0 0 6px rgba(255,150,40,.7)"><span>SETLIST · SHOW 2026</span><span>{{presetNo}}</span><span style="flex:1"></span><span>CENA {{sceneId}} · {{sceneName}}</span></div>
+<div class="p-osw" style="font-size:48px;font-weight:600;letter-spacing:.03em;color:#ffcf8a;text-shadow:0 0 12px rgba(255,150,40,.6);white-space:nowrap;overflow:hidden;line-height:1">{{presetName}}</div>
+</div>
+<div class="p-oled" style="width:170px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px">
+<span class="p-lbl" style="font-size:9px">Tempo</span>
+<span class="p-mono" style="font-size:36px;font-weight:700;color:#57ffb0;text-shadow:0 0 8px rgba(87,255,176,.6)">{{bpm}}</span>
+<span style="width:14px;height:14px;border-radius:50%;background:{{beatC}};box-shadow:{{beatG}}"></span>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px;width:130px">
+<a href="Main.dc.html" class="p-btn" style="flex:1;display:flex;align-items:center;justify-content:center;text-decoration:none;font-size:13px">Sair (Esc)</a>
+<button class="p-btn" onClick="{{toggleTuner}}" aria-pressed="{{tunerOn}}" style="flex:1;font-size:13px">Afinador</button>
+</div>
+</div>
+
+<!-- MIDDLE: TUNER + LOOPER -->
+<div style="flex:1;display:flex;gap:16px;min-height:0">
+
+<div class="p-well" style="flex:1.5;padding:16px 20px;display:flex;flex-direction:column;gap:12px;min-width:0;opacity:{{tunerOp}}">
+<div style="display:flex;align-items:center;gap:8px">
+<span class="p-lbl" style="flex:1">Afinador</span>
+<sc-for list="{{tunerViews}}" as="v" hint-placeholder-count="2"><button class="p-btn" onClick="{{v.pick}}" aria-pressed="{{v.on}}" style="height:28px;padding:0 10px;font-size:11px">{{v.l}}</button></sc-for>
+<span style="width:12px"></span>
+<sc-for list="{{outModes}}" as="v" hint-placeholder-count="2"><button class="p-btn" onClick="{{v.pick}}" aria-pressed="{{v.on}}" style="height:28px;padding:0 10px;font-size:11px">{{v.l}}</button></sc-for>
+</div>
+<sc-if value="{{viewStrobe}}" hint-placeholder-val="{{true}}">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+<div style="display:flex;align-items:baseline;gap:6px"><span class="p-osw" style="font-size:150px;font-weight:700;line-height:.9;color:{{noteC}};text-shadow:0 0 30px {{noteGlow}}">{{note}}</span><span class="p-osw" style="font-size:44px;color:#a3abb4">{{oct}}</span></div>
+<div style="width:100%;max-width:760px;height:46px;border-radius:6px;overflow:hidden;position:relative;box-shadow:inset 0 2px 6px #000;background:repeating-linear-gradient(90deg,{{strobeC}} 0 22px,#0a0b0c 22px 44px);background-position:{{strobePos}}px 0">
+<div style="position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;background:#fff;box-shadow:0 0 8px #fff"></div>
+</div>
+<div style="width:100%;max-width:760px;position:relative;height:30px">
+<div style="position:absolute;left:0;right:0;top:14px;height:2px;background:#2a2f36"></div>
+<div style="position:absolute;left:46%;width:8%;top:8px;height:14px;border-radius:3px;background:rgba(41,196,106,.2)"></div>
+<div style="position:absolute;top:2px;left:{{needlePct}}%;width:6px;height:26px;margin-left:-3px;border-radius:3px;background:{{noteC}};box-shadow:0 0 10px {{noteC}};transition:left .09s linear"></div>
+</div>
+<div class="p-mono" style="display:flex;gap:28px;font-size:15px"><span style="color:#c9ced4">{{hz}} Hz</span><span style="color:{{noteC}}">{{centsTxt}} cents</span><span style="color:#a3abb4">{{tempTxt}}</span></div>
+</div>
+</sc-if>
+<sc-if value="{{viewPoly}}" hint-placeholder-val="{{false}}">
+<div style="flex:1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:stretch;padding:8px 0">
+<sc-for list="{{strings}}" as="s" hint-placeholder-count="6">
+<div style="display:flex;flex-direction:column;align-items:center;gap:8px">
+<span class="p-osw" style="font-size:30px;font-weight:700;color:{{s.c}}">{{s.n}}</span>
+<div style="flex:1;width:22px;border-radius:11px;background:#0a0b0c;box-shadow:inset 0 2px 5px #000;position:relative">
+<div style="position:absolute;left:3px;right:3px;top:47%;height:6%;background:rgba(41,196,106,.25);border-radius:3px"></div>
+<div style="position:absolute;left:2px;right:2px;top:{{s.y}}%;height:8px;margin-top:-4px;border-radius:4px;background:{{s.c}};box-shadow:0 0 8px {{s.c}}"></div>
+</div>
+<span class="p-mono" style="font-size:12px;color:{{s.c}}">{{s.txt}}</span>
+</div>
+</sc-for>
+</div>
+</sc-if>
+<div style="display:flex;align-items:center;gap:8px">
+<span class="p-lbl" style="font-size:9px">Referência A4</span>
+<button class="p-btn" onClick="{{refDown}}" aria-label="Diminuir referência" style="width:30px;height:28px">−</button>
+<span class="p-mono" style="font-size:14px;font-weight:700;width:76px;text-align:center">{{a4}} Hz</span>
+<button class="p-btn" onClick="{{refUp}}" aria-label="Aumentar referência" style="width:30px;height:28px">+</button>
+<span style="width:16px"></span>
+<sc-for list="{{temps}}" as="v" hint-placeholder-count="2"><button class="p-btn" onClick="{{v.pick}}" aria-pressed="{{v.on}}" style="height:28px;padding:0 10px;font-size:11px">{{v.l}}</button></sc-for>
+</div>
+</div>
+
+<div class="p-well" style="flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:12px;min-width:0">
+<div style="display:flex;align-items:center;gap:8px"><span class="p-lbl" style="flex:1">Looper</span><sc-for list="{{loopPos}}" as="v" hint-placeholder-count="2"><button class="p-btn" onClick="{{v.pick}}" aria-pressed="{{v.on}}" style="height:28px;padding:0 10px;font-size:11px">{{v.l}}</button></sc-for></div>
+<div style="flex:1;display:flex;align-items:center;gap:22px">
+<div style="width:190px;height:190px;border-radius:50%;background:conic-gradient({{loopC}} {{loopDeg}}deg,#1a1d22 0);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 0 24px {{loopGlow}}">
+<div style="width:160px;height:160px;border-radius:50%;background:#0a0b0c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
+<span class="p-osw" style="font-size:26px;font-weight:700;color:{{loopC}}">{{loopState}}</span>
+<span class="p-mono" style="font-size:13px;color:#a3abb4">{{loopPct}} %</span>
+<span class="p-mono" style="font-size:11px;color:#a3abb4">{{loopInfo}}</span>
+</div>
+</div>
+<div style="flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+<sc-for list="{{loopBtns}}" as="b" hint-placeholder-count="7"><button class="p-btn" onClick="{{b.pick}}" aria-pressed="{{b.on}}" style="height:40px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px"><span style="width:9px;height:9px;border-radius:{{b.shape}};background:{{b.c}}"></span>{{b.l}}</button></sc-for>
+</div>
+</div>
+</div>
+</div>
+
+<!-- FOOTSWITCH DOCK -->
+<div class="p-well" style="height:250px;padding:14px 20px;display:flex;flex-direction:column;gap:12px;flex-shrink:0">
+<div style="display:flex;align-items:center;gap:8px"><span class="p-lbl" style="flex:1">Footswitches · modo</span><sc-for list="{{fsModes}}" as="m" hint-placeholder-count="4"><button class="p-btn" onClick="{{m.pick}}" aria-pressed="{{m.on}}" style="height:28px;padding:0 12px;font-size:11px">{{m.l}}</button></sc-for></div>
+<div style="flex:1;display:flex;gap:14px;align-items:stretch">
+<div style="flex:1;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:12px">
+<sc-for list="{{fs}}" as="f" hint-placeholder-count="8">
+<div style="display:flex;flex-direction:column;align-items:center;gap:12px;opacity:{{f.op}}">
+<div class="p-oled" style="width:100%;height:58px;padding:5px 7px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between">
+<div class="p-mono" style="display:flex;font-size:9px;color:#7fd8ff"><span>FS {{f.n}}</span><span style="flex:1"></span><span>{{f.mode}}</span></div>
+<span style="font-size:13px;font-weight:700;color:#e8f6ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{f.name}}</span>
+</div>
+<div style="position:relative;width:90px;height:90px;display:flex;align-items:center;justify-content:center;border-radius:50%;box-shadow:0 0 0 4px {{f.ring}},0 0 22px {{f.glow}}">
+<button class="p-fs" onClick="{{f.press}}" aria-pressed="{{f.on}}" aria-label="Footswitch {{f.n}}: {{f.name}}"></button>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="width:120px;display:flex;flex-direction:column;align-items:center;gap:8px">
+<span class="p-lbl" style="font-size:9px">EXP 1 · {{expTarget}}</span>
+<div role="slider" tabIndex="0" aria-label="Pedal de expressão" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{exp}}" onPointerDown="{{expH.down}}" onPointerMove="{{expH.move}}" onPointerUp="{{expH.up}}" onWheel="{{expH.wheel}}" style="flex:1;width:92px;position:relative;cursor:ns-resize;touch-action:none;perspective:300px">
+<div style="position:absolute;inset:0;border-radius:10px;background:linear-gradient(180deg,#2c3035,#121417);box-shadow:inset 0 2px 6px #000"></div>
+<div style="position:absolute;left:8px;right:8px;top:10px;bottom:10px;border-radius:8px;background:repeating-linear-gradient(0deg,#0d0d0d 0 3px,#2a2a2a 3px 5px);box-shadow:0 6px 10px rgba(0,0,0,.7);transform:rotateX({{expTilt}}deg);transform-origin:50% 100%"></div>
+</div>
+<span class="p-mono" style="font-size:12px;font-weight:700">{{exp}} %</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tick: 0, scene: 5, preset: 2, fsMode: 'hybrid', stomps: { drive: true, chorus: false, delay: true, reverb: true }, tunerOn: true, view: 'strobe', out: 'mute', a4: 440, temp: 'equal',
+      loop: { state: 'idle', pos: 0, layers: 0, undone: 0, rev: false, half: false, where: 'post' }, exp: 62, strobe: 0 };
+    this.drag = null;
+  }
+  componentDidMount() { this.timer = setInterval(() => this.step(), 60); }
+  componentWillUnmount() { clearInterval(this.timer); }
+  step() {
+    this.setState((s) => {
+      const cents = this.cents(s.tick);
+      const lp = Object.assign({}, s.loop);
+      if (lp.state === 'rec') lp.pos = Math.min(100, lp.pos + 0.6);
+      if (lp.state === 'play' || lp.state === 'dub') { const sp = (lp.half ? 0.3 : 0.6) * (lp.rev ? -1 : 1); lp.pos = (lp.pos + sp + 100) % 100; }
+      return { tick: s.tick + 1, strobe: s.strobe + cents * 0.5, loop: lp };
+    });
+  }
+  cents(t) { return 6 * Math.sin(t * 0.035) + 2.5 * Math.sin(t * 0.13); }
+  loopAct(a) {
+    this.setState((s) => { const L = Object.assign({}, s.loop);
+      if (a === 'rec') { if (L.state === 'idle') { L.state = 'rec'; L.pos = 0; L.layers = 1; } else if (L.state === 'rec') { L.state = 'play'; } else if (L.state === 'play') { L.state = 'dub'; L.layers += 1; L.undone = 0; } else if (L.state === 'dub') { L.state = 'play'; } }
+      if (a === 'play') { L.state = L.state === 'play' || L.state === 'dub' ? 'stop' : (L.layers ? 'play' : L.state); }
+      if (a === 'undo' && L.layers > 1) { L.layers -= 1; L.undone += 1; }
+      if (a === 'redo' && L.undone > 0) { L.layers += 1; L.undone -= 1; }
+      if (a === 'rev') L.rev = !L.rev;
+      if (a === 'half') L.half = !L.half;
+      if (a === 'clear') { L.state = 'idle'; L.pos = 0; L.layers = 0; L.undone = 0; }
+      return { loop: L }; });
+  }
+  expH() {
+    if (this._eh) return this._eh;
+    const self = this;
+    this._eh = {
+      down(e) { try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} self.drag = { y: e.clientY, v: self.state.exp }; },
+      move(e) { const d = self.drag; if (!d) return; self.setState({ exp: Math.max(0, Math.min(100, Math.round(d.v + (d.y - e.clientY) * 0.6))) }); },
+      up() { self.drag = null; },
+      wheel(e) { self.setState((s) => ({ exp: Math.max(0, Math.min(100, s.exp + (e.deltaY < 0 ? 4 : -4))) })); }
+    };
+    return this._eh;
+  }
+  renderVals() {
+    const st = this.state, t = st.tick;
+    const names = ['Clean','Crunch','Rhythm','Solo','Ambient','Heavy','Blues','DI'], ids = ['A','B','C','D','E','F','G','H'];
+    const presets = ['P01 TWIN CLEAN SPARKLE','P02 PLEXI JUMPED CRUNCH','P03 CALI DUAL RECTO MODERN METAL','P04 AC30 TOP BOOST CHIME','P05 AMBIENT TAPE ECHO','P06 FUZZ FACE BLUES','P07 RAT INTO PLEXI','P08 DRY REAMP DI'];
+    const bpm = 120, beatOn = (t * 60) % 500 < 90;
+    const cents = this.cents(t), inTune = Math.abs(cents) < 2;
+    const noteC = inTune ? '#29e07a' : (Math.abs(cents) < 10 ? '#ffc400' : '#ff5a3d');
+    const sweet = { equal: [0, 0, 0, 0, 0, 0], sweet: [-2, -2, -1, -1, -0.5, -1] }[st.temp];
+    const strings = ['E','A','D','G','B','E'].map((n, i) => { const c = 4 * Math.sin(t * 0.03 + i * 1.3) + (i === 2 ? 9 : 0) + sweet[i]; const ok = Math.abs(c) < 2;
+      return { n, c: ok ? '#29e07a' : (Math.abs(c) < 10 ? '#ffc400' : '#ff5a3d'), y: Math.max(4, Math.min(96, 50 - c * 1.6)).toFixed(1), txt: (c >= 0 ? '+' : '') + c.toFixed(1) }; });
+
+    const STOMPS = { drive: 'Screamer 808', chorus: 'Chorus-2', delay: 'Tape Echo', reverb: 'Plate' };
+    const sk = Object.keys(STOMPS);
+    const fs = Array.from({ length: 8 }, (_, i) => {
+      let name, on, press, mode;
+      const scenePick = (k) => () => this.setState({ scene: k });
+      const stompTog = (k) => () => this.setState((s) => ({ stomps: Object.assign({}, s.stomps, { [k]: !s.stomps[k] }) }));
+      if (st.fsMode === 'scene' || (st.fsMode === 'hybrid' && i >= 4)) { const k = st.fsMode === 'scene' ? i : i - 4; name = ids[k] + ' · ' + names[k]; on = st.scene === k; press = scenePick(k); mode = 'SCENE'; }
+      else if (st.fsMode === 'preset') { name = presets[i].slice(4); on = st.preset === i; press = () => this.setState({ preset: i }); mode = 'PRESET'; }
+      else { const k = sk[i % 4]; if (st.fsMode === 'stomp' && i >= 4) { const extra = [['TAP', null], ['TUNER', null], ['LOOPER', null], ['EXP TOG', null]][i - 4]; name = extra[0]; on = extra[0] === 'TUNER' ? st.tunerOn : false;
+          press = extra[0] === 'TUNER' ? () => this.setState((s) => ({ tunerOn: !s.tunerOn })) : (extra[0] === 'LOOPER' ? () => this.loopAct('rec') : () => {}); mode = 'STOMP'; }
+        else { name = STOMPS[k]; on = st.stomps[k]; press = stompTog(k); mode = 'STOMP'; } }
+      const col = mode === 'SCENE' ? '#ff8a3d' : (mode === 'PRESET' ? '#3dd8ff' : '#29e07a');
+      const pulse = name === 'TAP' && beatOn;
+      return { n: i + 1, name, on: !!on, press, mode, op: on || pulse ? 1 : 0.55, ring: on || pulse ? col : '#2a2f36', glow: on || pulse ? col : 'transparent' };
+    });
+
+    const L = st.loop;
+    const LS = { idle: ['VAZIO', '#5a636e'], rec: ['GRAVANDO', '#ff3b2f'], play: ['TOCANDO', '#29e07a'], dub: ['OVERDUB', '#ffc400'], stop: ['PARADO', '#a3abb4'] }[L.state];
+    const loopBtns = [['rec', L.state === 'rec' ? 'Fechar loop' : (L.state === 'play' ? 'Overdub' : 'Gravar'), '#ff3b2f', '50%', L.state === 'rec' || L.state === 'dub'],
+      ['play', L.state === 'play' || L.state === 'dub' ? 'Parar' : 'Tocar', '#29e07a', '2px', L.state === 'play'],
+      ['undo', 'Desfazer', '#a3abb4', '2px', false], ['redo', 'Refazer', '#a3abb4', '2px', false],
+      ['rev', 'Reverso', '#3dd8ff', '2px', L.rev], ['half', '½ velocidade', '#3dd8ff', '2px', L.half], ['clear', 'Limpar', '#5a636e', '2px', false]]
+      .map(([k, l, c, shape, on]) => ({ l, c, shape, on, pick: () => this.loopAct(k) }));
+    const hz = st.a4 * Math.pow(2, (-24 + cents / 100) / 12);
+    return {
+      presetNo: presets[st.preset].slice(0, 3), presetName: presets[st.preset].slice(4), sceneId: ids[st.scene], sceneName: names[st.scene].toUpperCase(),
+      bpm, beatC: beatOn ? '#57ffb0' : '#0f2a1d', beatG: beatOn ? '0 0 12px #57ffb0' : 'none',
+      tunerOn: st.tunerOn, toggleTuner: () => this.setState((s) => ({ tunerOn: !s.tunerOn })), tunerOp: st.tunerOn ? 1 : 0.35,
+      tunerViews: [['strobe','Strobe'],['poly','Polifônico']].map(([k, l]) => ({ l, on: st.view === k, pick: () => this.setState({ view: k }) })),
+      outModes: [['mute','Mute'],['bypass','Bypass']].map(([k, l]) => ({ l, on: st.out === k, pick: () => this.setState({ out: k }) })),
+      viewStrobe: st.view === 'strobe', viewPoly: st.view === 'poly',
+      note: 'A', oct: '2', noteC, noteGlow: noteC + '66', strobeC: noteC, strobePos: (st.strobe % 44).toFixed(1),
+      needlePct: Math.max(2, Math.min(98, 50 + cents)).toFixed(1), hz: hz.toFixed(2), centsTxt: (cents >= 0 ? '+' : '') + cents.toFixed(1),
+      tempTxt: st.temp === 'equal' ? 'temperamento igual' : 'compensado (guitarra)', strings,
+      a4: st.a4.toFixed(1), refDown: () => this.setState((s) => ({ a4: Math.max(430, s.a4 - 1) })), refUp: () => this.setState((s) => ({ a4: Math.min(450, s.a4 + 1) })),
+      temps: [['equal','Igual'],['sweet','Compensado']].map(([k, l]) => ({ l, on: st.temp === k, pick: () => this.setState({ temp: k }) })),
+      loopPos: [['pre','PRE'],['post','POST']].map(([k, l]) => ({ l, on: L.where === k, pick: () => this.setState((s) => ({ loop: Object.assign({}, s.loop, { where: k }) })) })),
+      loopState: LS[0], loopC: LS[1], loopGlow: L.state === 'idle' || L.state === 'stop' ? 'transparent' : LS[1] + '55', loopDeg: Math.round(L.pos * 3.6), loopPct: L.pos.toFixed(0),
+      loopInfo: L.layers + ' camada(s)' + (L.half ? ' · ½×' : '') + (L.rev ? ' · rev' : ''), loopBtns,
+      fsModes: [['preset','Preset'],['scene','Scene'],['stomp','Stomp'],['hybrid','Híbrido']].map(([k, l]) => ({ l, on: st.fsMode === k, pick: () => this.setState({ fsMode: k }) })),
+      fs, exp: st.exp, expTilt: (12 - st.exp * 0.24).toFixed(1), expH: this.expH(), expTarget: 'WAH / VOLUME'
+    };
+  }
+}
+</script>
+</body>
+</html>

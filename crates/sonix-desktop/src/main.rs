@@ -1,4 +1,5 @@
 use std::path::Path;
+#[cfg(feature = "dev-http")]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,7 @@ use sonix_desktop::audio::{
     DesktopAudioHost, RealtimeDspChain, RealtimeDuplexEngine, TelemetryBuffer,
 };
 use sonix_desktop::midi::DesktopMidiHost;
+#[cfg(feature = "dev-http")]
 use sonix_desktop::server::LocalAppServer;
 
 fn main() {
@@ -64,55 +66,69 @@ fn main() {
         }
     };
 
-    // Inicia Servidor Local IPC/HTTP
+    // Inicia Servidor Local IPC/HTTP (apenas quando dev-http estiver habilitado)
     let is_headless = std::env::var("SONIX_HEADLESS").map(|v| v == "1").unwrap_or(false);
-    let no_browser = std::env::var("SONIX_NO_BROWSER").map(|v| v == "1").unwrap_or(false);
+    #[cfg(feature = "dev-http")]
+    let _server = {
+        let no_browser = std::env::var("SONIX_NO_BROWSER").map(|v| v == "1").unwrap_or(false);
 
-    let server = match LocalAppServer::bind_port_with_telemetry(7890, telemetry.clone(), Some(dsp_chain.clone())) {
-        Ok(s) => s,
-        Err(_) => {
-            if is_headless {
-                LocalAppServer::bind_ephemeral().expect("Falha ao ligar servidor em 127.0.0.1")
-            } else {
-                println!("-> Uma instância do Sonix Pro já está em execução na porta 7890.");
-                #[cfg(target_os = "windows")]
-                if !no_browser {
-                    let _ = Command::new("cmd")
-                        .args(["/c", "start", "msedge", "--app=http://127.0.0.1:7890", "--window-size=1280,820"])
-                        .spawn();
+        let calib_store = sonix_desktop::calibration::CalibrationStore::new();
+        let server = match LocalAppServer::bind_port_with_all(
+            7890,
+            telemetry.clone(),
+            Some(dsp_chain.clone()),
+            Some("default"),
+            Some(calib_store),
+        ) {
+            Ok(s) => s,
+            Err(_) => {
+                if is_headless {
+                    LocalAppServer::bind_ephemeral().expect("Falha ao ligar servidor em 127.0.0.1")
+                } else {
+                    println!("-> Uma instância do Sonix Pro já está em execução na porta 7890.");
+                    #[cfg(target_os = "windows")]
+                    if !no_browser {
+                        let _ = Command::new("cmd")
+                            .args(["/c", "start", "msedge", "--app=http://127.0.0.1:7890", "--window-size=1280,820"])
+                            .spawn();
+                    }
+                    return;
                 }
-                return;
             }
+        };
+
+        if let Some(ref streams) = active_streams {
+            server.set_audio_telemetry(streams.telemetry.clone());
         }
-    };
 
-    let app_url = server.app_url();
-    let app_cmd = server.build_desktop_app_command();
-    println!("-> Servidor Desktop Local: {}", app_url);
-    println!("-> Modo Janela Dedicada: {}", app_cmd);
+        let app_url = server.app_url();
+        let app_cmd = server.build_desktop_app_command();
+        println!("-> Servidor Desktop Local: {}", app_url);
+        println!("-> Modo Janela Dedicada: {}", app_cmd);
 
-    // Tenta abrir a janela dedicada no Windows se não for modo headless nem desabilitado
-    if !is_headless && !no_browser {
-        let url = app_url.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
-            #[cfg(target_os = "windows")]
-            {
-                let _ = Command::new("cmd")
-                    .args(["/c", "start", "msedge", &format!("--app={}", url), "--window-size=1280,820"])
-                    .spawn();
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                // Em WSL ou Linux, se cmd.exe estiver acessível, abre no navegador Windows do host
-                if let Ok(cmd_path) = which_cmd() {
-                    let _ = Command::new(cmd_path)
+        if !is_headless && !no_browser {
+            let url = app_url.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(300));
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = Command::new("cmd")
                         .args(["/c", "start", "msedge", &format!("--app={}", url), "--window-size=1280,820"])
                         .spawn();
                 }
-            }
-        });
-    }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if let Ok(cmd_path) = which_cmd() {
+                        let _ = Command::new(cmd_path)
+                            .args(["/c", "start", "msedge", &format!("--app={}", url), "--window-size=1280,820"])
+                            .spawn();
+                    }
+                }
+            });
+        }
+
+        server
+    };
 
     println!("============================================================");
     println!("    🎸 SONIX PRO ONLINE! Conecte a guitarra na entrada P2   ");

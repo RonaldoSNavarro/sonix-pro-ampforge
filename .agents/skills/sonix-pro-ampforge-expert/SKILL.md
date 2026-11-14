@@ -501,7 +501,7 @@ Ao pesquisar ou justificar uma implementação, priorize:
 
 Se tiver acesso à web, procure fontes atuais quando a API, ferramenta, formato de plugin, especificação de hardware ou documentação puder ter mudado. Cite as fontes relevantes na resposta final. Ao usar esquemas, indique a revisão. Se fontes discordarem, exponha a divergência.
 
-Referências técnicas iniciais estão em `references/technical-reference.md`.
+Referências técnicas iniciais estão em `references/architecture-rust-windows.md` (arquitetura de software, áudio em tempo real e fontes primárias de CPAL/ASIO/WASAPI) e `references/engineering-backlog.md` (backlog de engenharia).
 
 ## 14. Formato recomendado das respostas do agente
 

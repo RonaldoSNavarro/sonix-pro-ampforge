@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>AMPFORGE — rig principal</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Oswald:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+button{font-family:inherit;cursor:pointer}
+.m-mono{font-family:'JetBrains Mono',Consolas,monospace}
+.m-osw{font-family:Oswald,'Arial Narrow',sans-serif}
+.m-lbl{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#a3abb4;font-weight:600}
+.m-metal{background:linear-gradient(180deg,#24282e 0%,#181b20 45%,#101215 100%)}
+.m-brushed{background:repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 3px),linear-gradient(180deg,#262a30 0%,#1a1d22 50%,#121417 100%)}
+.m-screw{position:absolute;width:9px;height:9px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#e8e8e8,#8a8a8a 55%,#3a3a3a)}
+.m-lcd{background:radial-gradient(ellipse at 50% 0%,#2a1a06 0%,#140b02 70%);border:1px solid #000;box-shadow:inset 0 2px 8px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.06)}
+.m-lcdtxt{color:#ffb347;text-shadow:0 0 6px rgba(255,150,40,.75),0 0 14px rgba(255,120,20,.35)}
+.m-seg{width:5px;height:14px;border-radius:1px}
+.m-hw{border-radius:6px;background:linear-gradient(180deg,#30353c,#1a1d21);border:1px solid #000;color:#e8eaed;box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.m-hw:active{background:linear-gradient(180deg,#1a1d21,#2a2e34)}
+.m-hw:focus-visible,.m-chip:focus-visible,.m-cell:focus-visible{outline:2px solid #3dd8ff;outline-offset:1px}
+.m-chip{height:24px;padding:0 8px;border-radius:4px;font-size:10.5px;font-weight:600;border:1px solid #2a3039;background:#0b0c0e;color:#c9ced4}
+.m-chip[aria-pressed="true"]{background:rgba(255,138,61,.16);border-color:#ff8a3d;color:#ffd2b0}
+.m-cell{height:52px;border-radius:6px;border:1px solid #23272d;background:linear-gradient(180deg,#191c21,#111316);color:#e8eaed;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:0 7px;box-sizing:border-box;text-align:left;min-width:0;position:relative}
+.m-cell[aria-pressed="true"]{border-color:#ff8a3d;background:linear-gradient(180deg,#2a1b12,#1a110b);box-shadow:0 0 14px rgba(255,138,61,.25)}
+.m-track{flex:1;height:6px;border-radius:3px;background:#07080a;box-shadow:inset 0 1px 2px rgba(0,0,0,.9);position:relative;cursor:ew-resize;touch-action:none;outline:none}
+.m-track:focus-visible{box-shadow:0 0 0 2px #3dd8ff}
+.m-glass{position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.22);background:linear-gradient(90deg,rgba(255,255,255,.04) 0%,rgba(255,255,255,.26) 16%,rgba(255,255,255,.05) 34%,rgba(255,255,255,.02) 74%,rgba(255,255,255,.14) 90%,rgba(255,255,255,.03) 100%)}
+.m-getter{position:absolute;left:0;right:0;top:0;height:22%;background:radial-gradient(ellipse at 50% 0%,rgba(215,222,230,.75) 0%,rgba(120,128,138,.35) 55%,transparent 80%)}
+.m-plate{position:absolute;left:24%;right:24%;top:26%;bottom:20%;border-radius:2px;background:linear-gradient(90deg,#2b2b2b,#6c6c6c 45%,#8a8a8a 50%,#3a3a3a)}
+.m-glow{position:absolute;left:0;right:0;bottom:6%;height:42%;background:radial-gradient(ellipse at 50% 72%,rgba(255,190,90,.95) 0%,rgba(255,110,25,.6) 30%,rgba(255,80,10,.15) 58%,transparent 72%);mix-blend-mode:screen}
+.m-cable{height:7px;border-radius:4px;background:linear-gradient(180deg,#3a3a3a,#0c0c0c 60%,#000);box-shadow:0 2px 3px rgba(0,0,0,.6)}
+.m-grip{background:radial-gradient(circle at 1px 1px,rgba(255,255,255,.05) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#141517,#0c0d0e)}
+.m-vu{background:radial-gradient(ellipse at 50% 120%,#f7ecc8 0%,#ecdcae 55%,#d9c48c 100%)}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#08090a;color:#e8eaed;font-family:Inter,'Segoe UI',system-ui,sans-serif;font-size:13px;overflow:hidden;border:1px solid #2a2f37;box-sizing:border-box;user-select:none">
+
+<!-- TITLE BAR -->
+<div style="height:32px;display:flex;align-items:center;background:#060707;border-bottom:1px solid #1b1e22;flex-shrink:0">
+<div style="display:flex;align-items:center;gap:10px;padding-left:12px;flex:1">
+<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1" width="14" height="14" rx="3" fill="#ff8a3d"></rect><path d="M4 11V5l4 4 4-4v6" stroke="#0b0d10" stroke-width="1.8" fill="none"></path></svg>
+<span style="font-size:12px;color:#c9ced4">SONIX PRO — AMPFORGE</span>
+<span style="font-size:12px;color:#a3abb4">·  Setlist Show 2026 › P03 Cali Dual Recto Modern Metal  ●</span>
+</div>
+<div style="display:flex;height:32px">
+<button aria-label="Minimizar" style="width:46px;height:32px;background:transparent;border:0;color:#c9ced4;display:flex;align-items:center;justify-content:center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor"></path></svg></button>
+<button aria-label="Maximizar" style="width:46px;height:32px;background:transparent;border:0;color:#c9ced4;display:flex;align-items:center;justify-content:center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" stroke="currentColor" fill="none"></rect></svg></button>
+<button aria-label="Fechar" style="width:46px;height:32px;background:transparent;border:0;color:#c9ced4;display:flex;align-items:center;justify-content:center"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"></path></svg></button>
+</div>
+</div>
+
+<!-- MENU BAR -->
+<div style="height:28px;display:flex;align-items:center;gap:2px;padding:0 6px;background:#0c0d0f;border-bottom:1px solid #1b1e22;flex-shrink:0">
+<sc-for list="{{menus}}" as="m" hint-placeholder-count="7"><button style="background:transparent;border:0;color:#c9ced4;font-size:12px;padding:4px 10px;border-radius:4px">{{m}}</button></sc-for>
+<span style="flex:1"></span>
+<span class="m-mono" style="font-size:10px;color:{{bridgeC}};display:flex;align-items:center;gap:6px;padding-right:8px"><span style="width:6px;height:6px;border-radius:50%;background:{{bridgeC}}"></span>ponte UI→DSP {{bridgeTxt}}</span>
+</div>
+
+<!-- HARDWARE TOOLBAR -->
+<div class="m-brushed" style="height:68px;display:flex;align-items:center;gap:16px;padding:0 16px;border-bottom:1px solid #000;box-shadow:inset 0 1px 0 rgba(255,255,255,.07);flex-shrink:0;position:relative">
+<span class="m-screw" style="left:5px;top:5px"></span><span class="m-screw" style="left:5px;bottom:5px"></span><span class="m-screw" style="right:5px;top:5px"></span><span class="m-screw" style="right:5px;bottom:5px"></span>
+<div style="display:flex;align-items:center;gap:6px;margin-left:10px">
+<button class="m-hw" onClick="{{prevPreset}}" aria-label="Preset anterior" style="width:30px;height:44px">‹</button>
+<div class="m-lcd" style="width:330px;height:46px;border-radius:5px;display:flex;flex-direction:column;justify-content:center;padding:0 14px;box-sizing:border-box">
+<div class="m-mono m-lcdtxt" style="font-size:10px;opacity:.85;display:flex;gap:10px"><span>SHOW 2026</span><span>{{presetNo}}</span><span style="flex:1"></span><span>CENA {{sceneId}} · {{sceneName}}</span></div>
+<div class="m-mono m-lcdtxt" style="font-size:15px;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden">{{presetName}}</div>
+</div>
+<button class="m-hw" onClick="{{nextPreset}}" aria-label="Próximo preset" style="width:30px;height:44px">›</button>
+<button style="height:44px;padding:0 12px;border-radius:6px;background:linear-gradient(180deg,#ffa25c,#e46d1f);border:1px solid #6b2c05;color:#1a0b01;font-weight:700;font-size:11px;box-shadow:inset 0 1px 0 rgba(255,255,255,.4)">SALVAR</button>
+</div>
+<div style="display:flex;flex-direction:column;gap:4px">
+<span class="m-lbl" style="font-size:9px">Cenas</span>
+<div style="display:flex;gap:4px">
+<sc-for list="{{scenes}}" as="s" hint-placeholder-count="8"><button onClick="{{s.pick}}" aria-pressed="{{s.on}}" title="{{s.name}}" class="m-osw" style="width:32px;height:30px;border-radius:5px;font-size:12px;font-weight:700;border:1px solid #000;background:{{s.bg}};color:{{s.fg}};box-shadow:{{s.glow}}">{{s.id}}</button></sc-for>
+</div>
+</div>
+<div style="flex:1"></div>
+<div style="display:flex;flex-direction:column;gap:5px">
+<div style="display:flex;align-items:center;gap:6px"><span class="m-lbl" style="width:26px;font-size:9px">IN</span><div style="display:flex;gap:2px;padding:3px;border-radius:3px;background:#050505"><sc-for list="{{segIn}}" as="g" hint-placeholder-count="20"><span class="m-seg" style="background:{{g.c}};box-shadow:{{g.glow}}"></span></sc-for></div></div>
+<div style="display:flex;align-items:center;gap:6px"><span class="m-lbl" style="width:26px;font-size:9px">OUT</span><div style="display:flex;gap:2px;padding:3px;border-radius:3px;background:#050505"><sc-for list="{{segOut}}" as="g" hint-placeholder-count="20"><span class="m-seg" style="background:{{g.c}};box-shadow:{{g.glow}}"></span></sc-for></div></div>
+</div>
+<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px" class="m-mono"><span style="font-size:10px;color:#a3abb4">CPU <b style="color:{{cpuC}}">{{cpu}} %</b></span><span style="font-size:10px;color:#a3abb4">OS {{osTxt}}</span></div>
+<div style="display:flex;gap:6px">
+<button class="m-hw" onClick="{{tap}}" style="height:44px;width:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px"><span class="m-mono m-lcdtxt" style="font-size:13px;font-weight:700;opacity:{{tapOp}}">{{bpm}}</span><span style="font-size:9px;color:#a3abb4">TAP</span></button>
+<a href="Palco.dc.html" class="m-hw" style="height:44px;width:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-decoration:none;box-sizing:border-box"><svg width="18" height="12" viewBox="0 0 18 12" aria-hidden="true"><path d="M2 11A7 7 0 0 1 16 11" stroke="#3dd8ff" stroke-width="1.6" fill="none"></path><path d="M9 11 11.5 4" stroke="#29c46a" stroke-width="2" stroke-linecap="round"></path></svg><span style="font-size:9px;color:#a3abb4">AFINADOR</span></a>
+<a href="Palco.dc.html" class="m-hw" style="height:44px;width:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-decoration:none;box-sizing:border-box"><svg width="16" height="12" viewBox="0 0 16 12" aria-hidden="true"><rect x="1" y="1" width="14" height="10" rx="1.5" stroke="#ff8a3d" stroke-width="1.4" fill="none"></rect><path d="M4 8h8" stroke="#ff8a3d" stroke-width="1.4"></path></svg><span style="font-size:9px;color:#a3abb4">PALCO</span></a>
+<a href="Audio.dc.html" class="m-hw" aria-label="Configurações de áudio" style="height:44px;width:44px;display:flex;align-items:center;justify-content:center;text-decoration:none;box-sizing:border-box"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="3" stroke="#c9ced4" stroke-width="1.5" fill="none"></circle><path d="M9 1.5v2.5M9 14v2.5M1.5 9H4M14 9h2.5M3.7 3.7l1.8 1.8M12.5 12.5l1.8 1.8M3.7 14.3l1.8-1.8M12.5 5.5l1.8-1.8" stroke="#c9ced4" stroke-width="1.5" stroke-linecap="round"></path></svg></a>
+</div>
+</div>
+
+<!-- SIGNAL GRID -->
+<div style="height:136px;flex-shrink:0;background:linear-gradient(180deg,#0e1013,#0a0b0d);border-bottom:1px solid #000;padding:8px 16px 10px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;align-items:center;gap:12px"><span class="m-lbl">Matriz de sinal</span><span style="font-size:11px;color:#9aa3ad">clique = editar · duplo clique = bypass · linha B em paralelo (split → merge)</span><span style="flex:1"></span><span class="m-lbl" style="font-size:9px">Oversampling</span>
+<sc-for list="{{osOpts}}" as="o" hint-placeholder-count="3"><button class="m-chip m-mono" onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="height:20px;padding:0 6px">{{o.l}}</button></sc-for>
+</div>
+<div style="display:grid;grid-template-columns:repeat(11,minmax(0,1fr));grid-template-rows:52px 46px;gap:6px 6px;position:relative">
+<sc-for list="{{cells}}" as="c" hint-placeholder-count="15">
+<button class="m-cell" onClick="{{c.pick}}" onDoubleClick="{{c.bypass}}" aria-pressed="{{c.selected}}" style="grid-column:{{c.col}};grid-row:{{c.row}};height:{{c.h}}px;opacity:{{c.op}}">
+<span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:{{c.led}};box-shadow:{{c.ledG}}"></span><span style="font-size:8.5px;font-weight:700;letter-spacing:.08em;color:{{c.catC}}">{{c.cat}}</span><span style="flex:1"></span><span class="m-mono" style="font-size:8.5px;color:#9aa3ad">{{c.ch}}</span></span>
+<span style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{c.name}}</span>
+</button>
+</sc-for>
+</div>
+</div>
+
+<!-- MAIN AREA -->
+<div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0">
+
+<!-- STAGE -->
+<div style="display:flex;flex-direction:column;gap:14px;padding:14px 18px;min-height:0;background:radial-gradient(ellipse at 35% -10%,rgba(255,170,90,{{stageGlow}}) 0%,transparent 55%),repeating-linear-gradient(90deg,rgba(255,255,255,.012) 0 1px,transparent 1px 46px),linear-gradient(180deg,#141518 0%,#0d0e10 62%,#090a0b 100%)">
+
+<div style="display:flex;gap:16px;height:226px;flex-shrink:0">
+<div style="width:788px;height:226px;position:relative;flex-shrink:0">
+<div style="position:absolute;left:0;top:4px;width:1000px;transform:scale(.788);transform-origin:0 0">
+<dc-import name="AmpHead" model="{{ampModel}}" vals="{{vals}}" on-set="{{setVal}}" hint-size="1000px,282px"></dc-import>
+</div>
+</div>
+<div style="flex:1;border-radius:12px;background:#050505;box-shadow:0 20px 30px rgba(0,0,0,.7),0 0 0 1px #000;padding:8px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;min-width:0">
+<div style="display:flex;align-items:center"><span class="m-lbl" style="flex:1;font-size:9px">Válvulas · {{tubeSet}}</span><span class="m-mono" style="font-size:9px;color:#ffb347">B+ {{bplus}} V</span></div>
+<div style="flex:1;border-radius:8px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 100%,rgba(255,120,30,{{chassisGlow}}) 0%,transparent 60%),linear-gradient(180deg,#0b0b0c,#17181a);display:flex;align-items:flex-end;justify-content:center;gap:6px">
+<sc-for list="{{tubes}}" as="t" hint-placeholder-count="8">
+<div style="display:flex;flex-direction:column;align-items:center;margin-bottom:16px;filter:drop-shadow(0 0 {{t.glowPx}}px rgba(255,120,30,.6))">
+<div class="m-glass" style="width:{{t.w}}px;height:{{t.h}}px;border-radius:{{t.r}}"><div class="m-getter"></div><div class="m-plate"></div><div class="m-glow" style="opacity:{{t.glowOp}}"></div></div>
+<div style="width:{{t.bw}}px;height:{{t.bh}}px;border-radius:3px 3px 5px 5px;background:{{t.base}}"></div>
+<span class="m-mono" style="font-size:7.5px;color:#c9ced4;margin-top:2px">{{t.n}}</span>
+</div>
+</sc-for>
+<div style="position:absolute;left:0;right:0;bottom:0;height:16px;background:linear-gradient(180deg,#8f949a,#5b6066 40%,#2c2f33)"></div>
+</div>
+<a href="Chassi.dc.html" style="font-size:10px;color:#3dd8ff;text-decoration:none;text-align:right">Abrir chassi / Mod Shop ›</a>
+</div>
+</div>
+
+<div style="flex:1;display:flex;gap:16px;min-height:0">
+<div class="m-grip" style="flex:1;border-radius:10px;position:relative;box-shadow:0 0 0 1px #000;display:flex;flex-direction:column;padding:8px 16px 14px;box-sizing:border-box;min-width:0">
+<div style="position:absolute;left:0;right:0;bottom:0;height:10px;border-radius:0 0 10px 10px;background:linear-gradient(180deg,#5d6268,#2b2e32)"></div>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span class="m-lbl" style="font-size:9px">Pedalboard</span><span style="font-size:10px;color:#9aa3ad">PRÉ-AMP</span><span style="flex:1;height:1px;background:#24282d"></span><span style="font-size:10px;color:#9aa3ad">LINHA B / PÓS</span><span style="flex:1;height:1px;background:#24282d"></span></div>
+<div style="flex:1;display:flex;align-items:flex-end;justify-content:center;gap:0;padding-bottom:12px">
+<div style="display:flex;flex-direction:column;align-items:center"><dc-import name="Pedal" model="ns2" vals="{{vals}}" on-set="{{setVal}}" on="{{on.gate}}" on-toggle="{{tg.gate}}" hint-size="104px,184px"></dc-import></div>
+<div class="m-cable" style="width:16px;margin-bottom:150px"></div>
+<div style="display:flex;flex-direction:column;align-items:center"><dc-import name="Pedal" model="{{driveModel}}" vals="{{vals}}" on-set="{{setVal}}" on="{{on.drive}}" on-toggle="{{tg.drive}}" hint-size="{{driveHint}}"></dc-import></div>
+<div style="display:flex;align-items:flex-end;margin-bottom:150px"><div class="m-cable" style="width:12px"></div><div style="width:2px;height:190px;margin:0 8px -40px;background:repeating-linear-gradient(180deg,#3dd8ff 0 6px,transparent 6px 11px);opacity:.5"></div><div class="m-cable" style="width:12px"></div></div>
+<div style="display:flex;flex-direction:column;align-items:center"><dc-import name="Pedal" model="ce2" vals="{{vals}}" on-set="{{setVal}}" on="{{on.chorus}}" on-toggle="{{tg.chorus}}" hint-size="104px,184px"></dc-import></div>
+<div class="m-cable" style="width:16px;margin-bottom:110px"></div>
+<div style="display:flex;flex-direction:column;align-items:center"><dc-import name="Pedal" model="mxr10" vals="{{vals}}" on-set="{{setVal}}" on="{{on.eq}}" on-toggle="{{tg.eq}}" hint-size="232px,150px"></dc-import></div>
+</div>
+</div>
+<div style="width:316px;display:flex;flex-direction:column;gap:6px;flex-shrink:0;padding:8px 0 0">
+<span class="m-lbl" style="font-size:9px">Rack · loop / pós-amp</span>
+<div style="width:314px;height:74px;position:relative"><div style="position:absolute;left:0;top:0;width:560px;transform:scale(.56);transform-origin:0 0"><dc-import name="Rack" model="comp1176" vals="{{vals}}" on-set="{{setVal}}" on="{{on.comp}}" on-toggle="{{tg.comp}}" hint-size="560px,130px"></dc-import></div></div>
+<div style="width:314px;height:107px;position:relative"><div style="position:absolute;left:0;top:0;width:560px;transform:scale(.56);transform-origin:0 0"><dc-import name="Rack" model="re201" vals="{{vals}}" on-set="{{setVal}}" on="{{on.delay}}" on-toggle="{{tg.delay}}" hint-size="560px,190px"></dc-import></div></div>
+<div style="width:314px;height:62px;position:relative"><div style="position:absolute;left:0;top:0;width:560px;transform:scale(.56);transform-origin:0 0"><dc-import name="Rack" model="plate" vals="{{vals}}" on-set="{{setVal}}" on="{{on.reverb}}" on-toggle="{{tg.reverb}}" hint-size="560px,110px"></dc-import></div></div>
+</div>
+</div>
+</div>
+
+<!-- INSPECTOR -->
+<div class="m-metal" style="border-left:1px solid #000;display:flex;flex-direction:column;min-height:0;box-shadow:inset 1px 0 0 rgba(255,255,255,.05)">
+<div style="padding:12px 14px 10px;border-bottom:1px solid #000;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:center;gap:8px"><span style="width:9px;height:9px;border-radius:50%;background:{{ins.led}};box-shadow:0 0 8px {{ins.led}}"></span><span class="m-osw" style="font-size:16px;font-weight:600;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ins.name}}</span><span style="flex:1"></span><button class="m-chip m-mono" onClick="{{ins.bypass}}" aria-pressed="{{ins.isOff}}" style="height:20px">{{ins.state}}</button></div>
+<span style="font-size:11px;color:#a3abb4;line-height:1.4">{{ins.ref}}</span>
+<sc-if value="{{ins.hasModels}}" hint-placeholder-val="{{true}}">
+<div style="display:flex;flex-wrap:wrap;gap:4px"><sc-for list="{{ins.models}}" as="m" hint-placeholder-count="5"><button class="m-chip" onClick="{{m.pick}}" aria-pressed="{{m.on}}">{{m.l}}</button></sc-for></div>
+</sc-if>
+<div style="display:flex;align-items:center;gap:6px"><span class="m-lbl" style="font-size:9px">Canal</span><sc-for list="{{ins.channels}}" as="c" hint-placeholder-count="4"><button class="m-chip m-osw" onClick="{{c.pick}}" aria-pressed="{{c.on}}" title="{{c.title}}" style="width:28px;padding:0">{{c.l}}</button></sc-for><span style="font-size:10px;color:#9aa3ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ins.chNote}}</span></div>
+</div>
+
+<div style="padding:10px 14px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;overflow:hidden">
+<div style="display:flex;align-items:center"><span class="m-lbl" style="font-size:9px;flex:1">Parâmetros</span><span class="m-mono" style="font-size:9px;color:{{ins.statusC}}">{{ins.status}}</span></div>
+<sc-for list="{{ins.params}}" as="a" hint-placeholder-count="8">
+<div style="display:flex;align-items:center;gap:8px">
+<span style="font-size:11px;width:84px;color:#c9ced4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{a.label}}</span>
+<div class="m-track" role="slider" tabIndex="0" aria-label="{{a.label}}" aria-valuemin="{{a.lo}}" aria-valuemax="{{a.hi}}" aria-valuenow="{{a.v}}" onPointerDown="{{a.h.down}}" onPointerMove="{{a.h.move}}" onPointerUp="{{a.h.up}}" onWheel="{{a.h.wheel}}" onDoubleClick="{{a.h.reset}}" onKeyDown="{{a.h.key}}"><div style="width:{{a.pct}}%;height:100%;border-radius:3px;background:linear-gradient(90deg,#b8501a,#ff8a3d)"></div><div style="position:absolute;top:-4px;left:{{a.pct}}%;margin-left:-6px;width:12px;height:14px;border-radius:3px;background:linear-gradient(180deg,#e8e8e8,#8a8a8a);box-shadow:0 1px 3px rgba(0,0,0,.8)"></div><sc-if value="{{a.mod}}" hint-placeholder-val="{{false}}"><div style="position:absolute;top:8px;left:{{a.modL}}%;width:{{a.modW}}%;height:3px;border-radius:2px;background:#3dd8ff;box-shadow:0 0 6px #3dd8ff"></div></sc-if></div>
+<span class="m-mono" style="font-size:10px;width:56px;text-align:right">{{a.txt}}</span>
+</div>
+</sc-for>
+<sc-if value="{{ins.hasOpts}}" hint-placeholder-val="{{false}}">
+<div style="display:flex;flex-direction:column;gap:6px;margin-top:2px">
+<sc-for list="{{ins.opts}}" as="g" hint-placeholder-count="2">
+<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><span class="m-lbl" style="font-size:8.5px;width:70px">{{g.label}}</span><sc-for list="{{g.items}}" as="o" hint-placeholder-count="3"><button class="m-chip" onClick="{{o.pick}}" aria-pressed="{{o.on}}" style="height:22px;padding:0 6px">{{o.l}}</button></sc-for></div>
+</sc-for>
+</div>
+</sc-if>
+<sc-if value="{{ins.hasLink}}" hint-placeholder-val="{{false}}"><a href="{{ins.link}}" style="font-size:12px;color:#3dd8ff;text-decoration:none">{{ins.linkTxt}}</a></sc-if>
+<div style="flex:1"></div>
+<div style="border-radius:6px;padding:9px 10px;background:#0b0c0e;border:1px solid #1f242b;display:flex;flex-direction:column;gap:6px">
+<div style="display:flex;align-items:center;gap:6px"><span class="m-lbl" style="font-size:9px;flex:1">Modifier · {{modTarget}}</span><button class="m-chip" onClick="{{toggleMod}}" aria-pressed="{{modOn}}" style="height:20px">{{modOnTxt}}</button></div>
+<div style="display:flex;gap:4px;flex-wrap:wrap"><sc-for list="{{modSources}}" as="s" hint-placeholder-count="4"><button class="m-chip m-mono" onClick="{{s.pick}}" aria-pressed="{{s.on}}" style="height:20px;padding:0 5px;font-size:9.5px">{{s.l}}</button></sc-for></div>
+<span class="m-mono" style="font-size:9.5px;color:#9aa3ad">{{modDesc}}</span>
+</div>
+</div>
+</div>
+</div>
+
+<!-- STATUS BAR -->
+<div style="height:26px;display:flex;align-items:center;gap:16px;padding:0 12px;background:#060707;border-top:1px solid #1b1e22;font-size:11px;color:#a3abb4;flex-shrink:0" class="m-mono">
+<span style="display:flex;align-items:center;gap:6px"><span style="width:7px;height:7px;border-radius:50%;background:{{engineLed}};box-shadow:0 0 6px {{engineLed}}"></span>{{engineTxt}}</span>
+<span>WASAPI exclusivo · [dispositivo]</span>
+<span>48 kHz</span>
+<span>período 64/64</span>
+<span>ida-e-volta <b style="color:#e8eaed">[medida] ms</b></span>
+<span>xruns 0</span>
+<span style="flex:1"></span>
+<span>gate {{gateState}}</span>
+<span>entrada calibrada · pico {{peak}} dBFS</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      vals: {}, sel: 'amp', scene: 5, preset: 2, tick: 0, os: '4x', tapFlash: 0,
+      on: { gate: true, drive: true, comp: false, amp: true, cab: true, eq: true, chorus: true, delay: true, reverb: true, split: true, amp2: true, cab2: true },
+      ampCh: { A: 'twin_ab763', B: 'ac30_tb', C: 'jcm800_2203', D: 'dual_rect' }, activeAmpCh: 'D',
+      driveModel: 'ts808', eqMode: 'graphic_10_mxr', cabModel: 'v30_4x12', splitMode: 'ab', rev201: 4,
+      mod: { on: true, src: 'EXP 1' }
+    };
+    this.hc = {}; this.drag = null;
+  }
+  componentDidMount() { this.timer = setInterval(() => this.setState((s) => ({ tick: s.tick + 1 })), 90); }
+  componentWillUnmount() { clearInterval(this.timer); }
+  get(fk, def) { const v = this.state.vals[fk]; return v === undefined ? def : v; }
+  setValFn() {
+    if (!this._sv) this._sv = (fk, v) => this.setState((s) => ({ vals: Object.assign({}, s.vals, { [fk]: v }) }));
+    return this._sv;
+  }
+  h(fk, def, lo, hi, step) {
+    const key = fk + '|' + lo + '|' + hi;
+    if (this.hc[key]) return this.hc[key];
+    const self = this, st = step || ((hi - lo) / 100);
+    const clamp = (x) => { const c = Math.max(lo, Math.min(hi, x)); return Math.round(c / st) * st; };
+    this.hc[key] = {
+      down(e) { try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} const r = e.currentTarget.getBoundingClientRect(); self.drag = { key, r }; self.setValFn()(fk, clamp(lo + (hi - lo) * Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)))); },
+      move(e) { const d = self.drag; if (!d || d.key !== key) return; self.setValFn()(fk, clamp(lo + (hi - lo) * Math.max(0, Math.min(1, (e.clientX - d.r.left) / d.r.width)))); },
+      up() { self.drag = null; },
+      wheel(e) { self.setValFn()(fk, clamp(self.get(fk, def) + (e.deltaY < 0 ? 1 : -1) * (hi - lo) / 50)); },
+      reset() { self.setValFn()(fk, def); },
+      key(e) { const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key]; if (d) { e.preventDefault(); self.setValFn()(fk, clamp(self.get(fk, def) + d * (hi - lo) / 20)); } }
+    };
+    return this.hc[key];
+  }
+  pickScene(i) {
+    const S = [
+      { ch: 'A', on: { drive: false, chorus: true, delay: true, reverb: true, comp: true } },
+      { ch: 'B', on: { drive: false, chorus: false, delay: false, reverb: true, comp: false } },
+      { ch: 'C', on: { drive: false, chorus: false, delay: false, reverb: false, comp: false } },
+      { ch: 'C', on: { drive: true, chorus: false, delay: true, reverb: true, comp: false } },
+      { ch: 'A', on: { drive: false, chorus: true, delay: true, reverb: true, comp: true } },
+      { ch: 'D', on: { drive: true, chorus: false, delay: false, reverb: true, comp: false } },
+      { ch: 'B', on: { drive: true, chorus: false, delay: false, reverb: true, comp: false } },
+      { ch: 'A', on: { drive: false, chorus: false, delay: false, reverb: false, comp: false, amp: true } }
+    ][i];
+    this.setState((s) => ({ scene: i, activeAmpCh: S.ch, on: Object.assign({}, s.on, S.on) }));
+  }
+  renderVals() {
+    const st = this.state, t = st.tick, V = st.vals, G = (k, d) => this.get(k, d);
+    const ampModel = st.ampCh[st.activeAmpCh];
+    const AMP = {
+      plexi_1959: { l: 'Plexi 1959', name: 'BRIT PLEXI · 1959', ref: 'Ref.: Marshall 1959 Super Lead (1968–69) · sem master · 4× EL34', knobs: [['presence','Presence',5],['bass','Bass',5],['middle','Middle',6],['treble','Treble',6.5],['gain','Volume I',7],['volume_2','Volume II',4]], gain: 'gain', master: null, pwr: 'EL34', pre: 'ECC83' },
+      jcm800_2203: { l: '2203', name: 'BRIT 800 · 2203', ref: 'Ref.: Marshall JCM800 2203 (1981) · cascata + master · 4× EL34', knobs: [['presence','Presence',5.5],['bass','Bass',4],['middle','Middle',6.5],['treble','Treble',6],['master','Master Volume',3.5],['gain','Pre-amp Volume',7.5]], gain: 'gain', master: 'master', pwr: 'EL34', pre: 'ECC83' },
+      twin_ab763: { l: 'Twin', name: 'US TWIN · AB763', ref: 'Ref.: Fender Twin Reverb AB763 (1965) · 4× 6L6GC', knobs: [['v_volume','Volume',4],['v_treble','Treble',6.5],['v_middle','Middle',4.5],['v_bass','Bass',4],['v_reverb','Reverb',3],['v_speed','Speed',4],['v_intensity','Intensity',0]], gain: 'v_volume', master: null, pwr: '6L6GC', pre: '12AX7' },
+      dual_rect: { l: 'Recto', name: 'CALI RECTO · DUAL RECT', ref: 'Ref.: Mesa/Boogie Dual Rectifier Rev F · 4× 6L6GC', knobs: [['gain','Gain',7],['treble','Treble',6],['middle','Mid',4],['bass','Bass',6],['presence','Presence',5],['master','Master',3.5]], gain: 'gain', master: 'master', pwr: '6L6GC', pre: '12AX7' },
+      ac30_tb: { l: 'AC30 TB', name: 'UK 30 · TOP BOOST', ref: 'Ref.: Vox AC30/6 Top Boost · sem NFB · 4× EL84', knobs: [['gain','Volume',6],['treble','Treble',6],['bass','Bass',5],['cut','Cut',4],['vib_speed','Speed',3],['vib_depth','Depth',0]], gain: 'gain', master: null, pwr: 'EL84', pre: 'ECC83' }
+    };
+    const A = AMP[ampModel];
+    const mains = G(ampModel + '.mains', true), standby = G(ampModel + '.standby', false), live = mains && !standby && st.on.amp;
+    const gain = G(ampModel + '.' + A.gain, A.knobs.find((k) => k[0] === A.gain)[2]) / 10;
+    const mast = A.master ? G(ampModel + '.' + A.master, 3.5) / 10 : gain;
+
+    // meters
+    const env = Math.abs(Math.sin(t * 0.23)) * (0.55 + 0.45 * Math.abs(Math.sin(t * 0.071 + 1)));
+    const jit = (Math.sin(t * 2.7) + Math.sin(t * 1.3 + 2)) * 0.5;
+    const inLvl = Math.max(2, Math.min(19, Math.round(6 + env * 8 + jit)));
+    const outLvl = live ? Math.max(0, Math.min(20, Math.round(inLvl * (0.5 + 0.45 * gain) * (0.7 + 0.6 * mast)))) : 0;
+    const meter = (lvl) => Array.from({ length: 20 }, (_, i) => { const on = i < lvl; const c = i >= 17 ? '#ff3b2f' : (i >= 13 ? '#ffc400' : '#29c46a'); return { c: on ? c : '#1a1c1f', glow: on ? '0 0 4px ' + c : 'none' }; });
+
+    const names = ['Clean','Crunch','Rhythm','Solo','Ambient','Heavy','Blues','DI'];
+    const ids = ['A','B','C','D','E','F','G','H'];
+    const scenes = ids.map((id, i) => { const on = i === st.scene; return { id, name: names[i], on, pick: () => this.pickScene(i),
+      bg: on ? 'radial-gradient(circle at 50% 40%,#ffb26b,#e46d1f 70%)' : 'linear-gradient(180deg,#2b2f35,#16181c)', fg: on ? '#1a0b01' : '#c9ced4',
+      glow: on ? '0 0 12px rgba(255,138,61,.6),inset 0 1px 0 rgba(255,255,255,.4)' : 'inset 0 1px 0 rgba(255,255,255,.1)' }; });
+    const presets = ['P01 Twin Clean Sparkle', 'P02 Plexi Jumped Crunch', 'P03 Cali Dual Recto Modern Metal', 'P04 AC30 Top Boost Chime', 'P05 Ambient Tape Echo'];
+
+    const DRIVES = { ts808: ['808','Screamer 808','Ref.: Ibanez TS808',[['drive','Overdrive',3.5],['tone','Tone',6],['level','Level',8]],'130px,210px'],
+      klon: ['Klon','Golden Klone','Ref.: Klon Centaur',[['gain','Gain',3],['treble','Treble',5],['output','Output',6]],'128px,200px'],
+      rat: ['RAT','Rodent','Ref.: ProCo RAT',[['distortion','Distortion',6],['filter','Filter',4],['volume','Volume',5]],'116px,180px'],
+      muff: ['Muff','Big Fuzz π','Ref.: EHX Big Muff Pi',[['volume','Volume',6],['tone','Tone',5],['sustain','Sustain',7]],'160px,200px'],
+      fuzzface: ['Fuzz Face','Face Fuzz','Ref.: Dallas Arbiter Fuzz Face',[['volume','Volume',7],['fuzz','Fuzz',8],['bias','Bias',5]],'180px,180px'],
+      ds1: ['DS-1','DS-One','Ref.: Boss DS-1',[['level','Level',6],['tone','Tone',5],['dist','Dist',6]],'104px,184px'] };
+    const D = DRIVES[st.driveModel];
+    const CABS = { greenback_4x12: '4×12 Greenback', v30_4x12: '4×12 V30', alnico_blue_2x12: '2×12 Alnico Blue', twin_2x12_open: '2×12 aberto (Twin)' };
+
+    const tog = (k) => () => this.setState((s) => ({ on: Object.assign({}, s.on, { [k]: !s.on[k] }) }));
+    const pick = (k) => () => this.setState({ sel: k });
+    const cell = (key, col, row, cat, name, led, ch, h) => { const on = st.on[key] !== false; return { key, col, row, cat, name, ch, h: h || 52, selected: st.sel === key, pick: pick(key), bypass: tog(key),
+      op: on ? 1 : 0.45, led: on ? led : '#2a2f36', ledG: on ? '0 0 6px ' + led : 'none', catC: led }; };
+    const cells = [
+      Object.assign(cell('in', 1, 1, 'IN', 'Guitarra Hi-Z', '#3dd8ff', '—'), {}),
+      cell('gate', 2, 1, 'GATE', 'Noise Gate', '#00e676', 'A'),
+      cell('drive', 3, 1, 'DRIVE', D[1], '#ff9100', 'B'),
+      cell('split', 4, 1, 'SPLIT', st.splitMode === 'ab' ? 'Split A/B' : 'Crossover', '#3dd8ff', '—'),
+      cell('amp', 5, 1, 'AMP 1', AMP[ampModel].name.split(' · ')[0], '#ff5a1f', st.activeAmpCh),
+      cell('cab', 6, 1, 'CAB 1', CABS[st.cabModel], '#ffc400', 'A'),
+      cell('eq', 7, 1, 'EQ', st.eqMode === 'graphic_10_mxr' ? '10 Band EQ' : (st.eqMode === 'graphic_5_boogie' ? '5 Band Boogie' : 'Paramétrico 8'), '#1de9b6', 'A'),
+      cell('merge', 8, 1, 'MERGE', 'Mix A+B', '#3dd8ff', '—'),
+      cell('delay', 9, 1, 'DELAY', 'Tape Echo 201', '#00e5ff', 'B'),
+      cell('reverb', 10, 1, 'REVERB', 'Studio Plate', '#9b7bff', 'A'),
+      cell('out', 11, 1, 'OUT', 'Saída 1/2', '#3dd8ff', '—'),
+      cell('comp', 4, 2, 'COMP', 'FET 76', '#00b0ff', 'A', 46),
+      cell('amp2', 5, 2, 'AMP 2', 'US Twin', '#ff5a1f', 'A', 46),
+      cell('cab2', 6, 2, 'CAB 2', '2×12 Alnico', '#ffc400', 'A', 46),
+      cell('chorus', 7, 2, 'MOD', 'Chorus-2', '#9b7bff', 'A', 46)
+    ];
+
+    // tubes by amp
+    const big = { EL34: [36, 112, '17px 17px 7px 7px', 'linear-gradient(180deg,#5a4130,#2a1c12)'], '6L6GC': [34, 108, '12px 12px 6px 6px', 'linear-gradient(180deg,#2c2c2c,#0b0b0b)'], EL84: [24, 76, '11px 11px 4px 4px', 'linear-gradient(180deg,#2c2c2c,#0b0b0b)'] }[A.pwr];
+    const flick = (i) => (Math.sin(t * 1.9 + i * 1.7) + Math.sin(t * 0.7 + i)) * 0.04;
+    const tubes = ['V1','V2','V3','PI','V5','V6','V7','V8'].map((n, i) => { const p = i >= 4;
+      const base = !mains ? 0 : (p ? (standby ? 0.35 : 0.5 + 0.45 * mast + outLvl * 0.012) : 0.45 + 0.4 * gain);
+      const op = Math.max(0, Math.min(1, base + (mains ? flick(i) : 0)));
+      return p ? { n, w: big[0], h: big[1], r: big[2], bw: big[0] - 4, bh: 14, base: big[3], glowOp: op.toFixed(2), glowPx: (op * 13).toFixed(1) }
+               : { n, w: 22, h: 58, r: '10px 10px 4px 4px', bw: 20, bh: 8, base: 'linear-gradient(180deg,#2a2a2a,#0a0a0a)', glowOp: op.toFixed(2), glowPx: (op * 6).toFixed(1) }; });
+
+    // inspector
+    const P = (fk, label, def, lo, hi, fmt, step) => { const v = this.get(fk, def); return { label, v, lo, hi, pct: ((v - lo) / (hi - lo) * 100).toFixed(1), txt: fmt ? fmt(v) : v.toFixed(1), h: this.h(fk, def, lo, hi, step), mod: false, modL: 0, modW: 0 }; };
+    const knobP = (prefix, k) => P(prefix + '.' + k[0], k[1], k[2], 0, 10, null, 0.1);
+    const chips = (label, opts, cur, setter) => ({ label, items: opts.map(([v, l]) => ({ l, on: cur === v, pick: () => setter(v) })) });
+    const setS = (k) => (v) => this.setState({ [k]: v });
+    const sv = (fk) => (v) => this.setValFn()(fk, v);
+    let ins = { led: '#ff5a1f', name: '', ref: '', hasModels: false, models: [], params: [], hasOpts: false, opts: [], hasLink: false, link: '', linkTxt: '', status: '', statusC: '#9aa3ad', chNote: '', channels: [] };
+    const blk = st.sel;
+    const chList = (cur, note, onPick) => ['A','B','C','D'].map((c) => ({ l: c, on: cur === c, title: note ? note(c) : 'Canal ' + c, pick: () => onPick(c) }));
+    if (blk === 'amp') {
+      ins = Object.assign(ins, { name: A.name, ref: A.ref, hasModels: true,
+        models: Object.keys(AMP).map((m) => ({ l: AMP[m].l, on: m === ampModel, pick: () => this.setState((s) => ({ ampCh: Object.assign({}, s.ampCh, { [s.activeAmpCh]: m }) })) })),
+        channels: chList(st.activeAmpCh, (c) => 'Canal ' + c + ': ' + AMP[st.ampCh[c]].l, (c) => this.setState({ activeAmpCh: c })),
+        chNote: 'cada canal guarda um modelo',
+        params: A.knobs.map((k) => knobP(ampModel, k)).concat([P('modshop.sag', 'Sag da fonte', 3, 0, 10), P('modshop.nfb', 'Realim. (NFB)', ampModel === 'ac30_tb' ? 0 : 5, 0, 10)]),
+        status: live ? 'TOCANDO' : (mains ? 'STANDBY' : 'DESLIGADO'), statusC: live ? '#29c46a' : '#ff8a5a' });
+    } else if (blk === 'drive') {
+      ins = Object.assign(ins, { led: '#ff9100', name: D[1].toUpperCase(), ref: D[2] + ' · posição: antes do amp', hasModels: true,
+        models: Object.keys(DRIVES).map((m) => ({ l: DRIVES[m][0], on: m === st.driveModel, pick: () => this.setState({ driveModel: m }) })),
+        params: D[3].map((k) => knobP(st.driveModel, k)) });
+    } else if (blk === 'gate') {
+      const gr = st.on.gate ? (env < 0.12 ? -G('gate.range_db', -70) * -1 : 0) : 0;
+      ins = Object.assign(ins, { led: '#00e676', name: 'NOISE GATE', ref: 'Histerese, hold, range e key filter no detector (Spec 030)',
+        params: [P('gate.threshold_db','Threshold',-55,-90,0,(v) => v.toFixed(0) + ' dB',1), P('gate.hysteresis_db','Histerese',4,0,12,(v) => v.toFixed(1) + ' dB',0.5), P('gate.attack_ms','Attack',1,0.1,50,(v) => v.toFixed(1) + ' ms',0.1),
+          P('gate.hold_ms','Hold',35,0,500,(v) => v.toFixed(0) + ' ms',1), P('gate.release_ms','Release',80,5,1000,(v) => v.toFixed(0) + ' ms',1), P('gate.range_db','Range',-70,-90,0,(v) => v.toFixed(0) + ' dB',1),
+          P('gate.key_hpf_hz','Key HPF',80,20,500,(v) => v.toFixed(0) + ' Hz',1), P('gate.key_lpf_hz','Key LPF',6000,1000,12000,(v) => (v / 1000).toFixed(1) + ' kHz',100)],
+        hasOpts: true, opts: [chips('Modo', [['natural','Natural (DI)'],['classic','Classic']], G('gate.mode','natural'), sv('gate.mode'))],
+        status: env < 0.12 ? 'CLOSED · GR ' + G('gate.range_db', -70).toFixed(0) + ' dB' : (env < 0.2 ? 'HOLD' : 'OPEN · GR 0 dB'), statusC: env < 0.12 ? '#ff8a5a' : '#29c46a' });
+    } else if (blk === 'comp') {
+      ins = Object.assign(ins, { led: '#00b0ff', name: 'FET 76 · LINHA B', ref: 'Ref.: UREI 1176LN · attack/release 1–7 (7 = mais rápido)',
+        params: [knobP('comp1176', ['input','Input',6]), knobP('comp1176', ['output','Output',5]), P('comp1176.attack','Attack',3,1,7,null,0.1), P('comp1176.release','Release',5,1,7,null,0.1)],
+        hasOpts: true, opts: [chips('Ratio', [['4','4'],['8','8'],['12','12'],['20','20'],['all','ALL']], G('comp1176.ratio','4'), sv('comp1176.ratio'))] });
+    } else if (blk === 'chorus') {
+      ins = Object.assign(ins, { led: '#9b7bff', name: 'CHORUS-2 · LINHA B', ref: 'Ref.: Boss CE-2 · BBD', params: [knobP('ce2', ['rate','Rate',3]), knobP('ce2', ['depth','Depth',5]), P('mod_2.mix','Mix',50,0,100,(v) => v.toFixed(0) + ' %',1)] });
+    } else if (blk === 'eq') {
+      ins = Object.assign(ins, { led: '#1de9b6', name: 'EQUALIZADOR', ref: 'Modos da Spec 032: paramétrico 8 bandas, gráfico 5 (Boogie), gráfico 10 (MXR)',
+        hasOpts: true, opts: [chips('Modo', [['parametric_8','Param. 8'],['graphic_5_boogie','Boogie 5'],['graphic_10_mxr','MXR 10']], st.eqMode, setS('eqMode'))],
+        params: [P('mxr10.volume','Volume',5,0,10,(v) => ((v - 5) * 2.4).toFixed(1) + ' dB',0.1), P('mxr10.gain','Gain',5,0,10,(v) => ((v - 5) * 2.4).toFixed(1) + ' dB',0.1)].concat(['31','62','125','250','500','1k','2k','4k','8k','16k'].map((f, i) => P('mxr10.b' + (i + 1), f + ' Hz', 5, 0, 10, (v) => ((v - 5) * 2.4).toFixed(1) + ' dB', 0.1))).slice(0, 8) });
+    } else if (blk === 'delay') {
+      ins = Object.assign(ins, { led: '#00e5ff', name: 'TAPE ECHO 201', ref: 'Ref.: Roland RE-201 · Bass/Treble só nas repetições',
+        params: [knobP('re201', ['repeat_rate','Repeat rate',4.5]), knobP('re201', ['intensity','Intensity',5.5]), knobP('re201', ['echo_volume','Echo vol.',4]), knobP('re201', ['reverb_volume','Reverb vol.',3]), knobP('re201', ['bass','Bass',5]), knobP('re201', ['treble','Treble',5])],
+        hasOpts: true, opts: [chips('Modo', [[1,'1'],[2,'2'],[3,'3'],[4,'4'],[5,'5'],[6,'6'],[7,'7'],[8,'8'],[9,'9'],[10,'10'],[11,'R'],[12,'12']], G('re201.mode', 4), sv('re201.mode')), chips('Spillover', [[true,'Ligado'],[false,'Desligado']], G('re201.spillover', true), sv('re201.spillover'))] });
+    } else if (blk === 'reverb') {
+      ins = Object.assign(ins, { led: '#9b7bff', name: 'STUDIO PLATE', ref: 'Reverb de placa · decay 0,5–6 s',
+        params: [knobP('plate', ['decay','Decay',4]), knobP('plate', ['predelay','Pre-delay',2]), knobP('plate', ['damping','Damping',5]), knobP('plate', ['mix','Mix',3])],
+        hasOpts: true, opts: [chips('Spillover', [[true,'Ligado'],[false,'Desligado']], G('plate.spillover', true), sv('plate.spillover'))] });
+    } else if (blk === 'cab' || blk === 'cab2') {
+      ins = Object.assign(ins, { led: '#ffc400', name: blk === 'cab' ? 'CAB 1 · ' + CABS[st.cabModel] : 'CAB 2 · 2×12 Alnico', ref: 'Falante, 2 microfones, IR e curva de impedância acoplada ao amp', hasModels: blk === 'cab',
+        models: Object.keys(CABS).map((m) => ({ l: CABS[m], on: m === st.cabModel, pick: () => this.setState({ cabModel: m }) })),
+        params: [P('cab.lowcut','Low cut',80,20,500,(v) => v.toFixed(0) + ' Hz',1), P('cab.hicut','High cut',8000,2000,20000,(v) => (v / 1000).toFixed(1) + ' kHz',100)],
+        hasLink: true, link: 'Gabinete.dc.html', linkTxt: 'Abrir sala de microfonação ›' });
+    } else if (blk === 'split' || blk === 'merge') {
+      ins = Object.assign(ins, { led: '#3dd8ff', name: blk === 'split' ? 'SPLIT' : 'MERGE', ref: 'Linha B em paralelo: Comp → Amp 2 → Cab 2 → Chorus, volta antes do delay',
+        hasOpts: true, opts: [chips('Modo', [['ab','A/B'],['crossover','Crossover']], st.splitMode, setS('splitMode')), chips('Fase B', [[false,'Normal'],[true,'Invertida']], G('merge.phase', false), sv('merge.phase'))],
+        params: [P('split.crossover_hz','Crossover',500,100,2000,(v) => v.toFixed(0) + ' Hz',10), P('merge.row_1_level_db','Nível linha B',-6,-60,6,(v) => v.toFixed(1) + ' dB',0.5)] });
+    } else if (blk === 'amp2') {
+      ins = Object.assign(ins, { name: 'AMP 2 · US TWIN', ref: 'Amp limpo da linha B (Spec 024)', params: AMP.twin_ab763.knobs.slice(0, 4).map((k) => knobP('amp2', k)) });
+    } else {
+      ins = Object.assign(ins, { led: '#3dd8ff', name: blk === 'in' ? 'ENTRADA' : 'SAÍDA', ref: blk === 'in' ? 'Fonte do motor e boost de entrada (Spec 019)' : 'Saída estéreo com limitador 0 dBFS (Spec 016)',
+        params: blk === 'in' ? [P('input.boost','Boost',2.5,1,8,(v) => v.toFixed(1) + '×',0.1)] : [P('out.level','Nível',-3,-24,6,(v) => v.toFixed(1) + ' dB',0.5)],
+        hasOpts: blk === 'in', opts: blk === 'in' ? [chips('Fonte', [['device','Guitarra'],['test_riff','Riff teste'],['di_file','Arquivo DI']], G('input.source','device'), sv('input.source'))] : [],
+        hasLink: true, link: 'Audio.dc.html', linkTxt: blk === 'in' ? 'Calibrar entrada ›' : 'Configurações de áudio ›' });
+    }
+    if (!ins.channels.length) ins.channels = chList(G(blk + '.ch', 'A'), null, sv(blk + '.ch'));
+    const isOff = st.on[blk] === false;
+    ins.isOff = isOff; ins.state = isOff ? 'BYPASS' : 'ATIVO'; ins.bypass = tog(blk);
+    ins.hasOpts = ins.opts.length > 0;
+    if (st.mod.on && ins.params.length) { const p0 = ins.params[0]; p0.mod = true; p0.modL = 20; p0.modW = 60; }
+    const modTarget = ins.params.length ? ins.params[0].label : '—';
+
+    return {
+      menus: ['Arquivo','Editar','Exibir','Áudio','Ferramentas','Janela','Ajuda'],
+      bridgeC: '#29c46a', bridgeTxt: 'ok · 2 ms',
+      presetNo: presets[st.preset].slice(0, 3), presetName: presets[st.preset].slice(4).toUpperCase(),
+      prevPreset: () => this.setState((s) => ({ preset: (s.preset + presets.length - 1) % presets.length })),
+      nextPreset: () => this.setState((s) => ({ preset: (s.preset + 1) % presets.length })),
+      sceneId: ids[st.scene], sceneName: names[st.scene].toUpperCase(), scenes,
+      segIn: meter(inLvl), segOut: meter(outLvl),
+      cpu: (12 + Object.values(st.on).filter(Boolean).length * 1.4 + ({ '2x': 0, '4x': 4, '8x': 11 })[st.os] + gain * 2).toFixed(1),
+      cpuC: '#29c46a', osTxt: st.os,
+      osOpts: ['2x','4x','8x'].map((o) => ({ l: o, on: st.os === o, pick: () => this.setState({ os: o }) })),
+      bpm: 120, tapOp: (t % 6) < 2 ? 1 : 0.45, tap: () => {},
+      cells, ampModel, vals: V, setVal: this.setValFn(),
+      on: st.on, tg: { gate: tog('gate'), drive: tog('drive'), chorus: tog('chorus'), eq: tog('eq'), comp: tog('comp'), delay: tog('delay'), reverb: tog('reverb') },
+      driveModel: st.driveModel, driveHint: D[4],
+      tubes, tubeSet: A.pre + ' · 4× ' + A.pwr,
+      bplus: !mains ? 0 : Math.round(standby ? 485 : 468 - outLvl * 0.9 - G('modshop.sag', 3) * 1.4),
+      chassisGlow: !mains ? 0 : (0.12 + 0.2 * mast).toFixed(2), stageGlow: mains ? 0.16 : 0.03,
+      ins, modTarget, modOn: st.mod.on, modOnTxt: st.mod.on ? 'ATIVO' : 'DESLIGADO',
+      toggleMod: () => this.setState((s) => ({ mod: Object.assign({}, s.mod, { on: !s.mod.on }) })),
+      modSources: ['EXP 1','EXP 2','LFO 1','ENV','MIDI CC'].map((l) => ({ l, on: st.mod.src === l, pick: () => this.setState((s) => ({ mod: Object.assign({}, s.mod, { src: l }) })) })),
+      modDesc: st.mod.on ? st.mod.src + ' → faixa 20–80 % · curva 0.50 · damping 40 ms' : 'clique direito num knob para atribuir',
+      engineLed: mains ? '#29c46a' : '#ff3b2f', engineTxt: mains ? (standby ? 'Standby' : 'Motor ativo') : 'Amp desligado',
+      gateState: env < 0.12 ? 'fechado' : 'aberto', peak: (-60 + inLvl * 2.6).toFixed(1)
+    };
+  }
+}
+</script>
+</body>
+</html>

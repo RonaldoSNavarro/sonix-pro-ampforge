@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>AMPFORGE — pedais e estúdio</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Oswald:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width:1440px;height:1400px;box-sizing:border-box;padding:36px 50px;display:flex;flex-direction:column;gap:26px;color:#e8eaed;font-family:Inter,'Segoe UI',sans-serif;background:radial-gradient(ellipse at 40% 0%,rgba(255,170,90,.1) 0%,transparent 45%),linear-gradient(180deg,#141518,#0a0b0c)">
+<div style="display:flex;flex-direction:column;gap:6px">
+<span style="font-family:Oswald,sans-serif;font-size:30px;font-weight:600;letter-spacing:.06em">PEDAIS E EQUIPAMENTOS DE ESTÚDIO</span>
+<span style="font-size:13px;color:#a3abb4">Formato, cor e disposição dos controles inspirados nas versões originais (Specs 023, 024, 030 e 032). Footswitch liga/desliga; knobs e sliders funcionam.</span>
+</div>
+
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="2">
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#a3abb4;font-weight:700">{{r.title}}</span>
+<div style="border-radius:12px;padding:26px 30px 22px;display:flex;align-items:flex-start;gap:36px;background:radial-gradient(circle at 1px 1px,rgba(255,255,255,.05) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#151618,#0d0e0f);box-shadow:0 0 0 1px #000,inset 0 2px 0 rgba(255,255,255,.04);border-bottom:10px solid #43474c">
+<sc-for list="{{r.items}}" as="p" hint-placeholder-count="6">
+<div style="display:flex;flex-direction:column;align-items:center;gap:12px;width:{{p.colW}}px">
+<div style="height:212px;display:flex;align-items:flex-end"><dc-import name="Pedal" model="{{p.id}}" hint-size="{{p.hint}}"></dc-import></div>
+<div style="display:flex;flex-direction:column;gap:3px;align-items:center;text-align:center">
+<span style="font-family:Oswald,sans-serif;font-size:14px;font-weight:600;letter-spacing:.06em">{{p.name}}</span>
+<span style="font-size:11px;color:#ffb978">{{p.ref}}</span>
+<span style="font-size:11px;color:#a3abb4;line-height:1.4">{{p.note}}</span>
+</div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-for>
+
+<div style="display:flex;flex-direction:column;gap:12px">
+<span style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#a3abb4;font-weight:700">Rack e mesa — loop de efeitos / pós-amp</span>
+<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 40px;padding:24px 30px;border-radius:12px;background:linear-gradient(180deg,#121315,#0b0c0d);box-shadow:0 0 0 1px #000">
+<div style="display:flex;flex-direction:column;gap:10px"><dc-import name="Rack" model="comp1176" hint-size="560px,130px"></dc-import><span style="font-size:11px;color:#a3abb4"><b style="color:#ffb978">Ref.: UREI 1176LN</b> · Attack/Release 1–7 (7 = mais rápido) · ratios 4/8/12/20 e ALL (todos os botões) · Output com make-up real.</span></div>
+<div style="display:flex;flex-direction:column;gap:10px"><dc-import name="Rack" model="plate" hint-size="560px,110px"></dc-import><span style="font-size:11px;color:#a3abb4"><b style="color:#ffb978">Reverb de placa</b> · decay 0,5–6 s · pre-delay 0–150 ms · damping · mix · spillover mantém a cauda ao trocar de cena.</span></div>
+<div style="display:flex;flex-direction:column;gap:10px;grid-column:span 2"><dc-import name="Rack" model="re201" hint-size="560px,190px"></dc-import><span style="font-size:11px;color:#a3abb4"><b style="color:#ffb978">Ref.: Roland RE-201 Space Echo</b> · seletor de 12 modos (cabeças 1/2/3, combinações e reverb de mola) · Bass/Treble só nas repetições · Intensity acima de 8,5 entra em auto-oscilação (PEAK acende).</span></div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1400}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const P = (id, w, h, name, ref, note) => ({ id, name, ref, note, colW: Math.max(150, w + 20), hint: w + 'px,' + h + 'px' });
+    return { rows: [
+      { title: 'Drive / fuzz — antes do amp', items: [
+        P('ts808', 130, 210, 'SCREAMER 808', 'Ref.: Ibanez TS808', 'Overdrive · Tone · Level'),
+        P('klon', 128, 200, 'GOLDEN KLONE', 'Ref.: Klon Centaur', 'Gain (blend limpo) · Treble · Output'),
+        P('rat', 116, 180, 'RODENT', 'Ref.: ProCo RAT', 'Distortion · Filter (horário = mais escuro) · Volume'),
+        P('muff', 160, 200, 'BIG FUZZ π', 'Ref.: EHX Big Muff Pi', 'Volume · Tone (notch de médios) · Sustain'),
+        P('fuzzface', 180, 180, 'FACE FUZZ', 'Ref.: Dallas Arbiter Fuzz Face', 'Volume · Fuzz · Bias (trim)'),
+        P('ds1', 104, 184, 'DS-ONE', 'Ref.: Boss DS-1', 'Level · Tone · Dist') ] },
+      { title: 'Dinâmica, modulação e EQ', items: [
+        P('ns2', 104, 184, 'GATE-2', 'Noise gate (Spec 030)', 'Threshold · Decay · Mode — histerese, hold, range e key filter no editor'),
+        P('ce2', 104, 184, 'CHORUS-2', 'Ref.: Boss CE-2', 'Rate · Depth (chorus BBD)'),
+        P('mxr10', 232, 150, '10 BAND EQ', 'Ref.: MXR M108', '31 Hz–16 kHz ±12 dB · Volume · Gain') ] }
+    ] };
+  }
+}
+</script>
+</body>
+</html>

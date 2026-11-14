@@ -11,6 +11,9 @@ const state = {
   chassisOpen: false,
   hardwareShellMode: false,
   tunerVisible: false,
+  tunerOutputMode: 'mute',
+  calibRunning: false,
+  calibTimer: null,
   testRiffPlaying: false,
   scopeMode: 'waveform', // 'waveform' | 'transfer' | 'tonestack'
 
@@ -85,15 +88,94 @@ const state = {
 };
 
 const KNOB_DEFINITIONS = [
-  { key: 'inputGain', label: 'INPUT GAIN', min: 0, max: 10, defaultVal: 7.4, hasModifier: true },
-  { key: 'overdrive', label: 'OVERDRIVE', min: 0, max: 10, defaultVal: 6.8, hasModifier: false },
-  { key: 'bass', label: 'BASS', min: 0, max: 10, defaultVal: 6.2, hasModifier: false },
-  { key: 'middle', label: 'MIDDLE', min: 0, max: 10, defaultVal: 7.8, hasModifier: false },
-  { key: 'treble', label: 'TREBLE', min: 0, max: 10, defaultVal: 6.5, hasModifier: false },
-  { key: 'presence', label: 'PRESENCE', min: 0, max: 10, defaultVal: 5.9, hasModifier: false },
-  { key: 'depth', label: 'DEPTH / RES', min: 0, max: 10, defaultVal: 6.4, hasModifier: false },
-  { key: 'masterVol', label: 'MASTER VOL', min: 0, max: 10, defaultVal: 4.5, hasModifier: false },
+  { key: 'inputGain', param: 'amp_1.gain', label: 'INPUT GAIN', min: 0, max: 10, defaultVal: 7.4, hasModifier: true },
+  { key: 'overdrive', param: 'amp_1.overdrive', label: 'OVERDRIVE', min: 0, max: 10, defaultVal: 6.8, hasModifier: false },
+  { key: 'bass', param: 'amp_1.bass', label: 'BASS', min: 0, max: 10, defaultVal: 6.2, hasModifier: false },
+  { key: 'middle', param: 'amp_1.middle', label: 'MIDDLE', min: 0, max: 10, defaultVal: 7.8, hasModifier: false },
+  { key: 'treble', param: 'amp_1.treble', label: 'TREBLE', min: 0, max: 10, defaultVal: 6.5, hasModifier: false },
+  { key: 'presence', param: 'amp_1.presence', label: 'PRESENCE', min: 0, max: 10, defaultVal: 5.9, hasModifier: false },
+  { key: 'depth', param: 'amp_1.depth', label: 'DEPTH / RES', min: 0, max: 10, defaultVal: 6.4, hasModifier: false },
+  { key: 'masterVol', param: 'amp_1.master', label: 'MASTER VOL', min: 0, max: 10, defaultVal: 4.5, hasModifier: false },
 ];
+
+const AMP_MODEL_KNOBS = {
+  jcm800_2203: [
+    { key: 'inputGain', param: 'amp_1.gain', label: 'PREAMP GAIN', min: 0, max: 10, defaultVal: 7.4, hasModifier: true },
+    { key: 'overdrive', param: 'amp_1.overdrive', label: 'MASTER BOOST', min: 0, max: 10, defaultVal: 6.8, hasModifier: false },
+    { key: 'bass', param: 'amp_1.bass', label: 'BASS', min: 0, max: 10, defaultVal: 6.2, hasModifier: false },
+    { key: 'middle', param: 'amp_1.middle', label: 'MIDDLE', min: 0, max: 10, defaultVal: 7.8, hasModifier: false },
+    { key: 'treble', param: 'amp_1.treble', label: 'TREBLE', min: 0, max: 10, defaultVal: 6.5, hasModifier: false },
+    { key: 'presence', param: 'amp_1.presence', label: 'PRESENCE', min: 0, max: 10, defaultVal: 5.9, hasModifier: false },
+    { key: 'depth', param: 'amp_1.depth', label: 'RESONANCE', min: 0, max: 10, defaultVal: 6.4, hasModifier: false },
+    { key: 'masterVol', param: 'amp_1.master', label: 'MASTER VOL', min: 0, max: 10, defaultVal: 4.5, hasModifier: false },
+  ],
+  plexi_1959: [
+    { key: 'inputGain', param: 'amp_1.gain', label: 'VOL 1 (HIGH)', min: 0, max: 10, defaultVal: 7.0, hasModifier: true },
+    { key: 'volume_2', param: 'amp_1.volume_2', label: 'VOL 2 (NORM)', min: 0, max: 10, defaultVal: 5.0, hasModifier: false },
+    { key: 'bass', param: 'amp_1.bass', label: 'BASS', min: 0, max: 10, defaultVal: 6.0, hasModifier: false },
+    { key: 'middle', param: 'amp_1.middle', label: 'MIDDLE', min: 0, max: 10, defaultVal: 7.0, hasModifier: false },
+    { key: 'treble', param: 'amp_1.treble', label: 'TREBLE', min: 0, max: 10, defaultVal: 6.5, hasModifier: false },
+    { key: 'presence', param: 'amp_1.presence', label: 'PRESENCE', min: 0, max: 10, defaultVal: 6.0, hasModifier: false },
+    { key: 'depth', param: 'amp_1.depth', label: 'DEPTH / RES', min: 0, max: 10, defaultVal: 5.0, hasModifier: false },
+  ],
+  ac30_tb: [
+    { key: 'inputGain', param: 'amp_1.gain', label: 'BRILLIANT VOL', min: 0, max: 10, defaultVal: 6.5, hasModifier: true },
+    { key: 'treble', param: 'amp_1.treble', label: 'TREBLE', min: 0, max: 10, defaultVal: 6.0, hasModifier: false },
+    { key: 'bass', param: 'amp_1.bass', label: 'BASS', min: 0, max: 10, defaultVal: 5.5, hasModifier: false },
+    { key: 'cut', param: 'amp_1.cut', label: 'TONE CUT', min: 0, max: 10, defaultVal: 4.5, hasModifier: false },
+    { key: 'presence', param: 'amp_1.presence', label: 'TOP BOOST', min: 0, max: 10, defaultVal: 6.0, hasModifier: false },
+    { key: 'masterVol', param: 'amp_1.master', label: 'MASTER VOL', min: 0, max: 10, defaultVal: 7.0, hasModifier: false },
+  ],
+  twin_ab763: [
+    { key: 'inputGain', param: 'amp_1.gain', label: 'VOLUME', min: 0, max: 10, defaultVal: 5.0, hasModifier: true },
+    { key: 'treble', param: 'amp_1.treble', label: 'TREBLE', min: 0, max: 10, defaultVal: 6.0, hasModifier: false },
+    { key: 'middle', param: 'amp_1.middle', label: 'MIDDLE', min: 0, max: 10, defaultVal: 6.5, hasModifier: false },
+    { key: 'bass', param: 'amp_1.bass', label: 'BASS', min: 0, max: 10, defaultVal: 5.5, hasModifier: false },
+    { key: 'presence', param: 'amp_1.presence', label: 'PRESENCE', min: 0, max: 10, defaultVal: 5.0, hasModifier: false },
+    { key: 'depth', param: 'amp_1.depth', label: 'RESONANCE', min: 0, max: 10, defaultVal: 4.0, hasModifier: false },
+  ],
+  dual_rect: [
+    { key: 'inputGain', param: 'amp_1.gain', label: 'GAIN', min: 0, max: 10, defaultVal: 8.0, hasModifier: true },
+    { key: 'overdrive', param: 'amp_1.overdrive', label: 'LEAD DRIVE', min: 0, max: 10, defaultVal: 7.5, hasModifier: false },
+    { key: 'bass', param: 'amp_1.bass', label: 'BASS', min: 0, max: 10, defaultVal: 7.0, hasModifier: false },
+    { key: 'middle', param: 'amp_1.middle', label: 'MIDDLE', min: 0, max: 10, defaultVal: 4.5, hasModifier: false },
+    { key: 'treble', param: 'amp_1.treble', label: 'TREBLE', min: 0, max: 10, defaultVal: 6.8, hasModifier: false },
+    { key: 'presence', param: 'amp_1.presence', label: 'PRESENCE', min: 0, max: 10, defaultVal: 6.0, hasModifier: false },
+    { key: 'depth', param: 'amp_1.depth', label: 'RESONANCE', min: 0, max: 10, defaultVal: 7.2, hasModifier: false },
+    { key: 'masterVol', param: 'amp_1.master', label: 'MASTER VOL', min: 0, max: 10, defaultVal: 5.0, hasModifier: false },
+  ],
+};
+
+function getActiveKnobDefinitions() {
+  const model = state.currentAmpModel || document.getElementById('ampModelSelect')?.value || 'jcm800_2203';
+  return AMP_MODEL_KNOBS[model] || KNOB_DEFINITIONS;
+}
+
+const KNOB_PARAM_MAP = {
+  inputGain: 'amp_1.gain',
+  overdrive: 'amp_1.overdrive',
+  bass: 'amp_1.bass',
+  middle: 'amp_1.middle',
+  treble: 'amp_1.treble',
+  presence: 'amp_1.presence',
+  depth: 'amp_1.depth',
+  masterVol: 'amp_1.master',
+  volume_2: 'amp_1.volume_2',
+  cut: 'amp_1.cut',
+};
+
+function setApiError(isError, msg = 'OFFLINE') {
+  const badge = document.getElementById('engineLinkBadge');
+  if (badge) {
+    if (isError) {
+      badge.textContent = msg;
+      badge.style.color = '#ff3d00';
+    } else {
+      badge.textContent = 'ONLINE';
+      badge.style.color = '#00e5ff';
+    }
+  }
+}
 
 let pendingParams = {};
 let syncTimeout = null;
@@ -115,7 +197,7 @@ async function flushParams() {
   syncTimeout = null;
   const token = window.__SONIX_TOKEN__ || document.querySelector('meta[name="sonix-token"]')?.content || '';
   try {
-    await fetch('/api/params', {
+    const res = await fetch('/api/params', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -123,7 +205,14 @@ async function flushParams() {
       },
       body: JSON.stringify(payload),
     });
-  } catch (_) {}
+    if (!res.ok) {
+      setApiError(true, `HTTP ${res.status}`);
+    } else {
+      setApiError(false);
+    }
+  } catch (_) {
+    setApiError(true, 'OFFLINE');
+  }
 }
 
 async function loadInitialState() {
@@ -229,7 +318,7 @@ function renderSignalGrid() {
           updateCpuBudget();
           renderSignalGrid();
           renderFootswitches();
-          if (block.id === 'blk_drive') {
+          if (block.id === 'blk_drive' || block.cat === 'DRIVE' || block.category === 'DRIVE' || (block.id && block.id.includes('drive'))) {
             syncParamsToBackend({ 'drive.enabled': !block.bypassed }, false);
           }
         });
@@ -276,7 +365,14 @@ function openBlockEditor(block) {
 
   panel.style.display = 'block';
 
-  if (block.id === 'blk_drive') {
+  if (!block || !block.id) {
+    if (title) title.textContent = 'BLOCO SELECIONADO';
+    if (badge) badge.textContent = 'DESCONHECIDO';
+    body.innerHTML = '<div class="block-editor-empty">sem controles nesta versão</div>';
+    return;
+  }
+
+  if (block.id === 'blk_drive' || block.cat === 'DRIVE' || block.category === 'DRIVE' || (block.id && block.id.includes('drive'))) {
     if (title) title.textContent = `PEDAL: ${block.name.toUpperCase()} (DRIVE)`;
     if (badge) badge.textContent = 'INSPIRADO NO CIRCUITO 808';
 
@@ -322,30 +418,604 @@ function openBlockEditor(block) {
       state.params['drive.level'] = v;
       syncParamsToBackend({ 'drive.level': v }, false);
     });
+  } else if (block.id === 'blk_gate' || block.cat === 'GATE') {
+    if (title) title.textContent = `NOISE GATE: ${block.name.toUpperCase()}`;
+    if (badge) badge.textContent = 'DYNAMICS // HYSTERESIS + KEY FILTER';
+
+    const thresh = state.params['gate.threshold_db'] !== undefined ? state.params['gate.threshold_db'] : -65.0;
+    const enabled = state.params['gate.enabled'] !== undefined ? state.params['gate.enabled'] : !block.bypassed;
+    const mode = state.params['gate.mode'] || 'natural';
+    const hyst = state.params['gate.hysteresis_db'] !== undefined ? state.params['gate.hysteresis_db'] : 4.0;
+    const att = state.params['gate.attack_ms'] !== undefined ? state.params['gate.attack_ms'] : 1.0;
+    const hold = state.params['gate.hold_ms'] !== undefined ? state.params['gate.hold_ms'] : 35.0;
+    const rel = state.params['gate.release_ms'] !== undefined ? state.params['gate.release_ms'] : 80.0;
+    const range = state.params['gate.range_db'] !== undefined ? state.params['gate.range_db'] : -70.0;
+    const hpf = state.params['gate.key_hpf_hz'] !== undefined ? state.params['gate.key_hpf_hz'] : 80.0;
+    const lpf = state.params['gate.key_lpf_hz'] !== undefined ? state.params['gate.key_lpf_hz'] : 6000.0;
+    const gateStatusLabel = `${state.liveGateState || 'CLOSED'} // GR ${(state.liveGateGrDb ?? -70.0).toFixed(1)} dB`;
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid">
+        <div class="pedal-knob-box">
+          <label>THRESHOLD</label>
+          <input type="range" id="gateThreshSlider" min="-90" max="0" step="1" value="${thresh}">
+          <span class="pedal-val" id="gateThreshVal">${Number(thresh).toFixed(0)} dB</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>HYSTERESIS</label>
+          <input type="range" id="gateHysteresisSlider" min="0" max="12" step="0.5" value="${hyst}">
+          <span class="pedal-val" id="gateHysteresisVal">${Number(hyst).toFixed(1)} dB</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>ATTACK</label>
+          <input type="range" id="gateAttackSlider" min="0.1" max="50" step="0.1" value="${att}">
+          <span class="pedal-val" id="gateAttackVal">${Number(att).toFixed(1)} ms</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>HOLD</label>
+          <input type="range" id="gateHoldSlider" min="0" max="500" step="5" value="${hold}">
+          <span class="pedal-val" id="gateHoldVal">${Number(hold).toFixed(0)} ms</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>RELEASE / DECAY</label>
+          <input type="range" id="gateReleaseSlider" min="5" max="1000" step="5" value="${rel}">
+          <span class="pedal-val" id="gateReleaseVal">${Number(rel).toFixed(0)} ms</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>RANGE</label>
+          <input type="range" id="gateRangeSlider" min="-90" max="0" step="1" value="${range}">
+          <span class="pedal-val" id="gateRangeVal">${Number(range).toFixed(0)} dB</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>KEY HPF</label>
+          <input type="range" id="gateKeyHpfSlider" min="20" max="500" step="5" value="${hpf}">
+          <span class="pedal-val" id="gateKeyHpfVal">${Number(hpf).toFixed(0)} Hz</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>KEY LPF</label>
+          <input type="range" id="gateKeyLpfSlider" min="1000" max="12000" step="100" value="${lpf}">
+          <span class="pedal-val" id="gateKeyLpfVal">${Number(lpf).toFixed(0)} Hz</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>MODE</label>
+          <select id="gateModeSelect" class="hw-select" style="margin-top:6px;">
+            <option value="natural" ${mode === 'natural' ? 'selected' : ''}>Natural DI Sidechain</option>
+            <option value="classic" ${mode === 'classic' ? 'selected' : ''}>Classic Expander</option>
+          </select>
+        </div>
+        <div class="pedal-knob-box">
+          <label>BYPASS / TELEMETRIA</label>
+          <button class="hw-btn" id="btnGateToggle" style="margin-top:6px;">${enabled ? 'ATIVO' : 'BYPASS'}</button>
+          <span class="pedal-val" id="gateStatusBadge">${gateStatusLabel}</span>
+        </div>
+      </div>
+    `;
+
+    const bindGateSlider = (sliderId, valId, paramKey, formatFn) => {
+      document.getElementById(sliderId)?.addEventListener('input', (e) => {
+        const v = Number(e.target.value);
+        const valEl = document.getElementById(valId);
+        if (valEl) valEl.textContent = formatFn(v);
+        state.params[paramKey] = v;
+        syncParamsToBackend({ [paramKey]: v }, false);
+      });
+    };
+
+    bindGateSlider('gateThreshSlider', 'gateThreshVal', 'gate.threshold_db', (v) => `${v.toFixed(0)} dB`);
+    bindGateSlider('gateHysteresisSlider', 'gateHysteresisVal', 'gate.hysteresis_db', (v) => `${v.toFixed(1)} dB`);
+    bindGateSlider('gateAttackSlider', 'gateAttackVal', 'gate.attack_ms', (v) => `${v.toFixed(1)} ms`);
+    bindGateSlider('gateHoldSlider', 'gateHoldVal', 'gate.hold_ms', (v) => `${v.toFixed(0)} ms`);
+    bindGateSlider('gateReleaseSlider', 'gateReleaseVal', 'gate.release_ms', (v) => `${v.toFixed(0)} ms`);
+    bindGateSlider('gateRangeSlider', 'gateRangeVal', 'gate.range_db', (v) => `${v.toFixed(0)} dB`);
+    bindGateSlider('gateKeyHpfSlider', 'gateKeyHpfVal', 'gate.key_hpf_hz', (v) => `${v.toFixed(0)} Hz`);
+    bindGateSlider('gateKeyLpfSlider', 'gateKeyLpfVal', 'gate.key_lpf_hz', (v) => `${v.toFixed(0)} Hz`);
+
+    document.getElementById('gateModeSelect')?.addEventListener('change', (e) => {
+      const m = e.target.value === 'classic' ? 'classic' : 'natural';
+      state.params['gate.mode'] = m;
+      syncParamsToBackend({ 'gate.mode': m }, true);
+    });
+    document.getElementById('btnGateToggle')?.addEventListener('click', (e) => {
+      const next = !(state.params['gate.enabled'] !== undefined ? state.params['gate.enabled'] : true);
+      state.params['gate.enabled'] = next;
+      e.target.textContent = next ? 'ATIVO' : 'BYPASS';
+      syncParamsToBackend({ 'gate.enabled': next }, true);
+    });
   } else if (block.id === 'blk_comp_2' || block.cat === 'COMP') {
     if (title) title.textContent = 'COMPRESSOR: FET 1176 (comp_2)';
     if (badge) badge.textContent = 'STUDIO LIMITER';
-    body.innerHTML = '<div class="block-editor-content">Controles comp_2: input, output, attack, release, ratio</div>';
+
+    const inVal = state.params['comp_2.input'] !== undefined ? state.params['comp_2.input'] : 5.0;
+    const outVal = state.params['comp_2.output'] !== undefined ? state.params['comp_2.output'] : 5.0;
+    const attVal = state.params['comp_2.attack'] !== undefined ? state.params['comp_2.attack'] : 4.0;
+    const relVal = state.params['comp_2.release'] !== undefined ? state.params['comp_2.release'] : 4.0;
+    const ratioVal = state.params['comp_2.ratio'] || '4:1';
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="pedal-knob-box">
+          <label>INPUT</label>
+          <input type="range" id="compInSlider" min="0" max="10" step="0.1" value="${inVal}">
+          <span class="pedal-val" id="compInVal">${Number(inVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>OUTPUT</label>
+          <input type="range" id="compOutSlider" min="0" max="10" step="0.1" value="${outVal}">
+          <span class="pedal-val" id="compOutVal">${Number(outVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>ATTACK</label>
+          <input type="range" id="compAttSlider" min="1" max="7" step="0.1" value="${attVal}">
+          <span class="pedal-val" id="compAttVal">${Number(attVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>RELEASE</label>
+          <input type="range" id="compRelSlider" min="1" max="7" step="0.1" value="${relVal}">
+          <span class="pedal-val" id="compRelVal">${Number(relVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>RATIO</label>
+          <select id="compRatioSelect" class="tech-select" style="margin-top:6px; font-size:11px;">
+            <option value="4:1" ${ratioVal === '4:1' ? 'selected' : ''}>4:1</option>
+            <option value="8:1" ${ratioVal === '8:1' ? 'selected' : ''}>8:1</option>
+            <option value="12:1" ${ratioVal === '12:1' ? 'selected' : ''}>12:1</option>
+            <option value="20:1" ${ratioVal === '20:1' ? 'selected' : ''}>20:1</option>
+            <option value="all" ${ratioVal === 'all' ? 'selected' : ''}>ALL (BRITISH)</option>
+          </select>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('compInSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('compInVal').textContent = v.toFixed(1);
+      state.params['comp_2.input'] = v;
+      syncParamsToBackend({ 'comp_2.input': v }, false);
+    });
+    document.getElementById('compOutSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('compOutVal').textContent = v.toFixed(1);
+      state.params['comp_2.output'] = v;
+      syncParamsToBackend({ 'comp_2.output': v }, false);
+    });
+    document.getElementById('compAttSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('compAttVal').textContent = v.toFixed(1);
+      state.params['comp_2.attack'] = v;
+      syncParamsToBackend({ 'comp_2.attack': v }, false);
+    });
+    document.getElementById('compRelSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('compRelVal').textContent = v.toFixed(1);
+      state.params['comp_2.release'] = v;
+      syncParamsToBackend({ 'comp_2.release': v }, false);
+    });
+    document.getElementById('compRatioSelect')?.addEventListener('change', (e) => {
+      state.params['comp_2.ratio'] = e.target.value;
+      syncParamsToBackend({ 'comp_2.ratio': e.target.value }, true);
+    });
   } else if (block.id === 'blk_eq_1' || block.cat === 'EQ') {
     if (title) title.textContent = 'EQUALIZADOR: 8-BAND (eq_1)';
-    if (badge) badge.textContent = 'PARAMETRIC';
-    body.innerHTML = '<div class="block-editor-content">Controles eq_1: 8 bandas paramétricas</div>';
+    if (badge) badge.textContent = 'PARAMETRIC EQ';
+
+    const defaultFreqs = [80, 160, 320, 640, 1250, 2500, 5000, 10000];
+    let bandsHtml = '<div class="pedal-controls-grid" style="grid-template-columns: repeat(8, 1fr); gap:6px;">';
+    for (let b = 1; b <= 8; b++) {
+      const g = state.params[`eq_1.band${b}.gain_db`] !== undefined ? state.params[`eq_1.band${b}.gain_db`] : 0.0;
+      bandsHtml += `
+        <div class="pedal-knob-box" style="padding:4px;">
+          <label style="font-size:9px;">B${b} (${defaultFreqs[b-1]}Hz)</label>
+          <input type="range" id="eqBand${b}Slider" min="-15" max="15" step="0.5" value="${g}" style="width:100%;">
+          <span class="pedal-val" id="eqBand${b}Val" style="font-size:10px;">${Number(g).toFixed(1)} dB</span>
+        </div>
+      `;
+    }
+    bandsHtml += '</div>';
+    body.innerHTML = bandsHtml;
+
+    for (let b = 1; b <= 8; b++) {
+      document.getElementById(`eqBand${b}Slider`)?.addEventListener('input', (e) => {
+        const v = Number(e.target.value);
+        document.getElementById(`eqBand${b}Val`).textContent = `${v.toFixed(1)} dB`;
+        state.params[`eq_1.band${b}.gain_db`] = v;
+        syncParamsToBackend({ [`eq_1.band${b}.gain_db`]: v }, false);
+      });
+    }
   } else if (block.id === 'blk_mod_2' || block.cat === 'MOD') {
     if (title) title.textContent = 'MODULAÇÃO: TRI-CHORUS (mod_2)';
     if (badge) badge.textContent = 'CHORUS BBD';
-    body.innerHTML = '<div class="block-editor-content">Controles mod_2: rate_hz, depth, mix</div>';
+
+    const rateVal = state.params['mod_2.rate_hz'] !== undefined ? state.params['mod_2.rate_hz'] : 1.2;
+    const depthVal = state.params['mod_2.depth'] !== undefined ? state.params['mod_2.depth'] : 5.0;
+    const mixVal = state.params['mod_2.mix'] !== undefined ? state.params['mod_2.mix'] : 50.0;
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid">
+        <div class="pedal-knob-box">
+          <label>RATE (SPEED)</label>
+          <input type="range" id="modRateSlider" min="0.1" max="10.0" step="0.1" value="${rateVal}">
+          <span class="pedal-val" id="modRateVal">${Number(rateVal).toFixed(1)} Hz</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>DEPTH</label>
+          <input type="range" id="modDepthSlider" min="0" max="10" step="0.1" value="${depthVal}">
+          <span class="pedal-val" id="modDepthVal">${Number(depthVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>MIX</label>
+          <input type="range" id="modMixSlider" min="0" max="100" step="1" value="${mixVal}">
+          <span class="pedal-val" id="modMixVal">${Number(mixVal).toFixed(0)}%</span>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('modRateSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('modRateVal').textContent = `${v.toFixed(1)} Hz`;
+      state.params['mod_2.rate_hz'] = v;
+      syncParamsToBackend({ 'mod_2.rate_hz': v }, false);
+    });
+    document.getElementById('modDepthSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('modDepthVal').textContent = v.toFixed(1);
+      state.params['mod_2.depth'] = v;
+      syncParamsToBackend({ 'mod_2.depth': v }, false);
+    });
+    document.getElementById('modMixSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('modMixVal').textContent = `${v.toFixed(0)}%`;
+      state.params['mod_2.mix'] = v;
+      syncParamsToBackend({ 'mod_2.mix': v }, false);
+    });
   } else if (block.id === 'blk_dly_1' || block.cat === 'DELAY') {
     if (title) title.textContent = 'DELAY: TAPE ECHO (dly_1)';
     if (badge) badge.textContent = 'TAPE 201';
-    body.innerHTML = '<div class="block-editor-content">Controles dly_1: heads, repeat_rate, intensity, echo_volume, spillover</div>';
+
+    const repVal = state.params['dly_1.repeat_rate'] !== undefined ? state.params['dly_1.repeat_rate'] : 5.0;
+    const intVal = state.params['dly_1.intensity'] !== undefined ? state.params['dly_1.intensity'] : 5.0;
+    const volVal = state.params['dly_1.echo_volume'] !== undefined ? state.params['dly_1.echo_volume'] : 5.0;
+    const headsVal = state.params['dly_1.heads'] || 'mode_1';
+    const spillVal = state.params['dly_1.spillover'] !== undefined ? state.params['dly_1.spillover'] : true;
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="pedal-knob-box">
+          <label>REPEAT RATE</label>
+          <input type="range" id="dlyRateSlider" min="0" max="10" step="0.1" value="${repVal}">
+          <span class="pedal-val" id="dlyRateVal">${Number(repVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>INTENSITY</label>
+          <input type="range" id="dlyIntSlider" min="0" max="10" step="0.1" value="${intVal}">
+          <span class="pedal-val" id="dlyIntVal">${Number(intVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>ECHO VOL</label>
+          <input type="range" id="dlyVolSlider" min="0" max="10" step="0.1" value="${volVal}">
+          <span class="pedal-val" id="dlyVolVal">${Number(volVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>HEADS</label>
+          <select id="dlyHeadsSelect" class="tech-select" style="margin-top:6px; font-size:11px;">
+            <option value="mode_1" ${headsVal === 'mode_1' ? 'selected' : ''}>Head 1 (Curto)</option>
+            <option value="mode_2" ${headsVal === 'mode_2' ? 'selected' : ''}>Head 2 (Médio)</option>
+            <option value="mode_3" ${headsVal === 'mode_3' ? 'selected' : ''}>Head 3 (Longo)</option>
+            <option value="mode_4" ${headsVal === 'mode_4' ? 'selected' : ''}>Multi (1+2+3)</option>
+          </select>
+        </div>
+        <div class="pedal-knob-box">
+          <label>SPILLOVER</label>
+          <input type="checkbox" id="dlySpillCheck" ${spillVal ? 'checked' : ''} style="margin-top:10px;">
+        </div>
+      </div>
+    `;
+
+    document.getElementById('dlyRateSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('dlyRateVal').textContent = v.toFixed(1);
+      state.params['dly_1.repeat_rate'] = v;
+      syncParamsToBackend({ 'dly_1.repeat_rate': v }, false);
+    });
+    document.getElementById('dlyIntSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('dlyIntVal').textContent = v.toFixed(1);
+      state.params['dly_1.intensity'] = v;
+      syncParamsToBackend({ 'dly_1.intensity': v }, false);
+    });
+    document.getElementById('dlyVolSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('dlyVolVal').textContent = v.toFixed(1);
+      state.params['dly_1.echo_volume'] = v;
+      syncParamsToBackend({ 'dly_1.echo_volume': v }, false);
+    });
+    document.getElementById('dlyHeadsSelect')?.addEventListener('change', (e) => {
+      state.params['dly_1.heads'] = e.target.value;
+      syncParamsToBackend({ 'dly_1.heads': e.target.value }, true);
+    });
+    document.getElementById('dlySpillCheck')?.addEventListener('change', (e) => {
+      state.params['dly_1.spillover'] = e.target.checked;
+      syncParamsToBackend({ 'dly_1.spillover': e.target.checked }, true);
+    });
   } else if (block.id === 'blk_rev_1' || block.cat === 'REVERB') {
     if (title) title.textContent = 'REVERB: VINTAGE PLATE (rev_1)';
     if (badge) badge.textContent = 'STUDIO PLATE';
-    body.innerHTML = '<div class="block-editor-content">Controles rev_1: decay_s, predelay_ms, damping, mix, spillover</div>';
+
+    const decayVal = state.params['rev_1.decay_s'] !== undefined ? state.params['rev_1.decay_s'] : 2.8;
+    const preVal = state.params['rev_1.predelay_ms'] !== undefined ? state.params['rev_1.predelay_ms'] : 25.0;
+    const dampVal = state.params['rev_1.damping'] !== undefined ? state.params['rev_1.damping'] : 5.0;
+    const mixVal = state.params['rev_1.mix'] !== undefined ? state.params['rev_1.mix'] : 40.0;
+    const spillVal = state.params['rev_1.spillover'] !== undefined ? state.params['rev_1.spillover'] : true;
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="pedal-knob-box">
+          <label>DECAY</label>
+          <input type="range" id="revDecaySlider" min="0.2" max="15.0" step="0.1" value="${decayVal}">
+          <span class="pedal-val" id="revDecayVal">${Number(decayVal).toFixed(1)} s</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>PRE-DELAY</label>
+          <input type="range" id="revPreSlider" min="0" max="250" step="1" value="${preVal}">
+          <span class="pedal-val" id="revPreVal">${Number(preVal).toFixed(0)} ms</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>DAMPING</label>
+          <input type="range" id="revDampSlider" min="0" max="10" step="0.1" value="${dampVal}">
+          <span class="pedal-val" id="revDampVal">${Number(dampVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>MIX</label>
+          <input type="range" id="revMixSlider" min="0" max="100" step="1" value="${mixVal}">
+          <span class="pedal-val" id="revMixVal">${Number(mixVal).toFixed(0)}%</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>SPILLOVER</label>
+          <input type="checkbox" id="revSpillCheck" ${spillVal ? 'checked' : ''} style="margin-top:10px;">
+        </div>
+      </div>
+    `;
+
+    document.getElementById('revDecaySlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('revDecayVal').textContent = `${v.toFixed(1)} s`;
+      state.params['rev_1.decay_s'] = v;
+      syncParamsToBackend({ 'rev_1.decay_s': v }, false);
+    });
+    document.getElementById('revPreSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('revPreVal').textContent = `${v.toFixed(0)} ms`;
+      state.params['rev_1.predelay_ms'] = v;
+      syncParamsToBackend({ 'rev_1.predelay_ms': v }, false);
+    });
+    document.getElementById('revDampSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('revDampVal').textContent = v.toFixed(1);
+      state.params['rev_1.damping'] = v;
+      syncParamsToBackend({ 'rev_1.damping': v }, false);
+    });
+    document.getElementById('revMixSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('revMixVal').textContent = `${v.toFixed(0)}%`;
+      state.params['rev_1.mix'] = v;
+      syncParamsToBackend({ 'rev_1.mix': v }, false);
+    });
+    document.getElementById('revSpillCheck')?.addEventListener('change', (e) => {
+      state.params['rev_1.spillover'] = e.target.checked;
+      syncParamsToBackend({ 'rev_1.spillover': e.target.checked }, true);
+    });
   } else if (block.id === 'blk_split' || block.cat === 'SPLIT') {
     if (title) title.textContent = 'ROUTING: SPLIT / MERGE';
     if (badge) badge.textContent = 'A/B CROSSOVER';
-    body.innerHTML = '<div class="block-editor-content">Controles split / merge: mode, crossover_hz, row_1_level_db, row_1_phase_invert</div>';
+
+    const modeVal = state.params['split.mode'] || 'ab_split';
+    const xoverVal = state.params['split.crossover_hz'] !== undefined ? state.params['split.crossover_hz'] : 650;
+    const mergeLvl = state.params['merge.row_1_level_db'] !== undefined ? state.params['merge.row_1_level_db'] : 0.0;
+    const phaseInv = state.params['merge.row_1_phase_invert'] !== undefined ? state.params['merge.row_1_phase_invert'] : false;
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="pedal-knob-box">
+          <label>SPLIT MODE</label>
+          <select id="splitModeSelect" class="tech-select" style="margin-top:6px; font-size:11px;">
+            <option value="ab_split" ${modeVal === 'ab_split' ? 'selected' : ''}>A/B Dual Mono</option>
+            <option value="crossover" ${modeVal === 'crossover' ? 'selected' : ''}>Crossover Split</option>
+          </select>
+        </div>
+        <div class="pedal-knob-box">
+          <label>CROSSOVER FREQ</label>
+          <input type="range" id="splitXoverSlider" min="100" max="4000" step="50" value="${xoverVal}">
+          <span class="pedal-val" id="splitXoverVal">${Number(xoverVal).toFixed(0)} Hz</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>PATH B LEVEL</label>
+          <input type="range" id="mergeLevelSlider" min="-24" max="6" step="0.5" value="${mergeLvl}">
+          <span class="pedal-val" id="mergeLevelVal">${Number(mergeLvl).toFixed(1)} dB</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>PHASE INVERT</label>
+          <input type="checkbox" id="mergePhaseCheck" ${phaseInv ? 'checked' : ''} style="margin-top:10px;">
+        </div>
+      </div>
+    `;
+
+    document.getElementById('splitModeSelect')?.addEventListener('change', (e) => {
+      state.params['split.mode'] = e.target.value;
+      syncParamsToBackend({ 'split.mode': e.target.value }, true);
+    });
+    document.getElementById('splitXoverSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('splitXoverVal').textContent = `${v.toFixed(0)} Hz`;
+      state.params['split.crossover_hz'] = v;
+      syncParamsToBackend({ 'split.crossover_hz': v }, false);
+    });
+    document.getElementById('mergeLevelSlider')?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById('mergeLevelVal').textContent = `${v.toFixed(1)} dB`;
+      state.params['merge.row_1_level_db'] = v;
+      syncParamsToBackend({ 'merge.row_1_level_db': v }, false);
+    });
+    document.getElementById('mergePhaseCheck')?.addEventListener('change', (e) => {
+      state.params['merge.row_1_phase_invert'] = e.target.checked;
+      syncParamsToBackend({ 'merge.row_1_phase_invert': e.target.checked }, true);
+    });
+  } else if (block.cat === 'AMP' || block.id.startsWith('blk_amp')) {
+    const isAmp2 = block.id === 'blk_amp_2';
+    const prefix = isAmp2 ? 'amp_2' : 'amp_1';
+    if (title) title.textContent = `AMPLIFICADOR: ${block.name.toUpperCase()}`;
+    if (badge) badge.textContent = 'VALVULADO WHITE-BOX';
+
+    const gainVal = isAmp2
+      ? (state.params['amp_2.gain'] !== undefined ? state.params['amp_2.gain'] : 5.0)
+      : (state.ampParams.inputGain || 7.4);
+    const masterVal = isAmp2
+      ? (state.params['amp_2.master'] !== undefined ? state.params['amp_2.master'] : 7.0)
+      : (state.ampParams.masterVol || 4.5);
+    const bassVal = isAmp2
+      ? (state.params['amp_2.bass'] !== undefined ? state.params['amp_2.bass'] : 5.0)
+      : (state.ampParams.bass || 6.2);
+    const midVal = isAmp2
+      ? (state.params['amp_2.middle'] !== undefined ? state.params['amp_2.middle'] : 5.0)
+      : (state.ampParams.middle || 7.8);
+    const trebVal = isAmp2
+      ? (state.params['amp_2.treble'] !== undefined ? state.params['amp_2.treble'] : 5.0)
+      : (state.ampParams.treble || 6.5);
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="pedal-knob-box">
+          <label>GAIN</label>
+          <input type="range" id="${prefix}EditorGain" min="0" max="10" step="0.1" value="${gainVal}">
+          <span class="pedal-val" id="${prefix}EditorGainVal">${Number(gainVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>MASTER</label>
+          <input type="range" id="${prefix}EditorMaster" min="0" max="10" step="0.1" value="${masterVal}">
+          <span class="pedal-val" id="${prefix}EditorMasterVal">${Number(masterVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>BASS</label>
+          <input type="range" id="${prefix}EditorBass" min="0" max="10" step="0.1" value="${bassVal}">
+          <span class="pedal-val" id="${prefix}EditorBassVal">${Number(bassVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>MIDDLE</label>
+          <input type="range" id="${prefix}EditorMid" min="0" max="10" step="0.1" value="${midVal}">
+          <span class="pedal-val" id="${prefix}EditorMidVal">${Number(midVal).toFixed(1)}</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>TREBLE</label>
+          <input type="range" id="${prefix}EditorTreb" min="0" max="10" step="0.1" value="${trebVal}">
+          <span class="pedal-val" id="${prefix}EditorTrebVal">${Number(trebVal).toFixed(1)}</span>
+        </div>
+      </div>
+    `;
+
+    document.getElementById(`${prefix}EditorGain`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorGainVal`).textContent = v.toFixed(1);
+      if (isAmp2) {
+        state.params['amp_2.gain'] = v;
+        syncParamsToBackend({ 'amp_2.gain': v }, false);
+      } else {
+        updateKnobValue('inputGain', v);
+      }
+    });
+    document.getElementById(`${prefix}EditorMaster`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorMasterVal`).textContent = v.toFixed(1);
+      if (isAmp2) {
+        state.params['amp_2.master'] = v;
+        syncParamsToBackend({ 'amp_2.master': v }, false);
+      } else {
+        updateKnobValue('masterVol', v);
+      }
+    });
+    document.getElementById(`${prefix}EditorBass`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorBassVal`).textContent = v.toFixed(1);
+      if (isAmp2) {
+        state.params['amp_2.bass'] = v;
+        syncParamsToBackend({ 'amp_2.bass': v }, false);
+      } else {
+        updateKnobValue('bass', v);
+      }
+    });
+    document.getElementById(`${prefix}EditorMid`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorMidVal`).textContent = v.toFixed(1);
+      if (isAmp2) {
+        state.params['amp_2.middle'] = v;
+        syncParamsToBackend({ 'amp_2.middle': v }, false);
+      } else {
+        updateKnobValue('middle', v);
+      }
+    });
+    document.getElementById(`${prefix}EditorTreb`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorTrebVal`).textContent = v.toFixed(1);
+      if (isAmp2) {
+        state.params['amp_2.treble'] = v;
+        syncParamsToBackend({ 'amp_2.treble': v }, false);
+      } else {
+        updateKnobValue('treble', v);
+      }
+    });
+  } else if (block.cat === 'CAB' || block.id.startsWith('blk_cab')) {
+    const isCab2 = block.id === 'blk_cab_2';
+    const prefix = isCab2 ? 'cab_2' : 'cab_1';
+    if (title) title.textContent = `GABINETE: ${block.name.toUpperCase()}`;
+    if (badge) badge.textContent = 'RES & IR MIXER';
+
+    const resVal = isCab2
+      ? (state.params['cab_2.resonance_hz'] !== undefined ? state.params['cab_2.resonance_hz'] : 98)
+      : (state.circuitParams.cabResHz || 98);
+    const hiCutVal = isCab2
+      ? (state.params['cab_2.hicut_khz'] !== undefined ? state.params['cab_2.hicut_khz'] : 8.2)
+      : (state.circuitParams.cabHiCutKhz || 8.2);
+    const mic1Dist = state.params[`${prefix}.mic1.distance_cm`] !== undefined
+      ? state.params[`${prefix}.mic1.distance_cm`]
+      : 2.0;
+
+    body.innerHTML = `
+      <div class="pedal-controls-grid" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="pedal-knob-box">
+          <label>RESONANCE</label>
+          <input type="range" id="${prefix}EditorRes" min="65" max="135" step="1" value="${resVal}">
+          <span class="pedal-val" id="${prefix}EditorResVal">${Number(resVal).toFixed(0)} Hz</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>HI-CUT FILTER</label>
+          <input type="range" id="${prefix}EditorHiCut" min="3.5" max="18.0" step="0.1" value="${hiCutVal}">
+          <span class="pedal-val" id="${prefix}EditorHiCutVal">${Number(hiCutVal).toFixed(1)} kHz</span>
+        </div>
+        <div class="pedal-knob-box">
+          <label>MIC DISTANCE</label>
+          <input type="range" id="${prefix}EditorMicDist" min="0" max="30" step="0.5" value="${mic1Dist}">
+          <span class="pedal-val" id="${prefix}EditorMicDistVal">${Number(mic1Dist).toFixed(1)} cm</span>
+        </div>
+      </div>
+    `;
+
+    document.getElementById(`${prefix}EditorRes`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorResVal`).textContent = `${v.toFixed(0)} Hz`;
+      if (!isCab2) state.circuitParams.cabResHz = v;
+      state.params[`${prefix}.resonance_hz`] = v;
+      syncParamsToBackend({ [`${prefix}.resonance_hz`]: v }, false);
+    });
+    document.getElementById(`${prefix}EditorHiCut`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorHiCutVal`).textContent = `${v.toFixed(1)} kHz`;
+      if (!isCab2) state.circuitParams.cabHiCutKhz = v;
+      state.params[`${prefix}.hicut_khz`] = v;
+      syncParamsToBackend({ [`${prefix}.hicut_khz`]: v }, false);
+    });
+    document.getElementById(`${prefix}EditorMicDist`)?.addEventListener('input', (e) => {
+      const v = Number(e.target.value);
+      document.getElementById(`${prefix}EditorMicDistVal`).textContent = `${v.toFixed(1)} cm`;
+      state.params[`${prefix}.mic1.distance_cm`] = v;
+      syncParamsToBackend({ [`${prefix}.mic1.distance_cm`]: v }, false);
+    });
   } else {
     if (title) title.textContent = `${block.cat}: ${block.name.toUpperCase()}`;
     if (badge) badge.textContent = 'BLOCO SELECIONADO';
@@ -373,11 +1043,14 @@ function valueToAngle(val, min = 0, max = 10) {
 }
 
 function renderFrontPanelKnobs() {
-  const row = document.getElementById('frontPanelKnobsRow');
+  const row = document.getElementById('frontPanelKnobsRow') || document.getElementById('ampKnobsRow');
+  if (!row) return;
   row.innerHTML = '';
 
-  KNOB_DEFINITIONS.forEach((def) => {
-    const val = state.ampParams[def.key];
+  const defs = getActiveKnobDefinitions();
+  defs.forEach((def) => {
+    const val = state.ampParams[def.key] !== undefined ? state.ampParams[def.key] : def.defaultVal;
+    state.ampParams[def.key] = val;
     const deg = valueToAngle(val, def.min, def.max);
 
     const unit = document.createElement('div');
@@ -439,8 +1112,12 @@ function attachKnobDragHandler(dialEl, def) {
 }
 
 function updateKnobValue(key, val) {
+  if (typeof val !== 'number' || Number.isNaN(val) || !Number.isFinite(val)) {
+    return;
+  }
   state.ampParams[key] = val;
-  const def = KNOB_DEFINITIONS.find((d) => d.key === key);
+  const defs = getActiveKnobDefinitions();
+  const def = defs.find((d) => d.key === key) || KNOB_DEFINITIONS.find((d) => d.key === key);
   const rotor = document.getElementById(`rotor_${key}`);
   const readout = document.getElementById(`readout_${key}`);
 
@@ -452,6 +1129,10 @@ function updateKnobValue(key, val) {
   }
 
   updateTubeIncandescence();
+
+  // Spec 027 CA-1: Conecta giro de qualquer knob a syncParamsToBackend
+  const apiKey = (def && def.param) ? def.param : (KNOB_PARAM_MAP[key] || `amp_1.${key}`);
+  syncParamsToBackend({ [apiKey]: val }, false);
 }
 
 // ============================================================================
@@ -950,10 +1631,14 @@ function initEventListeners() {
   });
 
   // Oversampling Select
-  document.getElementById('oversamplingSelect').addEventListener('change', (e) => {
-    state.oversampling = e.target.value;
-    updateCpuBudget();
-  });
+  const oversamplingSel = document.getElementById('oversamplingSelect');
+  if (oversamplingSel) {
+    oversamplingSel.addEventListener('change', (e) => {
+      state.oversampling = e.target.value;
+      updateCpuBudget();
+      syncParamsToBackend({ 'engine.oversampling': e.target.value }, true);
+    });
+  }
 
   // Open Chassis / Mod Shop Switch
   const btnChassis = document.getElementById('btnToggleChassis');
@@ -976,47 +1661,124 @@ function initEventListeners() {
   });
 
   // White-Box Circuit Trimpot Sliders
-  const bindSlider = (id, valId, key, unitSuffix) => {
+  const bindSlider = (id, valId, key, paramKey, unitSuffix) => {
     const el = document.getElementById(id);
     const valEl = document.getElementById(valId);
     if (!el) return;
     el.addEventListener('input', () => {
-      state.circuitParams[key] = parseFloat(el.value);
+      const val = parseFloat(el.value);
+      state.circuitParams[key] = val;
       if (valEl) valEl.textContent = `${el.value}${unitSuffix}`;
       updateTubeIncandescence();
+      if (paramKey) {
+        syncParamsToBackend({ [paramKey]: val }, false);
+      }
     });
   };
 
-  bindSlider('sliderBias', 'valBias', 'biasMa', ' mA');
-  bindSlider('sliderSag', 'valSag', 'sagDb', ' dB');
-  bindSlider('sliderNfb', 'valNfb', 'nfb', '');
-  bindSlider('sliderXformer', 'valXformer', 'xformerSat', '');
-  bindSlider('sliderPlateV', 'valPlateV', 'plateVolts', ' V');
-  bindSlider('sliderAsym', 'valAsym', 'triodeAsym', '');
-  bindSlider('sliderCabRes', 'valCabRes', 'cabResHz', ' Hz (+6.8dB)');
-  bindSlider('sliderCabHiCut', 'valCabHiCut', 'cabHiCutKhz', ' kHz');
+  bindSlider('sliderBias', 'valBias', 'biasMa', 'amp_1.bias_ma', ' mA');
+  bindSlider('sliderSag', 'valSag', 'sagDb', 'amp_1.sag', ' dB');
+  bindSlider('sliderNfb', 'valNfb', 'nfb', 'amp_1.nfb', '');
+  bindSlider('sliderXformer', 'valXformer', 'xformerSat', 'amp_1.xformer_sat', '');
+  bindSlider('sliderPlateV', 'valPlateV', 'plateVolts', 'amp_1.preamp_plate_v', ' V');
+  bindSlider('sliderAsym', 'valAsym', 'triodeAsym', 'amp_1.triode_asym', '');
+  bindSlider('sliderCabRes', 'valCabRes', 'cabResHz', 'cab_1.resonance_hz', ' Hz (+6.8dB)');
+  bindSlider('sliderCabHiCut', 'valCabHiCut', 'cabHiCutKhz', 'cab_1.hicut_khz', ' kHz');
 
   // Power Tube Model Select
-  document.getElementById('powerTubeSelect').addEventListener('change', (e) => {
-    document.getElementById('pwrTubeLabel1').textContent = e.target.value;
-    document.getElementById('pwrTubeLabel2').textContent = e.target.value;
-  });
+  const powerTubeSel = document.getElementById('powerTubeSelect');
+  if (powerTubeSel) {
+    powerTubeSel.addEventListener('change', (e) => {
+      const v = e.target.value;
+      const lbl1 = document.getElementById('pwrTubeLabel1');
+      const lbl2 = document.getElementById('pwrTubeLabel2');
+      if (lbl1) lbl1.textContent = v;
+      if (lbl2) lbl2.textContent = v;
+      syncParamsToBackend({ 'amp_1.power_tube': v }, true);
+    });
+  }
+
+  // Preamp Tube, Tone Stack, Rectifier Selects
+  const preampTubeSel = document.getElementById('preampTubeSelect');
+  if (preampTubeSel) {
+    preampTubeSel.addEventListener('change', (e) => {
+      syncParamsToBackend({ 'amp_1.preamp_tube': e.target.value }, true);
+    });
+  }
+
+  const toneStackSel = document.getElementById('toneStackSelect');
+  if (toneStackSel) {
+    toneStackSel.addEventListener('change', (e) => {
+      syncParamsToBackend({ 'amp_1.tonestack': e.target.value }, true);
+    });
+  }
+
+  const rectifierSel = document.getElementById('rectifierSelect');
+  if (rectifierSel) {
+    rectifierSel.addEventListener('change', (e) => {
+      syncParamsToBackend({ 'amp_1.rectifier': e.target.value }, true);
+    });
+  }
 
   // Bright Switch on Amp Faceplate
-  document.getElementById('brightSwitchBtn').addEventListener('click', () => {
-    state.ampParams.brightSwitch = !state.ampParams.brightSwitch;
-    document.getElementById('brightSwitchLabel').textContent = `BRIGHT: ${state.ampParams.brightSwitch ? 'ON' : 'OFF'}`;
-  });
+  const brightBtn = document.getElementById('brightSwitchBtn');
+  if (brightBtn) {
+    brightBtn.addEventListener('click', () => {
+      state.ampParams.brightSwitch = !state.ampParams.brightSwitch;
+      const lbl = document.getElementById('brightSwitchLabel');
+      if (lbl) lbl.textContent = `BRIGHT: ${state.ampParams.brightSwitch ? 'ON' : 'OFF'}`;
+      syncParamsToBackend({ 'amp_1.bright': state.ampParams.brightSwitch }, true);
+    });
+  }
 
   // Expression Pedal 1 -> Modulates Input Gain in Real Time
   const expSlider = document.getElementById('expPedalSlider');
-  expSlider.addEventListener('input', () => {
-    const pct = parseFloat(expSlider.value);
-    document.getElementById('expPedalValueText').textContent = `${pct}%`;
-    // Modifier maps 0..100% to 3.0..9.5 Input Gain
-    const mappedGain = 3.0 + (pct / 100) * 6.5;
-    updateKnobValue('inputGain', mappedGain);
-  });
+  if (expSlider) {
+    expSlider.addEventListener('input', () => {
+      const pct = parseFloat(expSlider.value);
+      const valTxt = document.getElementById('expPedalValueText');
+      if (valTxt) valTxt.textContent = `${pct}%`;
+      // Modifier maps 0..100% to 3.0..9.5 Input Gain
+      const mappedGain = 3.0 + (pct / 100) * 6.5;
+      updateKnobValue('inputGain', mappedGain);
+    });
+  }
+
+  // Cab Room Controls (Distance, IR, Speaker)
+  const mic1DistEl = document.getElementById('sliderMic1Dist');
+  if (mic1DistEl) {
+    mic1DistEl.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      const readout = document.getElementById('valMic1Dist');
+      if (readout) readout.textContent = `${val.toFixed(1)} cm`;
+      syncParamsToBackend({ 'cab_1.mic1.distance_cm': val }, false);
+    });
+  }
+
+  const mic2DistEl = document.getElementById('sliderMic2Dist');
+  if (mic2DistEl) {
+    mic2DistEl.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      const readout = document.getElementById('valMic2Dist');
+      if (readout) readout.textContent = `${val.toFixed(1)} cm`;
+      syncParamsToBackend({ 'cab_1.mic2.distance_cm': val }, false);
+    });
+  }
+
+  const cabIrCheck = document.getElementById('checkCabIrEnabled');
+  if (cabIrCheck) {
+    cabIrCheck.addEventListener('change', (e) => {
+      const en = e.target.checked;
+      syncParamsToBackend({ 'cab_1.ir_enabled': en }, true);
+    });
+  }
+
+  const impCurveSel = document.getElementById('impedanceCurveSelect');
+  if (impCurveSel) {
+    impCurveSel.addEventListener('change', (e) => {
+      syncParamsToBackend({ 'cab_1.speaker': e.target.value }, true);
+    });
+  }
 
   // Toggle Test Signal DSP Generator (Spec 019, CA-5)
   const btnRiff = document.getElementById('testSignalBtn') || document.getElementById('btnToggleRiff');
@@ -1029,13 +1791,15 @@ function initEventListeners() {
     });
   }
 
-  // Model Selection handler (Spec 020, CA-3, CA-7)
+  // Model Selection handler (Spec 020, CA-3, CA-7 & Spec 027 CA-6)
   const ampModelSel = document.getElementById('ampModelSelect');
   if (ampModelSel) {
     ampModelSel.addEventListener('change', (e) => {
       const model = e.target.value;
+      state.currentAmpModel = model;
       state.ampParams.model = model;
       syncParamsToBackend({ 'amp_1.model': model }, false);
+      renderFrontPanelKnobs();
     });
   }
 
@@ -1047,7 +1811,7 @@ function initEventListeners() {
     });
   }
 
-  // Toggle Tuner Bar (Spec 026, CA-4, CA-5)
+  // Toggle Tuner Bar (Spec 026, CA-4, CA-5; Spec 029, CA-1)
   const btnTuner = document.getElementById('btnToggleTuner');
   if (btnTuner) {
     btnTuner.addEventListener('click', () => {
@@ -1056,6 +1820,120 @@ function initEventListeners() {
       const tunerBar = document.getElementById('tunerBar');
       if (tunerBar) tunerBar.classList.toggle('visible', state.tunerVisible);
       syncParamsToBackend({ 'tuner.enabled': state.tunerVisible }, false);
+    });
+  }
+
+  const btnTunerOutputMode = document.getElementById('btnTunerOutputMode');
+  if (btnTunerOutputMode) {
+    btnTunerOutputMode.addEventListener('click', () => {
+      state.tunerOutputMode = state.tunerOutputMode === 'mute' ? 'bypass' : 'mute';
+      btnTunerOutputMode.textContent = `OUT: ${state.tunerOutputMode.toUpperCase()}`;
+      syncParamsToBackend({ 'tuner.output': state.tunerOutputMode }, false);
+    });
+  }
+
+  // Input Calibration Wizard (Spec 019 & Spec 029, CA-3 a CA-5)
+  const btnCalibrateInput = document.getElementById('btnCalibrateInput');
+  const wizard = document.getElementById('inputCalibrationWizard');
+  const step1 = document.getElementById('calibStep1');
+  const step2 = document.getElementById('calibStep2');
+  const step3 = document.getElementById('calibStep3');
+  const btnStartCalib = document.getElementById('btnStartCalib');
+  const btnCloseCalib = document.getElementById('btnCloseCalib');
+
+  const resetCalibWizardSteps = () => {
+    if (state.calibTimer) {
+      clearTimeout(state.calibTimer);
+      state.calibTimer = null;
+    }
+    state.calibRunning = false;
+    if (step1) step1.style.display = 'block';
+    if (step2) step2.style.display = 'none';
+    if (step3) step3.style.display = 'none';
+    if (btnStartCalib) {
+      btnStartCalib.disabled = false;
+      btnStartCalib.textContent = 'Iniciar Calibração';
+    }
+  };
+
+  if (btnCalibrateInput && wizard) {
+    btnCalibrateInput.addEventListener('click', () => {
+      resetCalibWizardSteps();
+      wizard.style.display = 'block';
+    });
+  }
+
+  if (btnCloseCalib && wizard) {
+    btnCloseCalib.addEventListener('click', () => {
+      resetCalibWizardSteps();
+      wizard.style.display = 'none';
+    });
+  }
+
+  if (btnStartCalib) {
+    const waitMs = (ms) => new Promise((resolve) => {
+      state.calibTimer = setTimeout(resolve, ms);
+    });
+    btnStartCalib.addEventListener('click', async () => {
+      if (state.calibRunning) return;
+      state.calibRunning = true;
+      btnStartCalib.disabled = true;
+      btnStartCalib.textContent = 'Medindo silêncio (3s)...';
+      if (step1) step1.style.display = 'block';
+      if (step2) step2.style.display = 'none';
+      if (step3) step3.style.display = 'none';
+
+      try {
+        await waitMs(3000);
+        if (!state.calibRunning) return;
+        await fetch('/api/input/calibrate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Sonix-Token': window.__SONIX_TOKEN__ || '',
+          },
+          body: JSON.stringify({ phase: 'silence' }),
+        });
+
+        if (!state.calibRunning) return;
+        if (step2) step2.style.display = 'block';
+        btnStartCalib.textContent = 'Toque acordes agora (5s)...';
+
+        await waitMs(5000);
+        if (!state.calibRunning) return;
+        const res = await fetch('/api/input/calibrate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Sonix-Token': window.__SONIX_TOKEN__ || '',
+          },
+          body: JSON.stringify({ phase: 'strum' }),
+        });
+
+        if (res && res.ok) {
+          const data = await res.json();
+          if (step3) step3.style.display = 'block';
+          const resultEl = document.getElementById('calibResultText');
+          const diagEl = document.getElementById('calibDiagnosticText');
+          if (resultEl) {
+            resultEl.textContent =
+              `Boost: ${Number(data.proposed_boost).toFixed(2)}x | ` +
+              `Gate: ${Number(data.proposed_gate_threshold_db).toFixed(1)} dB | ` +
+              `Ruído: ${Number(data.noise_floor_rms_db).toFixed(1)} dBFS | ` +
+              `Pico: ${Number(data.raw_peak_db).toFixed(1)} dBFS`;
+          }
+          if (diagEl) {
+            diagEl.textContent = `Diagnóstico: ${data.diagnostic}`;
+          }
+          await loadInitialState();
+        }
+      } catch (_) {
+        // Falha tratada silenciosamente mantendo interface responsiva
+      } finally {
+        state.calibRunning = false;
+        btnStartCalib.disabled = false;
+        btnStartCalib.textContent = 'Iniciar Calibração';
+      }
     });
   }
 
@@ -1134,14 +2012,14 @@ async function updateStrobeTunerFromSignal() {
     const res = await fetch('/api/tuner');
     if (res.ok) {
       const data = await res.json();
-      if (!data.note_name || data.note_name === '---' || data.frequency_hz <= 0) {
+      if (!data.note || data.note === '---' || data.frequency_hz <= 0) {
         tunerEl.textContent = '—';
         needle.style.transform = 'translateX(0px)';
       } else {
-        const sign = data.cents_deviation > 0 ? '+' : '';
-        const cents = Number(data.cents_deviation).toFixed(1);
-        tunerEl.textContent = `${data.note_name} (${sign}${cents}¢)`;
-        const offset = Math.min(48, Math.max(-48, data.cents_deviation * 0.5));
+        const sign = data.cents > 0 ? '+' : '';
+        const cents = Number(data.cents).toFixed(1);
+        tunerEl.textContent = `${data.note} (${sign}${cents}¢)`;
+        const offset = Math.min(48, Math.max(-48, data.cents * 0.5));
         needle.style.transform = `translateX(${offset}px)`;
       }
     }
@@ -1157,6 +2035,10 @@ async function pollBackendTelemetry() {
       const data = await res.json();
       state.liveInputDb = data.input_peak_db;
       state.liveOutputDb = data.output_peak_db;
+      if (typeof data.cpu_usage_pct === 'number') {
+        const cpuEl = document.getElementById('cpuMeterText');
+        if (cpuEl) cpuEl.textContent = `${data.cpu_usage_pct.toFixed(1)}%`;
+      }
       if (typeof data.adc_clips === 'number' && data.adc_clips > 0) {
         state.adcClips = data.adc_clips;
         const clipEl = document.getElementById('vuInClip');
@@ -1165,11 +2047,49 @@ async function pollBackendTelemetry() {
           setTimeout(() => clipEl.classList.remove('clipping'), 1000);
         }
       }
+      if (typeof data.gate_state === 'string') {
+        state.liveGateState = data.gate_state;
+        state.liveGateGrDb = typeof data.gate_gr_db === 'number' ? data.gate_gr_db : 0.0;
+        const gateEl = document.getElementById('gateStatusBadge');
+        if (gateEl) {
+          gateEl.textContent = `${state.liveGateState} // GR ${state.liveGateGrDb.toFixed(1)} dB`;
+        }
+      }
       if (data.waveform && data.waveform.length > 0) {
         state.liveWaveform = data.waveform;
       }
       updateStrobeTunerFromSignal();
       pollScopeFromBackend();
+      setApiError(false);
+    } else {
+      setApiError(true, `HTTP ${res.status}`);
+    }
+  } catch (_) {
+    setApiError(true, 'OFFLINE');
+  }
+
+  // Spec 027 CA-4: Atualiza badges com telemetria real de /api/audio/status
+  try {
+    const audioRes = await fetch('/api/audio/status');
+    if (audioRes.ok) {
+      const audioData = await audioRes.json();
+      const modeEl = document.getElementById('audioModeText');
+      if (modeEl && (audioData.mode || audioData.backend)) {
+        modeEl.textContent = audioData.mode || audioData.backend;
+      }
+      const srEl = document.getElementById('audioSampleRateText');
+      if (srEl && audioData.sample_rate) {
+        srEl.textContent = `${audioData.sample_rate} Hz`;
+      }
+      const periodsEl = document.getElementById('audioPeriodsText');
+      if (periodsEl && audioData.input_period_frames !== undefined && audioData.output_period_frames !== undefined) {
+        periodsEl.textContent = `${audioData.input_period_frames}/${audioData.output_period_frames}`;
+      }
+      const latEl = document.getElementById('audioMeasuredRoundtripText');
+      if (latEl && audioData.driver_input_latency_ms !== undefined && audioData.driver_output_latency_ms !== undefined) {
+        const totalLat = audioData.driver_input_latency_ms + audioData.driver_output_latency_ms;
+        latEl.textContent = `${totalLat.toFixed(1)} ms`;
+      }
     }
   } catch (_) {}
 }

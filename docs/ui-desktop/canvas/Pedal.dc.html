@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Pedal — por modelo</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&amp;family=Oswald:wght@500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.knob{position:relative;border-radius:50%;cursor:ns-resize;touch-action:none;outline:none;flex:none}
+.knob:focus-visible{box-shadow:0 0 0 3px #3dd8ff}
+.knob .sh{position:absolute;inset:0;border-radius:50%;box-shadow:0 5px 7px rgba(0,0,0,.6),0 1px 2px rgba(0,0,0,.8)}
+.knob .rotor{position:absolute;inset:0;border-radius:50%}
+.knob .a,.knob .b,.knob .p{position:absolute;display:block}
+.p-black .rotor{background:repeating-conic-gradient(#0c0c0c 0 8deg,#2a2a2a 8deg 16deg);box-shadow:inset 0 0 0 1px #000}
+.p-black .a{inset:17%;border-radius:50%;background:radial-gradient(circle at 35% 30%,#4a4a4a,#141414 70%)}
+.p-black .p{left:50%;top:6%;width:2px;height:34%;margin-left:-1px;background:#f5f5f5}
+.p-boss .rotor{background:repeating-conic-gradient(#151515 0 5deg,#262626 5deg 10deg)}
+.p-boss .a{inset:10%;border-radius:50%;background:radial-gradient(circle at 40% 30%,#3c3c3c,#101010 75%);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.p-boss .p{left:50%;top:6%;width:2px;height:36%;margin-left:-1px;background:#dcdcdc}
+.p-chicken .a{inset:16%;border-radius:50%;background:radial-gradient(circle at 36% 30%,#4a4a4a,#0d0d0d 70%)}
+.p-chicken .b{left:32%;right:32%;top:-8%;bottom:34%;border-radius:50% 50% 40% 40%/60% 60% 40% 40%;background:linear-gradient(90deg,#0d0d0d,#3d3d3d 45%,#0d0d0d)}
+.p-chicken .p{left:50%;top:-4%;width:2px;height:34%;margin-left:-1px;background:#f0f0f0}
+.p-trim .rotor{background:radial-gradient(circle at 35% 30%,#f3f3f3,#9a9a9a 60%,#4a4a4a)}
+.p-trim .p{left:50%;top:10%;width:2px;height:80%;margin-left:-1px;background:#222}
+.stomp{position:absolute;width:40px;height:40px;border-radius:50%;border:0;padding:0;cursor:pointer;background:radial-gradient(circle at 38% 32%,#ffffff 0%,#d4d4d4 22%,#8e8e8e 55%,#4a4a4a 80%,#2a2a2a 100%);box-shadow:0 0 0 5px #9a9a9a,0 0 0 6px #444,0 5px 8px rgba(0,0,0,.7)}
+.stomp:active{transform:scale(.94)}
+.stomp:focus-visible,.treadle:focus-visible{outline:2px solid #3dd8ff;outline-offset:3px}
+.treadle{position:absolute;border:0;padding:0;cursor:pointer;display:flex;flex-direction:column;align-items:center;box-sizing:border-box}
+.treadle:active{transform:translateY(1px);filter:brightness(.96)}
+.pad{background:repeating-linear-gradient(0deg,#0b0b0b 0 3px,#262626 3px 5px);border-radius:4px;box-shadow:inset 0 2px 3px rgba(0,0,0,.8),0 1px 0 rgba(255,255,255,.15)}
+.slcap{position:absolute;left:-5px;width:14px;height:9px;border-radius:2px;background:linear-gradient(180deg,#ffffff,#b9b9b9);box-shadow:0 1px 2px rgba(0,0,0,.8);cursor:ns-resize;touch-action:none}
+.slcap:focus-visible{outline:2px solid #3dd8ff}
+</style>
+</helmet>
+<div style="position:relative;width:{{W}}px;height:{{H}}px;font-family:Inter,'Segoe UI',sans-serif;user-select:none">
+<div style="position:absolute;inset:0;{{bodyS}}"></div>
+<sc-for list="{{decor}}" as="d" hint-placeholder-count="4"><div style="position:absolute;{{d.s}}">{{d.t}}</div></sc-for>
+<sc-for list="{{knobs}}" as="k" hint-placeholder-count="3">
+<div style="position:absolute;left:{{k.x}}px;top:{{k.y}}px;width:64px;margin-left:-32px;display:flex;flex-direction:{{k.dir}};align-items:center;gap:3px">
+<div class="{{k.cls}}" style="width:{{k.px}}px;height:{{k.px}}px" role="slider" tabIndex="0" aria-label="{{k.label}}" aria-valuemin="0" aria-valuemax="10" aria-valuenow="{{k.v}}" title="{{k.label}} {{k.v}}" onPointerDown="{{k.h.down}}" onPointerMove="{{k.h.move}}" onPointerUp="{{k.h.up}}" onWheel="{{k.h.wheel}}" onDoubleClick="{{k.h.reset}}" onKeyDown="{{k.h.key}}"><span class="sh"></span><span class="rotor" style="transform:rotate({{k.rot}}deg)"><span class="a"></span><span class="b"></span><span class="p"></span></span></div>
+<span style="font-size:{{k.fs}}px;font-weight:800;letter-spacing:.05em;color:{{k.ink}};white-space:nowrap;line-height:1">{{k.label}}</span>
+</div>
+</sc-for>
+<sc-for list="{{sliders}}" as="s" hint-placeholder-count="12">
+<div style="position:absolute;left:{{s.x}}px;top:{{s.y0}}px;width:4px;height:{{s.len}}px;margin-left:-2px;border-radius:2px;background:#050505;box-shadow:inset 0 1px 1px rgba(255,255,255,.08)">
+<div class="slcap" role="slider" tabIndex="0" aria-label="{{s.label}}" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="{{s.db}}" title="{{s.label}} {{s.db}} dB" style="top:{{s.top}}px" onPointerDown="{{s.h.down}}" onPointerMove="{{s.h.move}}" onPointerUp="{{s.h.up}}" onWheel="{{s.h.wheel}}" onDoubleClick="{{s.h.reset}}" onKeyDown="{{s.h.key}}"></div>
+</div>
+<span style="position:absolute;left:{{s.x}}px;top:{{s.ly}}px;width:30px;margin-left:-15px;text-align:center;font-size:6.5px;font-weight:700;color:#d8d8d8">{{s.label}}</span>
+</sc-for>
+<div style="position:absolute;left:{{led.x}}px;top:{{led.y}}px;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:{{led.c}};box-shadow:{{led.g}};transition:background .08s,box-shadow .08s"></div>
+<sc-if value="{{isStomp}}" hint-placeholder-val="{{true}}"><button class="stomp" style="left:{{sw.x}}px;top:{{sw.y}}px;margin:-20px 0 0 -20px" onClick="{{toggle}}" aria-pressed="{{on}}" aria-label="Ligar ou desligar {{name}}"></button></sc-if>
+<sc-if value="{{isTreadle}}" hint-placeholder-val="{{false}}">
+<button class="treadle" style="{{tr.s}}" onClick="{{toggle}}" aria-pressed="{{on}}" aria-label="Ligar ou desligar {{name}}">
+<span style="{{tr.l1s}}">{{tr.l1}}</span>
+<span style="{{tr.l2s}}">{{tr.l2}}</span>
+<span class="pad" style="{{tr.pad}}"></span>
+</button>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"model":{"editor":"enum","options":["ts808","klon","rat","muff","fuzzface","ds1","ns2","ce2","mxr10"],"default":"ts808"},"vals":{"editor":null},"onSet":{"editor":null},"on":{"editor":"boolean","default":true},"onToggle":{"editor":null},"$preview":{"width":240,"height":220}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { local: {}, onLocal: true }; this.hc = {}; this.drag = null; }
+  vals() { return this.props.vals || this.state.local; }
+  get(fk, def) { const v = this.vals()[fk]; return v === undefined ? def : v; }
+  set(fk, v) { if (this.props.onSet) this.props.onSet(fk, v); else this.setState((s) => ({ local: Object.assign({}, s.local, { [fk]: v }) })); }
+  isOn() { return this.props.onToggle ? this.props.on !== false : this.state.onLocal; }
+  h(fk, def) {
+    if (this.hc[fk]) return this.hc[fk];
+    const self = this, clamp = (x) => Math.max(0, Math.min(10, Math.round(x * 10) / 10));
+    this.hc[fk] = {
+      down(e) { try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} self.drag = { fk, x: e.clientX, y: e.clientY, v: self.get(fk, def) }; },
+      move(e) { const d = self.drag; if (!d || d.fk !== fk) return; const k = e.shiftKey ? 60 : 14; self.set(fk, clamp(d.v + ((e.clientX - d.x) + (d.y - e.clientY)) / k)); },
+      up() { self.drag = null; },
+      wheel(e) { self.set(fk, clamp(self.get(fk, def) + (e.deltaY < 0 ? 0.2 : -0.2))); },
+      reset() { self.set(fk, def); },
+      key(e) { const d = { ArrowUp: 0.5, ArrowRight: 0.5, ArrowDown: -0.5, ArrowLeft: -0.5 }[e.key]; if (d) { e.preventDefault(); self.set(fk, clamp(self.get(fk, def) + d)); } }
+    };
+    return this.hc[fk];
+  }
+  defs() {
+    if (this._d) return this._d;
+    const jackL = (y) => ({ s: 'left:-7px;top:' + y + 'px;width:9px;height:20px;border-radius:2px;background:linear-gradient(90deg,#8c8c8c,#e6e6e6,#7a7a7a)', t: '' });
+    const jackR = (y) => ({ s: 'right:-7px;top:' + y + 'px;width:9px;height:20px;border-radius:2px;background:linear-gradient(90deg,#7a7a7a,#e6e6e6,#8c8c8c)', t: '' });
+    const txt = (x, y, w, t, css) => ({ s: 'left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;text-align:center;' + css, t });
+    const body = (bg, r) => 'border-radius:' + (r || '9px') + ';background:' + bg + ';box-shadow:0 16px 20px rgba(0,0,0,.65),0 3px 5px rgba(0,0,0,.6),inset 0 2px 0 rgba(255,255,255,.35),inset 0 -3px 0 rgba(0,0,0,.35)';
+    const K = (key, label, def, x, y, px, cls, ink, dir, fs) => ({ key, label, def, x, y, px, cls: 'knob ' + cls, ink, dir: dir || 'column', fs: fs || 7 });
+    const boss = (col, colDark, title, sub, knobs, inkK) => ({
+      W: 104, H: 184, name: title,
+      bodyS: body('linear-gradient(180deg,' + col + ' 0%,' + colDark + ' 100%)', '8px'),
+      decor: [jackL(22), jackR(22), { s: 'left:46px;top:-4px;width:12px;height:8px;border-radius:2px;background:#222', t: '' },
+        txt(4, 58, 30, 'CHECK', 'font-size:5.5px;font-weight:800;color:' + inkK)],
+      knobs, led: { x: 19, y: 70 }, sw: 'treadle',
+      tr: { s: 'left:4px;top:78px;width:96px;height:102px;border-radius:5px;background:linear-gradient(180deg,' + col + ',' + colDark + ');box-shadow:0 -2px 0 rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.4),0 3px 4px rgba(0,0,0,.4);padding-top:6px',
+        l1: title, l1s: 'font-family:Oswald,sans-serif;font-size:15px;font-weight:700;letter-spacing:.04em;color:#111;background:rgba(255,255,255,.0);border:1.5px solid #111;padding:0 5px;line-height:1.2',
+        l2: sub, l2s: 'font-size:7px;font-weight:700;color:#111;margin:3px 0 6px',
+        pad: 'width:80px;height:48px;margin-top:auto;margin-bottom:6px' }
+    });
+    const bk = (key, label, def, x) => K(key, label, def, x, 10, 26, 'p-boss', '#111', 'column-reverse', 6.5);
+    this._d = {
+      ts808: { W: 130, H: 210, name: 'SCREAMER 808',
+        bodyS: body('linear-gradient(180deg,#5aa86b 0%,#3d8a4e 45%,#2c6a3a 100%)', '10px'),
+        decor: [jackL(30), jackR(30)],
+        knobs: [K('drive','OVERDRIVE',3.5,32,16,36,'p-boss','#f2f2f2'), K('level','LEVEL',8,98,16,36,'p-boss','#f2f2f2'), K('tone','TONE',6,65,52,26,'p-boss','#f2f2f2')],
+        led: { x: 65, y: 26 }, sw: 'treadle',
+        tr: { s: 'left:5px;top:100px;width:120px;height:104px;border-radius:6px;background:linear-gradient(180deg,#56a467,#357a45);box-shadow:0 -2px 0 rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.4),0 3px 4px rgba(0,0,0,.4);padding-top:0;overflow:hidden',
+          l1: 'SCREAMER 808', l1s: 'width:100%;background:linear-gradient(180deg,#f4f4f4,#b9b9b9);font-family:Oswald,sans-serif;font-size:13px;font-weight:700;letter-spacing:.06em;color:#151515;padding:2px 0',
+          l2: 'OVERDRIVE', l2s: 'font-size:7px;font-weight:800;letter-spacing:.2em;color:#f4f4f4;margin:4px 0',
+          pad: 'width:100px;height:52px;margin-top:auto;margin-bottom:8px' } },
+      klon: { W: 128, H: 200, name: 'GOLDEN KLONE',
+        bodyS: body('repeating-linear-gradient(90deg,rgba(255,255,255,.08) 0 1px,transparent 1px 3px),linear-gradient(180deg,#efd590 0%,#caa652 50%,#a8862f 100%)', '10px'),
+        decor: [jackL(36), jackR(36), txt(0, 98, 128, 'GOLDEN KLONE', 'font-family:Oswald,sans-serif;font-size:15px;font-weight:700;letter-spacing:.08em;color:#3a2a0c;text-shadow:0 1px 0 rgba(255,255,255,.45)'),
+          txt(0, 120, 128, 'PROFESSIONAL OVERDRIVE', 'font-size:6.5px;font-weight:800;letter-spacing:.14em;color:#4a3610')],
+        knobs: [K('gain','GAIN',3,32,30,30,'p-black','#3a2a0c'), K('treble','TREBLE',5,64,30,30,'p-black','#3a2a0c'), K('output','OUTPUT',6,96,30,30,'p-black','#3a2a0c')],
+        led: { x: 64, y: 16 }, sw: { x: 64, y: 164 } },
+      rat: { W: 116, H: 180, name: 'RODENT',
+        bodyS: body('radial-gradient(circle at 1px 1px,rgba(255,255,255,.04) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#232323,#0d0d0d)', '8px'),
+        decor: [jackL(30), jackR(30), txt(0, 84, 116, 'RODENT', 'font-family:Oswald,sans-serif;font-size:30px;font-weight:700;font-style:italic;letter-spacing:.02em;color:#f4f4f4'),
+          txt(0, 122, 116, 'DISTORTION', 'font-size:6.5px;font-weight:800;letter-spacing:.24em;color:#cfcfcf')],
+        knobs: [K('distortion','DISTORTION',6,24,16,30,'p-black','#ededed'), K('filter','FILTER',4,58,16,30,'p-black','#ededed'), K('volume','VOLUME',5,92,16,30,'p-black','#ededed')],
+        led: { x: 58, y: 70 }, sw: { x: 58, y: 150 } },
+      muff: { W: 160, H: 200, name: 'BIG FUZZ π',
+        bodyS: body('repeating-linear-gradient(90deg,rgba(255,255,255,.12) 0 1px,transparent 1px 3px),linear-gradient(180deg,#eef0f2 0%,#b8bcc0 50%,#d5d8db 100%)', '8px'),
+        decor: [jackL(36), jackR(36), { s: 'left:10px;right:10px;top:84px;height:52px;border-radius:4px;background:linear-gradient(180deg,#1a1a1a,#060606);box-shadow:inset 0 1px 0 rgba(255,255,255,.15)', t: '' },
+          txt(10, 88, 140, 'BIG FUZZ π', 'font-family:Oswald,sans-serif;font-size:27px;font-weight:700;font-style:italic;color:#e3261c;text-shadow:0 0 1px #000'),
+          txt(10, 122, 140, 'SUSTAINER', 'font-size:7px;font-weight:800;letter-spacing:.3em;color:#e9e9e9')],
+        knobs: [K('volume','VOLUME',6,34,14,30,'p-black','#111'), K('tone','TONE',5,80,14,30,'p-black','#111'), K('sustain','SUSTAIN',7,126,14,30,'p-black','#111')],
+        led: { x: 80, y: 148 }, sw: { x: 80, y: 172 } },
+      fuzzface: { W: 180, H: 180, name: 'FACE FUZZ',
+        bodyS: 'border-radius:50%;background:radial-gradient(circle at 1px 1px,rgba(255,255,255,.08) 1px,transparent 1.6px) 0 0/4px 4px,radial-gradient(circle at 38% 30%,#e8564a 0%,#b5261d 55%,#741109 100%);box-shadow:0 16px 22px rgba(0,0,0,.65),inset 0 3px 2px rgba(255,255,255,.3),inset 0 -6px 8px rgba(0,0,0,.4),0 0 0 3px #3a0a06',
+        decor: [{ s: 'left:-6px;top:80px;width:9px;height:20px;border-radius:2px;background:linear-gradient(90deg,#8c8c8c,#e6e6e6)', t: '' }, { s: 'right:-6px;top:80px;width:9px;height:20px;border-radius:2px;background:linear-gradient(90deg,#e6e6e6,#8c8c8c)', t: '' },
+          txt(0, 138, 180, 'FACE FUZZ', 'font-family:Oswald,sans-serif;font-size:16px;font-weight:700;letter-spacing:.14em;color:#fff3e8')],
+        knobs: [K('volume','VOLUME',7,56,30,32,'p-chicken','#fff3e8'), K('fuzz','FUZZ',8,124,30,32,'p-chicken','#fff3e8'), K('bias','BIAS',5,90,20,18,'p-trim','#fff3e8','column',6)],
+        led: { x: 90, y: 66 }, sw: { x: 90, y: 104 } },
+      ds1: boss('#f47a2a', '#d65a10', 'DS-ONE', 'Distortion', [bk('level','LEVEL',6,22), bk('tone','TONE',5,52), bk('dist','DIST',6,82)], '#111'),
+      ns2: boss('#f1f0ea', '#cfcec7', 'GATE-2', 'Noise Gate', [bk('threshold','THRESHOLD',4,22), bk('decay','DECAY',5,52), bk('mode','MODE',3,82)], '#111'),
+      ce2: boss('#86c3e6', '#5ba3cf', 'CHORUS-2', 'Chorus', [bk('rate','RATE',3,34), bk('depth','DEPTH',5,70)], '#111'),
+      mxr10: { W: 232, H: 150, name: '10 BAND EQ',
+        bodyS: body('radial-gradient(circle at 1px 1px,rgba(255,255,255,.04) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#262626,#0c0c0c)', '8px'),
+        decor: [jackL(54), jackR(54), txt(10, 110, 110, '10 BAND EQ', 'font-family:Oswald,sans-serif;font-size:15px;font-weight:700;letter-spacing:.04em;color:#f2f2f2;text-align:left'),
+          txt(10, 130, 110, 'GRAPHIC EQUALIZER', 'font-size:6px;font-weight:800;letter-spacing:.2em;color:#bdbdbd;text-align:left')],
+        knobs: [], eq: ['VOL','31','62','125','250','500','1K','2K','4K','8K','16K','GAIN'],
+        led: { x: 160, y: 124 }, sw: { x: 196, y: 124 } }
+    };
+    return this._d;
+  }
+  renderVals() {
+    const D = this.defs(), id = D[this.props.model] ? this.props.model : 'ts808', M = D[id];
+    const fk = (k) => id + '.' + k, on = this.isOn();
+    const knobs = M.knobs.map((k) => { const v = this.get(fk(k.key), k.def);
+      return { label: k.label, cls: k.cls, px: k.px, x: k.x, y: k.y, ink: k.ink, dir: k.dir, fs: k.fs, v: v.toFixed(1), rot: Math.round(-135 + v * 27), h: this.h(fk(k.key), k.def) }; });
+    const sliders = (M.eq || []).map((label, i) => { const key = i === 0 ? 'volume' : (i === 11 ? 'gain' : 'b' + i); const v = this.get(fk(key), 5);
+      return { label, x: 18 + i * 17.8, y0: 14, len: 76, top: Math.round((10 - v) / 10 * 67), ly: 94, db: ((v - 5) * 2.4).toFixed(1), h: this.h(fk(key), 5) }; });
+    const ledCol = id === 'mxr10' ? '#3db7ff' : '#ff2a1a';
+    const toggle = () => { if (this.props.onToggle) this.props.onToggle(!on); else this.setState((s) => ({ onLocal: !s.onLocal })); };
+    return {
+      W: M.W, H: M.H, name: M.name, bodyS: M.bodyS, decor: M.decor, knobs, sliders,
+      led: { x: M.led.x, y: M.led.y, c: on ? ledCol : '#3a1210', g: on ? '0 0 9px ' + ledCol + ',0 0 2px #fff' : 'inset 0 1px 2px rgba(0,0,0,.7)' },
+      isStomp: M.sw !== 'treadle', isTreadle: M.sw === 'treadle', sw: M.sw === 'treadle' ? { x: 0, y: 0 } : M.sw,
+      tr: M.tr || { s: '', l1: '', l1s: '', l2: '', l2s: '', pad: '' },
+      on, toggle
+    };
+  }
+}
+</script>
+</body>
+</html>

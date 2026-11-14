@@ -9,7 +9,9 @@ pub mod pitch;
 pub mod delay;
 pub mod reverb;
 
-pub use dynamics::{CompressorProcessor, CompressorTopology, NoiseGateMode, NoiseGateProcessor};
+pub use dynamics::{
+    CompressorProcessor, CompressorTopology, GateState, NoiseGateMode, NoiseGateProcessor,
+};
 pub use drive::{ClippingDiode, DriveModel, DriveProcessor};
 pub use eq::{EqMode, EqProcessor, ParametricBand};
 pub use modulation::{ModModel, ModulationProcessor, NoteDivision};

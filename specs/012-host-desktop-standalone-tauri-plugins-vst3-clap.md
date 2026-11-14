@@ -2,7 +2,7 @@
 spec: 012
 titulo: Arquitetura Desktop nativa (Tauri v2 + Rust) e plugins de DAW (VST3 e CLAP)
 status: implementada
-atualizado: 2026-11-08
+atualizado: 2026-11-14
 ---
 # 012 — Arquitetura Desktop nativa (Tauri v2 + Rust) e plugins de DAW (VST3 e CLAP)
 
@@ -76,3 +76,5 @@ Fontes da verdade e evidências no repositório:
 
 ## Notas
 - Rastreabilidade SRS: Seção 1.1.2, Seção 2.1 (`Camada de Hardware / Host Audio & DAW`, `Camada de Apresentação & Controle`), **RNF-001**, **RNF-002**, **RNF-005**, **RNF-008**, **RNF-009**.
+- **2026-11-13 — CA-6 revertido.** Verificação do código mostrou que o app anterior usava `msedge --app=http://127.0.0.1:7890` (`crates/sonix-desktop/src/main.rs`, `server.rs`) e HTTP local.
+- **2026-11-14 — CA-6 restaurado pela [Spec 033](033-app-desktop-tauri-v2-telas-e-controles-reais.md).** O executável desktop `apps/sonix-app` (`sonix-app.exe` release `--offline`) roda nativamente em Tauri v2 + WebView2 via IPC puro (`invoke` + `Channel`), sem servidor HTTP local (`0` portas LISTEN) e sem abrir `msedge.exe`.

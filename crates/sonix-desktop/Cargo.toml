@@ -10,6 +10,66 @@ sonix-plugin = { path = "../sonix-plugin" }
 thiserror = "1.0"
 cpal = "0.18.2"
 ringbuf = "0.4"
-tiny_http = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[features]
+default = ["dev-http"]
+dev-http = []
+
+[[test]]
+name = "contract_013_desktop_realtime_audio"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_014_ui_dsp_bridge"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_015_server_hardening"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_018_low_latency_host"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_019_input_calibration"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_020_amp_models_api"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_021_scope_api"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_022_cab_api"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_024_graph_api"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_025_preset_switch"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_026_live_tuner"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_028_low_latency_realtime_safety"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_029_tuner_and_calibration"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_030_gate_api"
+required-features = ["dev-http"]
+
