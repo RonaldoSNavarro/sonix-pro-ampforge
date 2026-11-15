@@ -74,3 +74,4 @@ Fontes da verdade e evidências no repositório:
 
 ## Notas
 - Rastreabilidade SRS: Seção 3.5, **RF-028**, **RF-029**, **RF-030**, **RF-031**, **RF-032**, Seção 5 (`scenes`, `activeChannelByScene`, `bypassByScene`, `modifiers`).
+- **2026-11-14 (Auditoria Spec 044):** `Preset`, `Scene`, `BlockNode`, `ModifierMatrix`, `FootswitchArray` e `GaplessCrossfader` em `sonix-core` ainda não dirigem a cadeia de áudio em produção; integração retomada pela **Spec 045**.

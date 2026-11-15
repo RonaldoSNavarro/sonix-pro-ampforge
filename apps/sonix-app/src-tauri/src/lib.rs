@@ -4,7 +4,7 @@
 pub mod commands;
 pub mod streams;
 
-use commands::AppRuntime;
+use commands::{AppRuntime, AudioRuntimeControl};
 use sonix_desktop::api::{ApiContext, AppState};
 use sonix_desktop::audio::{
     DesktopAudioHost, RealtimeDspChain, RealtimeDuplexAudioStreams, RealtimeDuplexEngine,
@@ -39,7 +39,7 @@ pub fn ensure_single_audio_host(started_count: &AtomicUsize) -> bool {
 }
 
 struct RuntimeKeepAlive {
-    _streams: Option<RealtimeDuplexAudioStreams>,
+    _streams: Arc<Mutex<Option<RealtimeDuplexAudioStreams>>>,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -50,6 +50,9 @@ impl Drop for RuntimeKeepAlive {
         if let Some(handle) = self.worker.take() {
             let _ = handle.join();
         }
+        if let Ok(mut s) = self._streams.lock() {
+            *s = None;
+        }
         AUDIO_HOST_SINGLETON_ACTIVE.store(false, Ordering::SeqCst);
     }
 }
@@ -58,7 +61,9 @@ fn build_runtime() -> AppRuntime {
     let audio_telemetry = Arc::new(Mutex::new(None));
     let duplex = Arc::new(RealtimeDuplexEngine::new(65536));
     let telemetry = Arc::new(TelemetryBuffer::new(512));
-    let dsp_chain = Arc::new(Mutex::new(RealtimeDspChain::new(48000.0)));
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 2048);
+    let dsp_chain = Arc::new(Mutex::new(chain));
     let param_queue = dsp_chain
         .lock()
         .ok()
@@ -85,6 +90,7 @@ fn build_runtime() -> AppRuntime {
         .ok();
 
         if let Some(ref s) = streams {
+            duplex.set_target_period(s.telemetry.output_period_frames as usize);
             if let Ok(mut guard) = audio_telemetry.lock() {
                 *guard = Some(s.telemetry.clone());
             }
@@ -97,34 +103,43 @@ fn build_runtime() -> AppRuntime {
             let dsp_clone = dsp_chain.clone();
             let flag = run_flag.clone();
             Some(thread::spawn(move || {
-                let mut in_buf = [0.0f32; 128];
-                let mut out_buf = [0.0f32; 128];
+                let mut in_buf = vec![0.0f32; 4096];
+                let mut out_buf = vec![0.0f32; 4096];
                 while flag.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_millis(3));
-                    duplex_clone.pop_samples_for_processing(&mut in_buf);
+                    let period = duplex_clone.target_period().clamp(32, 4096);
+                    duplex_clone.pop_samples_for_processing(&mut in_buf[..period]);
                     if let Ok(mut dsp) = dsp_clone.lock() {
-                        dsp.process(&in_buf, &mut out_buf);
+                        dsp.process(&in_buf[..period], &mut out_buf[..period]);
                     }
-                    let peak = out_buf.iter().fold(0.0f32, |acc, &x| acc.max(x.abs()));
+                    let peak = out_buf[..period]
+                        .iter()
+                        .fold(0.0f32, |acc, &x| acc.max(x.abs()));
                     let peak_db = if peak > 1e-6 {
                         20.0 * peak.log10()
                     } else {
                         -120.0
                     };
                     telemetry_clone.update_peaks(peak_db - 6.0, peak_db, 1.2);
-                    telemetry_clone.push_waveform(&out_buf);
+                    telemetry_clone.push_waveform(&out_buf[..period]);
                 }
             }))
         } else {
             None
         };
 
-        (streams, run_flag, worker)
+        (Arc::new(Mutex::new(streams)), run_flag, worker)
     } else {
-        (None, Arc::new(AtomicBool::new(false)), None)
+        (Arc::new(Mutex::new(None)), Arc::new(AtomicBool::new(false)), None)
     };
 
-    let api_ctx = ApiContext::new(
+    let audio_ctrl = Arc::new(AudioRuntimeControl {
+        duplex,
+        dsp_chain: dsp_chain.clone(),
+        active_streams: active_streams.clone(),
+    });
+
+    let mut api_ctx = ApiContext::new(
         audio_telemetry,
         Arc::new(Mutex::new(initial_state)),
         telemetry,
@@ -133,10 +148,12 @@ fn build_runtime() -> AppRuntime {
         Some("default"),
         Some(calib_store),
     );
+    api_ctx.duplex_engine = Some(audio_ctrl.duplex.clone());
 
     AppRuntime {
         api_ctx,
         streams: Arc::new(StreamCoordinator::new()),
+        audio_ctrl: Some(audio_ctrl),
         _keep_alive: Arc::new(RuntimeKeepAlive {
             _streams: active_streams,
             running,

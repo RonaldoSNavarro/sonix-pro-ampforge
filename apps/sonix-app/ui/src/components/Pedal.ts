@@ -1,5 +1,5 @@
-import { clampStep, createKnob, valueToRotationDeg } from './Knob';
-import type { AppStore } from '../store';
+import { clampStep, createKnob, valueToRotationDeg } from './Knob.ts';
+import type { AppStore } from '../store.ts';
 
 export type PedalModelId =
   | 'ts808'
@@ -29,16 +29,16 @@ interface PedalKnobDef {
 }
 
 export function createPedalElement(model: PedalModelId, store: AppStore): HTMLElement {
-  const dims: Record<PedalModelId, { w: number; h: number; bg: string; rad: string; name: string }> = {
-    ts808: { w: 130, h: 210, bg: 'linear-gradient(180deg,#5aa86b 0%,#3d8a4e 45%,#2c6a3a 100%)', rad: '10px', name: 'SCREAMER 808' },
+  const dims: Record<PedalModelId, { w: number; h: number; bg: string; rad: string; name: string; sub?: string }> = {
+    ts808: { w: 130, h: 210, bg: 'linear-gradient(180deg,#5aa86b 0%,#3d8a4e 45%,#2c6a3a 100%)', rad: '10px', name: 'SCREAMER 808', sub: 'OVERDRIVE' },
     klon: { w: 128, h: 200, bg: 'repeating-linear-gradient(90deg,rgba(255,255,255,.08) 0 1px,transparent 1px 3px),linear-gradient(180deg,#efd590 0%,#caa652 50%,#a8862f 100%)', rad: '10px', name: 'GOLDEN KLONE' },
     rat: { w: 116, h: 180, bg: 'radial-gradient(circle at 1px 1px,rgba(255,255,255,.04) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#232323,#0d0d0d)', rad: '8px', name: 'RODENT' },
     muff: { w: 160, h: 200, bg: 'repeating-linear-gradient(90deg,rgba(255,255,255,.12) 0 1px,transparent 1px 3px),linear-gradient(180deg,#eef0f2 0%,#b8bcc0 50%,#d5d8db 100%)', rad: '8px', name: 'BIG FUZZ PI' },
     fuzzface: { w: 180, h: 180, bg: 'radial-gradient(circle at 38% 30%,#e8564a 0%,#b5261d 55%,#741109 100%)', rad: '50%', name: 'FACE FUZZ' },
-    ds1: { w: 104, h: 184, bg: 'linear-gradient(180deg,#f47a2a 0%,#d65a10 100%)', rad: '8px', name: 'DS-ONE' },
-    ns2: { w: 104, h: 184, bg: 'linear-gradient(180deg,#f1f0ea 0%,#cfcec7 100%)', rad: '8px', name: 'GATE-2' },
-    ce2: { w: 104, h: 184, bg: 'linear-gradient(180deg,#86c3e6 0%,#5ba3cf 100%)', rad: '8px', name: 'CHORUS-2' },
-    mxr10: { w: 232, h: 150, bg: 'radial-gradient(circle at 1px 1px,rgba(255,255,255,.04) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#262626,#0c0c0c)', rad: '8px', name: '10 BAND EQ' },
+    ds1: { w: 104, h: 184, bg: 'linear-gradient(180deg,#f47a2a 0%,#d65a10 100%)', rad: '8px', name: 'DS-ONE', sub: 'DISTORTION' },
+    ns2: { w: 104, h: 184, bg: 'linear-gradient(180deg,#f1f0ea 0%,#cfcec7 100%)', rad: '8px', name: 'GATE-2', sub: 'Noise Gate' },
+    ce2: { w: 104, h: 184, bg: 'linear-gradient(180deg,#86c3e6 0%,#5ba3cf 100%)', rad: '8px', name: 'CHORUS-2', sub: 'Chorus' },
+    mxr10: { w: 232, h: 150, bg: 'radial-gradient(circle at 1px 1px,rgba(255,255,255,.04) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#262626,#0c0c0c)', rad: '8px', name: '10 BAND EQ', sub: 'GRAPHIC EQUALIZER' },
   };
 
   const d = dims[model];
@@ -89,7 +89,7 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
     ns2: [
       { controlId: 'gate.threshold_db', label: 'THRESHOLD', min: -90, max: 0, step: 1, def: -65, x: 22, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
       { controlId: 'gate.release_ms', label: 'DECAY', min: 5, max: 1000, step: 5, def: 80, x: 52, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
-      { controlId: 'gate.hysteresis_db', label: 'HYST', min: 0, max: 12, step: 0.5, def: 4, x: 82, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
+      { controlId: 'gate.hysteresis_db', label: 'MODE', min: 0, max: 12, step: 0.5, def: 4, x: 82, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
     ],
     ce2: [
       { controlId: 'mod_2.rate_hz', label: 'RATE', min: 0.05, max: 10, step: 0.05, def: 1.0, x: 34, y: 12, px: 28, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6.5 },
@@ -114,6 +114,12 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
               ? 'position:absolute;left:0;right:0;top:100px;text-align:center;font-size:14px;font-weight:700;color:#3a2a0c;letter-spacing:.08em'
               : 'position:absolute;left:0;right:0;top:86px;text-align:center;font-size:26px;font-style:italic;font-weight:700;color:#f4f4f4';
     root.appendChild(titleEl);
+    if (model === 'mxr10' && d.sub) {
+      const subEl = document.createElement('div');
+      subEl.textContent = d.sub;
+      subEl.style.cssText = 'position:absolute;left:10px;top:132px;font-size:6.5px;font-weight:700;letter-spacing:.12em;color:#8f969e';
+      root.appendChild(subEl);
+    }
   }
 
   for (const k of knobsByModel[model]) {
@@ -131,6 +137,7 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
       skinClass: k.cls,
       sizePx: k.px,
       onChange: (v) => store.setControl(k.controlId, v),
+      onDragState: (d) => store.setDraggingKnob(d),
     });
     const lbl = document.createElement('span');
     lbl.textContent = k.label;
@@ -142,16 +149,16 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
   if (model === 'mxr10') {
     const bands = [
       { id: 'eq_1.volume_db', lbl: 'VOL', min: -12, max: 12 },
-      { id: 'eq_1.band1', lbl: '31', min: -12, max: 15 },
-      { id: 'eq_1.band2', lbl: '62', min: -12, max: 15 },
-      { id: 'eq_1.band3', lbl: '125', min: -12, max: 15 },
-      { id: 'eq_1.band4', lbl: '250', min: -12, max: 15 },
-      { id: 'eq_1.band5', lbl: '500', min: -12, max: 15 },
-      { id: 'eq_1.band6', lbl: '1K', min: -12, max: 15 },
-      { id: 'eq_1.band7', lbl: '2K', min: -12, max: 15 },
-      { id: 'eq_1.band8', lbl: '4K', min: -12, max: 15 },
-      { id: 'eq_1.band9', lbl: '8K', min: -12, max: 15 },
-      { id: 'eq_1.band10', lbl: '16K', min: -12, max: 15 },
+      { id: 'eq_1.band1', lbl: '31', min: -12, max: 12 },
+      { id: 'eq_1.band2', lbl: '62', min: -12, max: 12 },
+      { id: 'eq_1.band3', lbl: '125', min: -12, max: 12 },
+      { id: 'eq_1.band4', lbl: '250', min: -12, max: 12 },
+      { id: 'eq_1.band5', lbl: '500', min: -12, max: 12 },
+      { id: 'eq_1.band6', lbl: '1K', min: -12, max: 12 },
+      { id: 'eq_1.band7', lbl: '2K', min: -12, max: 12 },
+      { id: 'eq_1.band8', lbl: '4K', min: -12, max: 12 },
+      { id: 'eq_1.band9', lbl: '8K', min: -12, max: 12 },
+      { id: 'eq_1.band10', lbl: '16K', min: -12, max: 12 },
       { id: 'eq_1.gain_db', lbl: 'GAIN', min: -12, max: 12 },
     ];
     bands.forEach((b, i) => {
@@ -234,6 +241,13 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
   led.style.cssText = `position:absolute;left:${lx}px;top:${ly}px;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:${isOn ? ledCol : '#3a1210'};box-shadow:${isOn ? `0 0 9px ${ledCol}` : 'inset 0 1px 2px rgba(0,0,0,.7)'}`;
   root.appendChild(led);
 
+  if (model === 'ns2' || model === 'ce2' || model === 'ds1') {
+    const chk = document.createElement('span');
+    chk.textContent = 'CHECK';
+    chk.style.cssText = `position:absolute;left:${lx - 11}px;top:${ly - 13}px;font-size:5.5px;font-weight:800;letter-spacing:.06em;color:#111`;
+    root.appendChild(chk);
+  }
+
   const isTreadle = model === 'ts808' || model === 'ds1' || model === 'ns2' || model === 'ce2';
   const swBtn = document.createElement('button');
   swBtn.setAttribute('data-control-id', bypassId);
@@ -248,20 +262,30 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
     swBtn.className = 'treadle';
     swBtn.style.cssText =
       model === 'ts808'
-        ? 'left:5px;top:100px;width:120px;height:104px;border-radius:6px;background:linear-gradient(180deg,#56a467,#357a45);box-shadow:0 -2px 0 rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.4);overflow:hidden'
-        : `left:4px;top:78px;width:96px;height:102px;border-radius:5px;background:rgba(0,0,0,.06);box-shadow:0 -2px 0 rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.35);padding-top:6px`;
+        ? 'left:5px;top:100px;width:120px;height:104px;border-radius:6px;background:linear-gradient(180deg,#56a467,#357a45);box-shadow:0 -2px 0 rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.4),0 3px 4px rgba(0,0,0,.4);overflow:hidden'
+        : `left:4px;top:78px;width:96px;height:102px;border-radius:5px;background:rgba(0,0,0,.06);box-shadow:0 -2px 0 rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.35),0 3px 4px rgba(0,0,0,.4);padding-top:6px`;
     const badge = document.createElement('span');
     badge.className = 'osw';
-    badge.textContent = d.name;
-    badge.style.cssText =
-      model === 'ts808'
-        ? 'width:100%;background:linear-gradient(180deg,#f4f4f4,#b9b9b9);font-size:12px;font-weight:700;color:#151515;padding:2px 0'
-        : 'font-size:13px;font-weight:700;color:#111;border:1.5px solid #111;padding:0 5px';
+    const subSpan = document.createElement('span');
+    subSpan.textContent = d.sub ?? '';
+    if (model === 'ts808') {
+      badge.textContent = d.name;
+      badge.style.cssText =
+        'width:100%;background:linear-gradient(180deg,#f4f4f4,#b9b9b9);font-size:13px;font-weight:700;letter-spacing:.06em;color:#151515;padding:2px 0;text-align:center';
+      subSpan.style.cssText =
+        'font-size:7px;font-weight:800;letter-spacing:.2em;color:#f4f4f4;margin:4px 0';
+    } else {
+      badge.textContent = d.name;
+      badge.style.cssText =
+        'font-size:15px;font-weight:700;letter-spacing:.04em;color:#111;border:1.5px solid #111;padding:0 5px;line-height:1.2';
+      subSpan.style.cssText =
+        'font-size:7px;font-weight:700;color:#111;margin:3px 0 6px';
+    }
     const pad = document.createElement('span');
     pad.className = 'pad';
     pad.style.cssText =
-      model === 'ts808' ? 'width:98px;height:52px;margin-top:auto;margin-bottom:8px' : 'width:80px;height:48px;margin-top:auto;margin-bottom:6px';
-    swBtn.append(badge, pad);
+      model === 'ts808' ? 'width:100px;height:52px;margin-top:auto;margin-bottom:8px' : 'width:80px;height:48px;margin-top:auto;margin-bottom:6px';
+    swBtn.append(badge, subSpan, pad);
   } else {
     const swPos: Record<string, [number, number]> = {
       klon: [64, 164],

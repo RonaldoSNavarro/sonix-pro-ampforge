@@ -246,6 +246,7 @@ fn test_ca_03_algorithmic_and_buffering_latency_under_10ms() {
         panics: 0,
         adc_clips: 0,
         measured_roundtrip_ms: Some(total_digital_latency_ms),
+        estimated_roundtrip_ms: total_digital_latency_ms,
         algorithmic_latency_samples: algo_lat_samples,
     };
 
@@ -322,6 +323,7 @@ fn test_ca_04_realtime_cpu_load_measurement() {
         panics: 0,
         adc_clips: 0,
         measured_roundtrip_ms: Some(8.33),
+        estimated_roundtrip_ms: 5.67,
         algorithmic_latency_samples: 16,
     };
     server.set_audio_telemetry(audio_status);

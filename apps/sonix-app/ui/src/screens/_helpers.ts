@@ -1,5 +1,5 @@
-import type { AppStore } from '../store';
-import { createHSliderRow } from '../components/Knob';
+import type { AppStore } from '../store.ts';
+import { createHSliderRow } from '../components/Knob.ts';
 
 export function num(store: AppStore, key: string, fallback: number): number {
   const v = store.getParam(key, fallback);
@@ -72,6 +72,7 @@ export function makeControlSlider(
     onChange: (val) => {
       void store.setControl(controlId, val);
     },
+    onDragState: (d) => store.setDraggingKnob(d),
   });
 }
 

@@ -46,6 +46,7 @@ fn reason_phrase(status: u16) -> &'static str {
         415 => "Unsupported Media Type",
         421 => "Misdirected Request",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "OK",
     }
 }
@@ -130,20 +131,15 @@ pub struct LocalAppServer {
     param_queue: Option<Arc<LockFreeParamQueue>>,
 }
 
-fn generate_secure_token() -> String {
-    use std::time::SystemTime;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let ptr = Box::into_raw(Box::new(12345)) as usize;
-    let seed1 = now ^ ((ptr as u128) << 32) ^ 0x517cc1b727220a95;
-    let seed2 = (now.rotate_left(17)) ^ (ptr as u128) ^ 0xdeadbeefcafebabe;
-    format!(
-        "{:016x}{:016x}",
-        (seed1 & 0xFFFFFFFFFFFFFFFF) as u64,
-        (seed2 & 0xFFFFFFFFFFFFFFFF) as u64
-    )
+pub fn generate_secure_token() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("Falha ao obter entropia CSPRNG do sistema operacional");
+    let mut out = String::with_capacity(32);
+    for b in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{:02x}", b);
+    }
+    out
 }
 
 impl LocalAppServer {
@@ -259,15 +255,22 @@ impl LocalAppServer {
                     let url = request.url.as_str();
                     let path = url.split('?').next().unwrap_or("/");
 
-                    // 1. Validação de Host contra DNS Rebinding (Spec 015, CA-2)
-                    let host_header = request.header("host");
-                    let is_valid_host = match host_header {
-                        Some(v) => v.starts_with("127.0.0.1") || v.starts_with("localhost"),
-                        None => true,
+                    // 1. Validação estrita de Host contra DNS Rebinding (Specs 015 CA-2 e 046 CA-1)
+                    let host_validation = match request.header("host") {
+                        None => Err((400u16, "text/plain", b"Bad Request: missing Host".to_vec())),
+                        Some(v) => {
+                            let expected_ip = format!("127.0.0.1:{}", actual_port);
+                            let expected_name = format!("localhost:{}", actual_port);
+                            if v.eq_ignore_ascii_case(&expected_ip) || v.eq_ignore_ascii_case(&expected_name) {
+                                Ok(())
+                            } else {
+                                Err((421u16, "text/plain", b"Misdirected Request".to_vec()))
+                            }
+                        }
                     };
 
-                    let (status, content_type, body) = if !is_valid_host {
-                        (421, "text/plain", b"Misdirected Request".to_vec())
+                    let (status, content_type, body) = if let Err(err_resp) = host_validation {
+                        err_resp
                     } else {
                         match path {
                             "/" | "/index.html" => {
@@ -299,7 +302,7 @@ impl LocalAppServer {
                                 (200, "application/javascript; charset=utf-8", content.into_bytes())
                             }
                             "/api/params" if method == "POST" => {
-                                Self::verify_csrf_and_token(&request, &session_token_clone, |req| {
+                                Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
                                     let is_json = req
                                         .header("content-type")
                                         .map(|v| v.contains("application/json"))
@@ -318,7 +321,7 @@ impl LocalAppServer {
                                 })
                             }
                             "/api/input/di" | "/api/cab/ir" if method == "POST" => {
-                                Self::verify_csrf_and_token(&request, &session_token_clone, |req| {
+                                Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
                                     let content_len = req
                                         .header("content-length")
                                         .and_then(|v| v.parse::<usize>().ok());
@@ -338,7 +341,7 @@ impl LocalAppServer {
                             | "/api/input/calibrate"
                                 if method == "POST" =>
                             {
-                                Self::verify_csrf_and_token(&request, &session_token_clone, |req| {
+                                Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
                                     api::dispatch(&api_ctx_clone, url, method, &req.body)
                                 })
                             }
@@ -391,6 +394,7 @@ impl LocalAppServer {
     fn verify_csrf_and_token<F>(
         request: &RawRequest,
         session_token: &str,
+        server_port: u16,
         handler: F,
     ) -> (u16, &'static str, Vec<u8>)
     where
@@ -399,8 +403,13 @@ impl LocalAppServer {
         let origin_hdr = request.header("origin");
         let sec_fetch = request.header("sec-fetch-site");
 
+        let expected_ip_origin = format!("http://127.0.0.1:{}", server_port);
+        let expected_localhost_origin = format!("http://localhost:{}", server_port);
         let is_valid_origin = match origin_hdr {
-            Some(v) => v.starts_with("http://127.0.0.1") || v.starts_with("http://localhost"),
+            Some(v) => {
+                v.eq_ignore_ascii_case(&expected_ip_origin)
+                    || v.eq_ignore_ascii_case(&expected_localhost_origin)
+            }
             None => sec_fetch.map(|s| s != "cross-site").unwrap_or(true),
         };
 

@@ -112,7 +112,7 @@ fn test_ca_03_bright_switch_behavior_dependent_on_input_gain() {
 
 #[test]
 fn test_ca_04_master_volume_increases_thd_vs_output_level_linear_scaling() {
-    let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritPlexi1959);
+    let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp.set_sample_rate(48000.0);
     amp.panel_mut().input_gain = 3.0;
 
@@ -204,19 +204,22 @@ fn test_ca_05_presence_and_depth_in_negative_feedback_loop() {
 
 #[test]
 fn test_ca_06_channel_toggle_voicing_reconfiguration() {
-    let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
-    amp.set_sample_rate(48000.0);
-
     let n = 512;
-    let in_sig = vec![0.2f32; n];
+    let in_sig: Vec<f32> = (0..n)
+        .map(|i| 0.2 * (2.0 * std::f32::consts::PI * 440.0 * (i as f32) / 48000.0).sin())
+        .collect();
 
-    amp.panel_mut().channel_toggle = AmpChannelVoicing::Norm;
+    let mut amp_norm = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
+    amp_norm.set_sample_rate(48000.0);
+    amp_norm.panel_mut().channel_toggle = AmpChannelVoicing::Norm;
     let mut out_norm = vec![0.0f32; n];
-    amp.process(&in_sig, &mut out_norm);
+    amp_norm.process(&in_sig, &mut out_norm);
 
-    amp.panel_mut().channel_toggle = AmpChannelVoicing::HighLead;
+    let mut amp_lead = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
+    amp_lead.set_sample_rate(48000.0);
+    amp_lead.panel_mut().channel_toggle = AmpChannelVoicing::HighLead;
     let mut out_lead = vec![0.0f32; n];
-    amp.process(&in_sig, &mut out_lead);
+    amp_lead.process(&in_sig, &mut out_lead);
 
     let sum_norm: f32 = out_norm[128..].iter().map(|s| s.abs()).sum();
     let sum_lead: f32 = out_lead[128..].iter().map(|s| s.abs()).sum();

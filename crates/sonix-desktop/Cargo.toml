@@ -2,6 +2,7 @@
 name = "sonix-desktop"
 version = "1.0.0"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 ampforge-dsp = { path = "../ampforge-dsp" }
@@ -12,6 +13,7 @@ cpal = "0.18.2"
 ringbuf = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+getrandom = "0.3"
 
 [features]
 default = ["dev-http"]
@@ -71,5 +73,13 @@ required-features = ["dev-http"]
 
 [[test]]
 name = "contract_030_gate_api"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_035_ui_backend_contracts"
+required-features = ["dev-http"]
+
+[[test]]
+name = "contract_036_audio_host_midi_telemetry"
 required-features = ["dev-http"]
 

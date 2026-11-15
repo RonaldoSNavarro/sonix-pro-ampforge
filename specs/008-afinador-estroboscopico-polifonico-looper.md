@@ -69,3 +69,4 @@ Fontes da verdade e evidências no repositório:
 
 ## Notas
 - Rastreabilidade SRS: **RF-026**, **RF-027**; Design System Seção 2.1 (`--surface-oled-screen`) e Seção 5.
+- **2026-11-14 (Auditoria Spec 044):** Modos polifônico, temperamento `SWEETENED_GUITAR`, half-speed/reverse e capacidade por taxa do looper permanecem parciais na cadeia ao vivo; retomado pela **Spec 043**.

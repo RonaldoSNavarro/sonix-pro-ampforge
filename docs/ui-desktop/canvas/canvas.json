@@ -2,26 +2,141 @@
   "v": 3,
   "attachments": {},
   "boards": {
-    "AmpHead.dc.html": {"h": 282, "is_interactive": true, "title": "Componente · AmpHead", "w": 1000, "x": 0, "y": 3800},
-    "Amps.dc.html": {"h": 1910, "is_interactive": true, "radius": 8, "title": "Amplificadores — 5 modelos", "w": 1200, "x": 0, "y": 1400},
-    "Audio.dc.html": {"h": 760, "is_interactive": true, "radius": 8, "title": "4 · Áudio, latência e calibração", "w": 1100, "x": 4560, "y": 0},
-    "Chassi.dc.html": {"h": 900, "is_interactive": true, "radius": 8, "title": "2 · Chassi aberto / Mod Shop + CRT", "w": 1440, "x": 1520, "y": 0},
-    "Gabinete.dc.html": {"h": 900, "is_interactive": true, "radius": 8, "title": "3 · Gabinete, microfones e IR", "w": 1440, "x": 3040, "y": 0},
-    "Main.dc.html": {"h": 900, "is_interactive": true, "radius": 8, "title": "1 · Rig principal", "w": 1440, "x": 0, "y": 0},
-    "Palco.dc.html": {"h": 900, "is_interactive": true, "radius": 8, "title": "5 · Modo palco: afinador, looper e footswitches", "w": 1440, "x": 5740, "y": 0},
-    "Pedais.dc.html": {"h": 1400, "is_interactive": true, "radius": 8, "title": "Pedais e equipamentos de estúdio", "w": 1440, "x": 1280, "y": 1400},
-    "Pedal.dc.html": {"h": 220, "is_interactive": true, "title": "Componente · Pedal", "w": 240, "x": 1080, "y": 3800},
-    "Rack.dc.html": {"h": 190, "is_interactive": true, "title": "Componente · Rack", "w": 560, "x": 1400, "y": 3800}
+    "AmpHead.dc.html": {
+      "h": 282,
+      "is_interactive": true,
+      "title": "Componente · AmpHead",
+      "w": 1000,
+      "x": 0,
+      "y": 3800
+    },
+    "Amps.dc.html": {
+      "h": 2140,
+      "is_interactive": true,
+      "radius": 8,
+      "title": "Amplificadores — 5 modelos",
+      "w": 1214,
+      "x": 0,
+      "y": 1400
+    },
+    "Audio.dc.html": {
+      "h": 760,
+      "is_interactive": true,
+      "radius": 8,
+      "title": "4 · Áudio, latência e calibração",
+      "w": 1100,
+      "x": 4560,
+      "y": 0
+    },
+    "Chassi.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "radius": 8,
+      "title": "2 · Chassi aberto / Mod Shop + CRT",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "Gabinete.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "radius": 8,
+      "title": "3 · Gabinete, microfones e IR",
+      "w": 1440,
+      "x": 3040,
+      "y": 0
+    },
+    "Main.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "radius": 8,
+      "title": "1 · Rig principal",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "Palco.dc.html": {
+      "h": 900,
+      "is_interactive": true,
+      "radius": 8,
+      "title": "5 · Modo palco: afinador, looper e footswitches",
+      "w": 1440,
+      "x": 5740,
+      "y": 0
+    },
+    "Pedais.dc.html": {
+      "h": 1451,
+      "is_interactive": true,
+      "radius": 8,
+      "title": "Pedais e equipamentos de estúdio",
+      "w": 1446,
+      "x": 1280,
+      "y": 1400
+    },
+    "Pedal.dc.html": {
+      "h": 337,
+      "is_interactive": true,
+      "title": "Componente · Pedal",
+      "w": 226,
+      "x": 1080,
+      "y": 3800
+    },
+    "Rack.dc.html": {
+      "h": 190,
+      "is_interactive": true,
+      "title": "Componente · Rack",
+      "w": 560,
+      "x": 1400,
+      "y": 3800
+    }
   },
-  "createdOnFiles": {"at": "2026-11-13T21:30:00Z", "v": 1},
+  "createdOnFiles": {
+    "at": "2026-11-13T21:30:00Z",
+    "v": 1
+  },
   "designSystems": [],
-  "launch": {"file": "Main.dc.html", "view": "focused"},
-  "notes": {
-    "t1": {"kind": "title1", "maxW": 7180, "text": "SONIX PRO — AMPFORGE · telas da aplicação desktop", "w": 240, "x": 0, "y": -260},
-    "t2": {"kind": "title1", "maxW": 2720, "text": "Equipamentos — painéis e controles das versões originais", "w": 240, "x": 0, "y": 1140},
-    "t3": {"kind": "title1", "maxW": 1960, "text": "Componentes reutilizados pelas telas", "w": 240, "x": 0, "y": 3540}
+  "launch": {
+    "file": "Main.dc.html",
+    "view": "focused"
   },
-  "order": ["Main.dc.html", "Chassi.dc.html", "Gabinete.dc.html", "Audio.dc.html", "Palco.dc.html", "Amps.dc.html", "Pedais.dc.html", "AmpHead.dc.html", "Pedal.dc.html", "Rack.dc.html"],
+  "notes": {
+    "t1": {
+      "kind": "title1",
+      "maxW": 7180,
+      "text": "SONIX PRO — AMPFORGE · telas da aplicação desktop",
+      "w": 240,
+      "x": 0,
+      "y": -260
+    },
+    "t2": {
+      "kind": "title1",
+      "maxW": 2720,
+      "text": "Equipamentos — painéis e controles das versões originais",
+      "w": 240,
+      "x": 0,
+      "y": 1140
+    },
+    "t3": {
+      "kind": "title1",
+      "maxW": 1960,
+      "text": "Componentes reutilizados pelas telas",
+      "w": 240,
+      "x": 0,
+      "y": 3540
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Chassi.dc.html",
+    "Gabinete.dc.html",
+    "Audio.dc.html",
+    "Palco.dc.html",
+    "Amps.dc.html",
+    "Pedais.dc.html",
+    "AmpHead.dc.html",
+    "Pedal.dc.html",
+    "Rack.dc.html"
+  ],
   "pages": [],
   "title": "AMPFORGE Desktop UI"
 }

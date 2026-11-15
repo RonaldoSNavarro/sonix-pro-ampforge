@@ -62,4 +62,10 @@ impl CpuMonitor {
         self.buffer_size = buffer_size;
         self.deadline_micros = ((buffer_size.as_usize() as f64 / sample_rate.as_f64()) * 1_000_000.0) as u64;
     }
+
+    pub fn update_raw_hz(&mut self, sample_rate_hz: f64, block_frames: usize) {
+        let sr = sample_rate_hz.max(1.0);
+        let frames = block_frames.max(1);
+        self.deadline_micros = ((frames as f64 / sr) * 1_000_000.0).round() as u64;
+    }
 }

@@ -1,544 +1,889 @@
-import type { AppStore, BlockId } from '../store';
-import { createAmpHeadElement } from '../components/AmpHead';
-import { createPedalElement, type PedalModelId } from '../components/Pedal';
-import { createRackElement } from '../components/Rack';
-import { createTubeElement } from '../components/Tube';
+import type { AppStore, BlockId } from '../store.ts';
+import { createAmpHeadElement, type AmpModelId } from '../components/AmpHead.ts';
+import { createPedalElement, type PedalModelId } from '../components/Pedal.ts';
+import { createRackElement } from '../components/Rack.ts';
+import { createTubeElement } from '../components/Tube.ts';
 import {
   bool,
   makeChipButton,
-  makeControlSelect,
   makeControlSlider,
-  makeLedMeter,
-  makePanelCard,
   makeToggleRow,
-  num,
   str,
-} from './_helpers';
+} from './_helpers.ts';
 
-const BLOCK_ORDER_ROW_A: { id: BlockId; code: string; label: string; toggleControl?: string; paramKey?: string }[] = [
-  { id: 'in', code: 'IN', label: 'Entrada' },
-  { id: 'gate', code: 'NG', label: 'Gate-2', toggleControl: 'gate.enabled', paramKey: 'gate.enabled' },
-  { id: 'drive', code: 'DRV', label: 'Drive', toggleControl: 'drive.enabled', paramKey: 'drive.enabled' },
-  { id: 'split', code: 'SPL', label: 'Split' },
-  { id: 'amp', code: 'AMP', label: 'Amp 1', toggleControl: 'amp.enabled', paramKey: 'amp_1.enabled' },
-  { id: 'cab', code: 'CAB', label: 'Cab 1', toggleControl: 'cab.enabled', paramKey: 'cab_1.enabled' },
-  { id: 'eq', code: 'EQ', label: '10B EQ', toggleControl: 'eq_1.enabled', paramKey: 'eq_1.enabled' },
-  { id: 'merge', code: 'MRG', label: 'Merge' },
-  { id: 'delay', code: 'DLY', label: 'RE-201', toggleControl: 'dly_1.enabled', paramKey: 'dly_1.enabled' },
-  { id: 'reverb', code: 'REV', label: 'Plate', toggleControl: 'rev_1.enabled', paramKey: 'rev_1.enabled' },
-  { id: 'out', code: 'OUT', label: 'Saída' },
-];
-
-const BLOCK_ORDER_ROW_B: { id: BlockId; code: string; label: string; toggleControl?: string; paramKey?: string }[] = [
-  { id: 'comp', code: '1176', label: 'FET 76', toggleControl: 'comp_2.enabled', paramKey: 'comp_2.enabled' },
-  { id: 'amp2', code: 'AMP B', label: 'Amp 2', toggleControl: 'amp_2.enabled', paramKey: 'amp_2.enabled' },
-  { id: 'cab2', code: 'CAB B', label: 'Cab 2', toggleControl: 'cab_2.enabled', paramKey: 'cab_2.enabled' },
-  { id: 'chorus', code: 'CE-2', label: 'Chorus', toggleControl: 'mod_2.enabled', paramKey: 'mod_2.enabled' },
-];
-
-function renderSignalBlockCell(
-  store: AppStore,
-  def: { id: BlockId; code: string; label: string; toggleControl?: string; paramKey?: string }
-): HTMLElement {
-  const selected = store.selectedBlock === def.id;
-  const active = def.paramKey ? bool(store, def.paramKey, true) : true;
-  const cell = document.createElement('button');
-  cell.type = 'button';
-  cell.className = 'm-cell';
-  cell.dataset.controlId = 'ui.inspector_select';
-  cell.dataset.blockId = def.id;
-  cell.dataset.selected = selected ? 'true' : 'false';
-  cell.style.minWidth = '72px';
-  cell.style.flex = '1 1 0';
-  cell.title = `${def.label} — clique para inspecionar`;
-
-  const top = document.createElement('div');
-  top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;width:100%;gap:4px;';
-  const codeEl = document.createElement('span');
-  codeEl.className = 'm-mono';
-  codeEl.textContent = def.code;
-  codeEl.style.cssText = 'font-size:10px;font-weight:700;color:#e8eaed;';
-
-  const dot = document.createElement('span');
-  dot.style.cssText = `width:6px;height:6px;border-radius:50%;background:${active ? '#ff8a3d' : '#3a3f46'};box-shadow:${active ? '0 0 6px #ff8a3d' : 'none'};`;
-  top.append(codeEl, dot);
-
-  const sub = document.createElement('span');
-  sub.style.cssText = 'font-size:9px;color:#9aa2ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-  sub.textContent = def.label;
-  cell.append(top, sub);
-
-  cell.addEventListener('click', () => store.selectBlock(def.id));
-  cell.addEventListener('dblclick', () => {
-    if (def.toggleControl && def.paramKey) {
-      void store.setControl(def.toggleControl, !bool(store, def.paramKey, true));
-    }
-  });
-  return cell;
+interface GridBlockDef {
+  id: BlockId;
+  row: 1 | 2;
+  col: number;
+  tag: string;
+  title: string;
+  dotColor: string;
+  chTag: string;
+  enableKey?: string;
+  bypassControlId?: string;
+  subText: (store: AppStore) => string;
 }
 
-function renderInspectorBody(store: AppStore, blk: BlockId): HTMLElement {
-  const body = document.createElement('div');
-  body.style.cssText = 'display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;flex:1;padding-right:2px;';
+const AMP_LABELS: Record<string, { short: string; full: string; ref: string }> = {
+  plexi_1959: { short: 'Plexi 1959', full: 'BRIT PLEXI · 1959', ref: 'Ref.: Marshall Super Lead 100W · 4× EL34' },
+  jcm800_2203: { short: '2203', full: 'BRIT 800 · 2203', ref: 'Ref.: Marshall JCM800 2203 · 4× EL34' },
+  twin_ab763: { short: 'Twin', full: 'TWIN REVERB · AB763', ref: 'Ref.: Fender Blackface AB763 · 4× 6L6GC' },
+  dual_rect: { short: 'Recto', full: 'CALI RECTO · DUAL RECT', ref: 'Ref.: Mesa/Boogie Dual Rectifier Rev F · 4× 6L6GC' },
+  ac30_tb: { short: 'AC30 TB', full: 'VOX · AC30/6 TB', ref: 'Ref.: Vox AC30 Top Boost · 4× EL84' },
+};
 
-  const add = (...els: HTMLElement[]) => els.forEach((e) => body.appendChild(e));
+const CAB_LABELS: Record<string, string> = {
+  v30_4x12: '4×12 V30',
+  greenback_4x12: '4×12 Greenback',
+  alnico_blue_2x12: '2×12 Alnico',
+  twin_2x12_open: '2×12 Open',
+};
 
+const DRIVE_LABELS: Record<string, string> = {
+  ts808: 'Screamer 808',
+  klon: 'Golden Klone',
+  rat: 'Rodent',
+  muff: 'Big Fuzz Pi',
+  fuzzface: 'Fuzz Face',
+  ds1: 'DS-One',
+};
+
+const GRID_BLOCKS: GridBlockDef[] = [
+  { id: 'in', row: 1, col: 1, tag: 'IN', title: 'ENTRADA · HI-Z', dotColor: '#3dd8ff', chTag: '-', subText: () => 'Guitarra Hi-Z' },
+  { id: 'gate', row: 1, col: 2, tag: 'GATE', title: 'NOISE GATE · NS-2', dotColor: '#4ee680', chTag: 'A', enableKey: 'gate.enabled', bypassControlId: 'gate.enabled', subText: () => 'Noise Gate' },
+  { id: 'drive', row: 1, col: 3, tag: 'DRIVE', title: 'PEDAL DRIVE', dotColor: '#ff8a3d', chTag: 'B', enableKey: 'drive.enabled', bypassControlId: 'drive.enabled', subText: (s) => DRIVE_LABELS[str(s, 'drive.model', 'ts808')] ?? 'Screamer 808' },
+  { id: 'split', row: 1, col: 4, tag: 'SPLIT', title: 'SPLIT A / B', dotColor: '#3dd8ff', chTag: '-', enableKey: 'split.enabled', bypassControlId: 'split.enabled', subText: () => 'Split A/B' },
+  { id: 'amp', row: 1, col: 5, tag: 'AMP 1', title: 'AMPLIFICADOR 1', dotColor: '#ff8a3d', chTag: 'D', enableKey: 'amp_1.enabled', bypassControlId: 'amp.enabled', subText: (s) => (AMP_LABELS[str(s, 'amp_1.model', 'dual_rect')]?.full.split(' · ')[0] ?? 'CALI RECTO') },
+  { id: 'cab', row: 1, col: 6, tag: 'CAB 1', title: 'GABINETE 1', dotColor: '#ffd166', chTag: 'A', enableKey: 'cab_1.enabled', bypassControlId: 'cab.enabled', subText: (s) => CAB_LABELS[str(s, 'cab_1.model', 'v30_4x12')] ?? '4×12 V30' },
+  { id: 'eq', row: 1, col: 7, tag: 'EQ', title: '10 BAND EQ', dotColor: '#4ee680', chTag: 'A', enableKey: 'eq_1.enabled', bypassControlId: 'eq_1.enabled', subText: () => '10 Band EQ' },
+  { id: 'merge', row: 1, col: 8, tag: 'MERGE', title: 'MERGE A + B', dotColor: '#3dd8ff', chTag: '-', subText: () => 'Mix A+B' },
+  { id: 'delay', row: 1, col: 9, tag: 'DELAY', title: 'TAPE ECHO RE-201', dotColor: '#3dd8ff', chTag: 'B', enableKey: 'dly_1.enabled', bypassControlId: 'dly_1.enabled', subText: () => 'Tape Echo 201' },
+  { id: 'reverb', row: 1, col: 10, tag: 'REVERB', title: 'STUDIO PLATE', dotColor: '#9c7cff', chTag: 'A', enableKey: 'rev_1.enabled', bypassControlId: 'rev_1.enabled', subText: () => 'Studio Plate' },
+  { id: 'out', row: 1, col: 11, tag: 'OUT', title: 'SAÍDA 1 / 2', dotColor: '#3dd8ff', chTag: '-', subText: () => 'Saída 1/2' },
+  { id: 'comp', row: 2, col: 4, tag: 'COMP', title: 'FET 76 COMPRESSOR', dotColor: '#6f7785', chTag: 'A', enableKey: 'comp_2.enabled', bypassControlId: 'comp_2.enabled', subText: () => 'FET 76' },
+  { id: 'amp2', row: 2, col: 5, tag: 'AMP 2', title: 'AMP PARALELO 2', dotColor: '#ff8a3d', chTag: 'A', enableKey: 'amp_2.enabled', bypassControlId: 'amp_2.enabled', subText: (s) => (str(s, 'amp_2.model', 'twin_ab763') === 'twin_ab763' ? 'US Twin' : (AMP_LABELS[str(s, 'amp_2.model', 'twin_ab763')]?.short ?? 'US Twin')) },
+  { id: 'cab2', row: 2, col: 6, tag: 'CAB 2', title: 'CAB PARALELO 2', dotColor: '#ffd166', chTag: 'A', enableKey: 'cab_2.enabled', bypassControlId: 'cab_2.enabled', subText: (s) => CAB_LABELS[str(s, 'cab_2.model', 'alnico_blue_2x12')] ?? '2×12 Alnico' },
+  { id: 'chorus', row: 2, col: 7, tag: 'MOD', title: 'CHORUS-2', dotColor: '#9c7cff', chTag: 'A', enableKey: 'mod_2.enabled', bypassControlId: 'mod_2.enabled', subText: () => 'Chorus-2' },
+];
+
+function tubeComplementForModel(model: AmpModelId): string[] {
+  switch (model) {
+    case 'twin_ab763':
+      return ['12AX7', '12AX7', '12AT7', '12AX7', '6L6GC', '6L6GC', '6L6GC', '6L6GC'];
+    case 'dual_rect':
+      return ['12AX7', '12AX7', '12AX7', '12AX7', '6L6GC', '6L6GC', '6L6GC', '6L6GC'];
+    case 'ac30_tb':
+      return ['ECC83', 'ECC83', 'ECC83', 'ECC82', 'EL84', 'EL84', 'EL84', 'EL84'];
+    default:
+      return ['12AX7', '12AX7', '12AX7', '12AT7', 'EL34', 'EL34', 'EL34', 'EL34'];
+  }
+}
+
+function showPresetMenuPopover(anchor: HTMLElement, store: AppStore): void {
+  document.querySelectorAll('.sonix-preset-pop').forEach((el) => el.remove());
+  const rect = anchor.getBoundingClientRect();
+  const pop = document.createElement('div');
+  pop.className = 'sonix-preset-pop';
+  pop.style.cssText = `
+    position:fixed;left:${Math.round(rect.left)}px;top:${Math.round(rect.bottom + 4)}px;z-index:999;
+    width:${Math.round(rect.width)}px;max-height:280px;overflow:auto;padding:4px;border-radius:6px;
+    background:#171a20;border:1px solid #353c48;box-shadow:0 12px 28px rgba(0,0,0,.8);
+    display:flex;flex-direction:column;gap:2px;
+  `;
+  store.presets.forEach((p, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.controlId = 'topbar.preset_load';
+    btn.style.cssText = `
+      height:26px;padding:0 10px;border:0;border-radius:4px;text-align:left;font-size:11px;cursor:pointer;
+      background:${idx === store.presetIdx ? '#2a3340' : 'transparent'};
+      color:${idx === store.presetIdx ? '#ff9f4d' : '#dbe1e9'};
+    `;
+    btn.textContent = p.name;
+    btn.addEventListener('click', () => {
+      pop.remove();
+      void store.loadPresetAt(idx);
+    });
+    pop.appendChild(btn);
+  });
+  document.body.appendChild(pop);
+  const closeFn = (ev: MouseEvent) => {
+    if (!pop.contains(ev.target as Node) && !anchor.contains(ev.target as Node)) {
+      pop.remove();
+      window.removeEventListener('mousedown', closeFn);
+    }
+  };
+  window.setTimeout(() => window.addEventListener('mousedown', closeFn), 0);
+}
+
+function renderInspectorBody(store: AppStore, container: HTMLElement): void {
+  const blk = store.selectedBlock;
   if (blk === 'in') {
-    add(
-      makeControlSelect(
-        store,
-        'main.input_source',
-        'input.source',
-        [
-          { value: 'device', label: 'Interface Áudio (DI)' },
-          { value: 'test_riff', label: 'Riff Interno Teste' },
-          { value: 'di_file', label: 'Arquivo DI (.wav)' },
-        ],
-        'device'
-      ),
-      makeControlSlider(store, 'main.input_boost', 'input.boost', 'Ganho de Entrada', 1.0, (v) => `${v.toFixed(2)}x`)
-    );
-  } else if (blk === 'gate') {
-    add(
-      makeToggleRow(store, 'gate.enabled', 'gate.enabled', 'Bypass Gate-2', true),
-      makeControlSelect(
-        store,
-        'gate.mode',
-        'gate.mode',
-        [
-          { value: 'natural', label: 'Natural (Expansor)' },
-          { value: 'classic', label: 'Classic (Hard Gate)' },
-        ],
-        'natural'
-      ),
-      makeControlSlider(store, 'gate.threshold_db', 'gate.threshold_db', 'Threshold', -65),
-      makeControlSlider(store, 'gate.release_ms', 'gate.release_ms', 'Release / Decay', 80),
-      makeControlSlider(store, 'gate.hysteresis_db', 'gate.hysteresis_db', 'Histerese', 4),
-      makeControlSlider(store, 'gate.attack_ms', 'gate.attack_ms', 'Attack', 1),
-      makeControlSlider(store, 'gate.hold_ms', 'gate.hold_ms', 'Hold', 35),
-      makeControlSlider(store, 'gate.range_db', 'gate.range_db', 'Range', -70),
-      makeControlSlider(store, 'gate.key_hpf_hz', 'gate.key_hpf_hz', 'Sidechain HPF', 80),
-      makeControlSlider(store, 'gate.key_lpf_hz', 'gate.key_lpf_hz', 'Sidechain LPF', 4500)
-    );
-  } else if (blk === 'drive') {
-    add(
-      makeToggleRow(store, 'drive.enabled', 'drive.enabled', 'Bypass Drive', false),
-      makeControlSelect(
-        store,
-        'drive.model',
-        'drive.model',
-        [
-          { value: 'ts808', label: 'TS-808 Overdrive' },
-          { value: 'klon', label: 'Golden Klone' },
-          { value: 'rat', label: 'Rodent Pro' },
-          { value: 'muff', label: 'Big Fuzz Pi' },
-          { value: 'fuzzface', label: 'Face Fuzz Ge' },
-          { value: 'ds1', label: 'DS-One Dist' },
-        ],
-        'ts808'
-      ),
-      makeControlSlider(store, 'drive.drive', 'drive.drive', 'Drive / Gain', 5),
-      makeControlSlider(store, 'drive.tone', 'drive.tone', 'Tone / Filter', 5),
-      makeControlSlider(store, 'drive.level', 'drive.level', 'Level', 5),
-      makeControlSlider(store, 'drive.bias', 'drive.bias', 'Bias / Sag', 5)
-    );
-  } else if (blk === 'chorus') {
-    add(
-      makeToggleRow(store, 'mod_2.enabled', 'mod_2.enabled', 'Bypass Chorus-2', false),
-      makeControlSlider(store, 'mod_2.rate_hz', 'mod_2.rate_hz', 'Rate', 0.8),
-      makeControlSlider(store, 'mod_2.depth', 'mod_2.depth', 'Depth', 0.55),
-      makeControlSlider(store, 'mod_2.mix', 'mod_2.mix', 'Mix Wet', 0.5)
-    );
-  } else if (blk === 'eq') {
-    add(
-      makeToggleRow(store, 'eq_1.enabled', 'eq_1.enabled', 'Bypass 10-Band EQ', false),
-      makeControlSelect(
-        store,
-        'eq_1.mode',
-        'eq_1.mode',
-        [
-          { value: 'mxr_10band', label: '10 Bandas (±12 dB)' },
-          { value: 'eight_band', label: '8 Bandas Studio' },
-          { value: 'graphic_5_boogie', label: '5 Bandas Classic' },
-        ],
-        'mxr_10band'
-      ),
-      makeControlSlider(store, 'eq_1.volume_db', 'eq_1.volume_db', 'Output Volume', 0),
-      makeControlSlider(store, 'eq_1.gain_db', 'eq_1.gain_db', 'Input Gain', 0),
-      makeControlSlider(store, 'eq_1.band1', 'eq_1.band1.gain_db', '31.25 Hz', 0),
-      makeControlSlider(store, 'eq_1.band3', 'eq_1.band3.gain_db', '125 Hz', 0),
-      makeControlSlider(store, 'eq_1.band5', 'eq_1.band5.gain_db', '500 Hz', 0),
-      makeControlSlider(store, 'eq_1.band7', 'eq_1.band7.gain_db', '2 kHz', 0),
-      makeControlSlider(store, 'eq_1.band9', 'eq_1.band9.gain_db', '8 kHz', 0)
-    );
-  } else if (blk === 'comp') {
-    add(
-      makeToggleRow(store, 'comp_2.enabled', 'comp_2.enabled', 'Bypass FET 76', false),
-      makeControlSelect(
-        store,
-        'comp_2.ratio',
-        'comp_2.ratio',
-        [
-          { value: '4', label: '4:1 Smooth' },
-          { value: '8', label: '8:1 Tight' },
-          { value: '12', label: '12:1 Limit' },
-          { value: '20', label: '20:1 Brick' },
-          { value: 'all', label: 'ALL BUTTONS IN' },
-        ],
-        '4'
-      ),
-      makeControlSlider(store, 'comp_2.input', 'comp_2.input', 'Input Drive', 5),
-      makeControlSlider(store, 'comp_2.output', 'comp_2.output', 'Output Level', 5),
-      makeControlSlider(store, 'comp_2.attack', 'comp_2.attack', 'Attack', 4),
-      makeControlSlider(store, 'comp_2.release', 'comp_2.release', 'Release', 5)
-    );
-  } else if (blk === 'delay') {
-    add(
-      makeToggleRow(store, 'dly_1.enabled', 'dly_1.enabled', 'Bypass RE-201', false),
-      makeControlSlider(store, 'dly_1.repeat_rate', 'dly_1.repeat_rate', 'Repeat Rate', 4.5),
-      makeControlSlider(store, 'dly_1.intensity', 'dly_1.intensity', 'Intensity', 4.0),
-      makeControlSlider(store, 'dly_1.echo_volume', 'dly_1.echo_volume', 'Echo Volume', 5.0),
-      makeControlSlider(store, 'dly_1.reverb_volume', 'dly_1.reverb_volume', 'Spring Mix', 2.0),
-      makeControlSlider(store, 'dly_1.bass', 'dly_1.bass', 'Echo Bass', 5.0),
-      makeControlSlider(store, 'dly_1.treble', 'dly_1.treble', 'Echo Treble', 5.0),
-      makeToggleRow(store, 'dly_1.spillover', 'dly_1.spillover', 'Spillover Cauda', true, 'ON', 'OFF')
-    );
-  } else if (blk === 'reverb') {
-    add(
-      makeToggleRow(store, 'rev_1.enabled', 'rev_1.enabled', 'Bypass Plate Reverb', false),
-      makeControlSlider(store, 'rev_1.decay_s', 'rev_1.decay_s', 'Decay', 2.5),
-      makeControlSlider(store, 'rev_1.predelay_ms', 'rev_1.predelay_ms', 'Pre-Delay', 20),
-      makeControlSlider(store, 'rev_1.damping', 'rev_1.damping', 'Damping', 5.0),
-      makeControlSlider(store, 'rev_1.mix', 'rev_1.mix', 'Mix', 40),
-      makeToggleRow(store, 'rev_1.spillover', 'rev_1.spillover', 'Spillover', true, 'ON', 'OFF')
-    );
-  } else if (blk === 'split' || blk === 'merge' || blk === 'amp2' || blk === 'cab2') {
-    add(
-      makeToggleRow(store, 'split.enabled', 'split.enabled', 'Roteamento Paralelo (B)', false, 'ATIVO', 'OFF'),
-      makeControlSelect(
-        store,
-        'split.mode',
-        'split.mode',
-        [
-          { value: 'ab', label: 'A/B Paralelo' },
-          { value: 'crossover', label: 'Crossover LR4' },
-        ],
-        'ab'
-      ),
-      makeControlSlider(store, 'split.crossover_hz', 'split.crossover_hz', 'Crossover Hz', 650),
-      makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Linha B', -6),
-      makeToggleRow(store, 'merge.row_1_phase_invert', 'merge.row_1_phase_invert', 'Fase 180° B', false, 'INV', '0°'),
-      makeToggleRow(store, 'amp_2.enabled', 'amp_2.enabled', 'Amp 2 Ativo', true),
-      makeControlSelect(
-        store,
-        'amp_2.model',
-        'amp_2.model',
-        [
-          { value: 'twin_ab763', label: 'US Twin AB763' },
-          { value: 'ac30_tb', label: 'AC30 Top Boost' },
-          { value: 'plexi_1959', label: 'Plexi 1959' },
-          { value: 'jcm800_2203', label: 'JCM 800 2203' },
-          { value: 'dual_rect', label: 'Dual Rectifier' },
-        ],
-        'twin_ab763'
-      ),
-      makeToggleRow(store, 'cab_2.enabled', 'cab_2.enabled', 'Cab 2 Ativo', true),
-      makeControlSelect(
-        store,
-        'cab_2.speaker',
-        'cab_2.speaker',
-        [
-          { value: 'alnico_blue_2x12', label: '2x12 Alnico Blue' },
-          { value: 'twin_2x12_open', label: '2x12 Open Back' },
-          { value: 'greenback_4x12', label: '4x12 Greenback' },
-          { value: 'v30_4x12', label: '4x12 V30' },
-        ],
-        'alnico_blue_2x12'
-      )
-    );
-  } else if (blk === 'cab') {
-    add(
-      makeToggleRow(store, 'cab.enabled', 'cab_1.enabled', 'Bypass Gabinete', true),
-      makeControlSelect(
-        store,
-        'cab.speaker',
-        'cab_1.speaker',
-        [
-          { value: 'greenback_4x12', label: '4x12 G12M Greenback' },
-          { value: 'v30_4x12', label: '4x12 V30 Heavy' },
-          { value: 'alnico_blue_2x12', label: '2x12 Alnico Blue' },
-          { value: 'twin_2x12_open', label: '2x12 Open Back Jensen' },
-        ],
-        'greenback_4x12'
-      ),
-      makeControlSlider(store, 'cab.resonance_hz', 'cab_1.resonance_hz', 'Ressonância Caixa', 110),
-      makeControlSlider(store, 'cab.hicut_khz', 'cab_1.hicut_khz', 'High Cut', 6.5),
-      makeToggleRow(store, 'cab.ir_enabled', 'cab_1.ir_enabled', 'IR Custom Ativo', false, 'ON', 'OFF')
-    );
-  } else {
-    // Amp / Out default inspector
-    add(
-      makeControlSlider(store, 'amp.gain', 'amp_1.gain', 'Gain / Pre-Amp', 6.5),
-      makeControlSlider(store, 'amp.overdrive', 'amp_1.overdrive', 'Overdrive Trim', 5.0),
-      makeControlSlider(store, 'amp.bass', 'amp_1.bass', 'Bass', 5.5),
-      makeControlSlider(store, 'amp.middle', 'amp_1.middle', 'Middle', 5.0),
-      makeControlSlider(store, 'amp.treble', 'amp_1.treble', 'Treble', 6.0),
-      makeControlSlider(store, 'amp.presence', 'amp_1.presence', 'Presence', 5.0),
-      makeControlSlider(store, 'amp.depth', 'amp_1.depth', 'Depth / Resonance', 5.0),
-      makeControlSlider(store, 'amp.master', 'amp_1.master', 'Master Volume', 5.0)
-    );
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const curSrc = str(store, 'input.source', 'device');
+    for (const [val, lbl] of [
+      ['device', 'Guitarra Hi-Z'],
+      ['test_riff', 'Riff Interno'],
+      ['di_file', 'Arquivo DI'],
+    ] as const) {
+      chips.appendChild(makeChipButton('main.input_source', lbl, curSrc === val, () => void store.setControl('main.input_source', val)));
+    }
+    container.append(chips, makeControlSlider(store, 'main.input_boost', 'input.boost', 'Ganho de Entrada', 1.0, (v) => `${v.toFixed(2)}x`));
+    return;
   }
 
-  return body;
+  if (blk === 'gate') {
+    const gr = document.createElement('div');
+    gr.dataset.live = 'gate-gr';
+    gr.className = 'm-mono';
+    gr.style.cssText = 'font-size:11px;color:#8be8a2;background:#101418;border:1px solid #222a32;border-radius:4px;padding:4px 8px;';
+    const gateOpen = store.telemetry.gate_state === 'open';
+    const gateGr = store.telemetry.gate_gr_db ?? (gateOpen ? 0 : -18.2);
+    gr.textContent = `GR ${gateGr.toFixed(1)} dB`;
+    container.append(
+      gr,
+      makeControlSlider(store, 'gate.threshold_db', 'gate.threshold_db', 'Threshold', -65, (v) => `${v.toFixed(0)} dB`),
+      makeControlSlider(store, 'gate.release_ms', 'gate.release_ms', 'Decay / Release', 80, (v) => `${v.toFixed(0)} ms`),
+      makeControlSlider(store, 'gate.hysteresis_db', 'gate.hysteresis_db', 'Hysteresis', 4.0, (v) => `${v.toFixed(1)} dB`)
+    );
+    return;
+  }
+
+  if (blk === 'drive') {
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const cur = str(store, 'drive.model', 'ts808');
+    for (const [val, lbl] of Object.entries(DRIVE_LABELS)) {
+      chips.appendChild(makeChipButton('drive.model', lbl, cur === val, () => void store.setControl('drive.model', val)));
+    }
+    container.append(
+      chips,
+      makeControlSlider(store, 'drive.drive', 'drive.drive', 'Drive', 4.5),
+      makeControlSlider(store, 'drive.tone', 'drive.tone', 'Tone', 5.5),
+      makeControlSlider(store, 'drive.level', 'drive.level', 'Level', 6.0)
+    );
+    return;
+  }
+
+  if (blk === 'comp') {
+    container.append(
+      makeControlSlider(store, 'comp_2.input', 'comp_2.input', 'Input', 5.0),
+      makeControlSlider(store, 'comp_2.output', 'comp_2.output', 'Output', 5.0),
+      makeControlSlider(store, 'comp_2.attack', 'comp_2.attack', 'Attack', 4.0),
+      makeControlSlider(store, 'comp_2.release', 'comp_2.release', 'Release', 4.0)
+    );
+    return;
+  }
+
+  if (blk === 'amp' || blk === 'amp2') {
+    if (blk === 'amp') {
+      container.append(
+        makeControlSlider(store, 'amp.gain', 'amp_1.gain', 'Gain', 7.0),
+        makeControlSlider(store, 'amp.treble', 'amp_1.treble', 'Treble', 6.0),
+        makeControlSlider(store, 'amp.middle', 'amp_1.middle', 'Mid', 4.0),
+        makeControlSlider(store, 'amp.bass', 'amp_1.bass', 'Bass', 6.0),
+        makeControlSlider(store, 'amp.presence', 'amp_1.presence', 'Presence', 5.0),
+        makeControlSlider(store, 'amp.master', 'amp_1.master', 'Master', 3.5),
+        makeControlSlider(store, 'chassi.sag', 'amp_1.sag', 'Sag da fonte', 3.0),
+        makeControlSlider(store, 'chassi.nfb', 'amp_1.nfb', 'Realim. (NFB)', 5.0)
+      );
+    } else {
+      const chips = document.createElement('div');
+      chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+      const cur = str(store, 'amp_2.model', 'twin_ab763');
+      for (const [val, meta] of Object.entries(AMP_LABELS)) {
+        chips.appendChild(makeChipButton('amp_2.model', meta.short, cur === val, () => void store.setControl('amp_2.model', val)));
+      }
+      container.append(chips, makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Merge', 0.0, (v) => `${v.toFixed(1)} dB`));
+    }
+    return;
+  }
+
+  if (blk === 'cab' || blk === 'cab2') {
+    const isB = blk === 'cab2';
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const cur = str(store, isB ? 'cab_2.model' : 'cab_1.model', isB ? 'alnico_blue_2x12' : 'v30_4x12');
+    for (const [val, lbl] of Object.entries(CAB_LABELS)) {
+      chips.appendChild(makeChipButton(isB ? 'cab_2.speaker' : 'cab.speaker', lbl, cur === val, () => void store.setControl(isB ? 'cab_2.speaker' : 'cab.speaker', val)));
+    }
+    container.append(
+      chips,
+      makeControlSlider(store, 'cab.resonance_hz', 'cab_1.resonance_hz', 'Ressonância', 92, (v) => `${v.toFixed(0)} Hz`),
+      makeControlSlider(store, 'cab.hicut_khz', 'cab_1.hicut_khz', 'Hi-Cut', 7.5, (v) => `${v.toFixed(1)} kHz`)
+    );
+    const navCab = makeChipButton('ui.nav_screen', 'Sala de microfonação ›', false, () => store.setScreen('gabinete'));
+    container.appendChild(navCab);
+    return;
+  }
+
+  if (blk === 'eq') {
+    container.append(
+      makeControlSlider(store, 'eq_1.gain_db', 'eq_1.gain_db', 'Gain Pré-EQ', 0, (v) => `${v.toFixed(1)} dB`),
+      makeControlSlider(store, 'eq_1.volume_db', 'eq_1.volume_db', 'Output Volume', 0, (v) => `${v.toFixed(1)} dB`)
+    );
+    return;
+  }
+
+  if (blk === 'chorus') {
+    const modModels: [string, string][] = [
+      ['AnalogBbdChorus', 'CE-2 Chorus'],
+      ['StereoTriChorus', 'Tri-Chorus'],
+      ['ThroughZeroFlanger', 'TZ Flanger'],
+      ['Orange90Phaser', 'Phaser 90'],
+      ['OpticalBiasTremolo', 'Tremolo'],
+      ['PhotocellUnivibe', 'Uni-Vibe'],
+      ['RotarySpeaker', 'Rotary'],
+    ];
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const cur = str(store, 'mod_2.model', 'AnalogBbdChorus');
+    for (const [val, lbl] of modModels) {
+      chips.appendChild(makeChipButton('mod_2.model', lbl, cur === val, () => void store.setControl('mod_2.model', val)));
+    }
+    container.append(
+      chips,
+      makeControlSlider(store, 'mod_2.rate_hz', 'mod_2.rate_hz', 'Rate', 1.0, (v) => `${v.toFixed(2)} Hz`),
+      makeControlSlider(store, 'mod_2.depth', 'mod_2.depth', 'Depth', 5.0),
+      makeControlSlider(store, 'mod_2.mix', 'mod_2.mix', 'Mix', 0.5, (v) => `${Math.round(v * 100)}%`)
+    );
+    return;
+  }
+
+  if (blk === 'pitch') {
+    const pitchModels: [string, string][] = [
+      ['whammy', 'Whammy'],
+      ['drop_capo', 'Drop Capo'],
+      ['harmonizer', 'Harmonizer'],
+      ['micro_detune', 'Detune'],
+    ];
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const cur = str(store, 'pitch_1.model', 'whammy');
+    for (const [val, lbl] of pitchModels) {
+      chips.appendChild(makeChipButton('pitch_1.model', lbl, cur === val, () => void store.setControl('pitch_1.model', val)));
+    }
+    container.append(
+      makeToggleRow(store, 'pitch_1.enabled', 'pitch_1.enabled', 'Ativo', false),
+      chips,
+      makeControlSlider(store, 'pitch_1.semitones', 'pitch_1.semitones', 'Semitons', 0, (v) => `${v >= 0 ? '+' : ''}${Math.round(v)} st`),
+      makeControlSlider(store, 'pitch_1.mix', 'pitch_1.mix', 'Mix', 100, (v) => `${Math.round(v)}%`)
+    );
+    return;
+  }
+
+  if (blk === 'delay') {
+    container.append(
+      makeControlSlider(store, 'dly_1.repeat_rate', 'dly_1.repeat_rate', 'Repeat Rate', 5.0),
+      makeControlSlider(store, 'dly_1.intensity', 'dly_1.intensity', 'Intensity', 4.5),
+      makeControlSlider(store, 'dly_1.echo_volume', 'dly_1.echo_volume', 'Echo Volume', 5.0),
+      makeToggleRow(store, 'dly_1.spillover', 'dly_1.spillover', 'Spillover', true)
+    );
+    return;
+  }
+
+  if (blk === 'reverb') {
+    container.append(
+      makeControlSlider(store, 'rev_1.decay_s', 'rev_1.decay_s', 'Decay', 2.4, (v) => `${v.toFixed(1)} s`),
+      makeControlSlider(store, 'rev_1.predelay_ms', 'rev_1.predelay_ms', 'Pre-Delay', 18, (v) => `${v.toFixed(0)} ms`),
+      makeControlSlider(store, 'rev_1.damping', 'rev_1.damping', 'Damping', 0.45),
+      makeControlSlider(store, 'rev_1.mix', 'rev_1.mix', 'Mix', 0.28, (v) => `${Math.round(v * 100)}%`)
+    );
+    return;
+  }
+
+  if (blk === 'split') {
+    container.append(
+      makeControlSlider(store, 'split.crossover_hz', 'split.crossover_hz', 'Crossover', 800, (v) => `${v.toFixed(0)} Hz`),
+      makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Balanço Linha B', 0, (v) => `${v.toFixed(1)} dB`)
+    );
+    return;
+  }
+
+  container.append(
+    makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Master', 0, (v) => `${v.toFixed(1)} dB`),
+    makeToggleRow(store, 'merge.row_1_phase_invert', 'merge.row_1_phase_invert', 'Inverter Fase', false, '180°', '0°')
+  );
 }
 
 export function renderEstudioScreen(store: AppStore): HTMLElement {
   const root = document.createElement('div');
   root.dataset.screen = 'main';
-  root.style.cssText =
-    'height:100%;display:grid;grid-template-rows:auto auto 1fr;gap:8px;padding:8px 10px;min-height:0;overflow:hidden;';
+  root.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;background:#0b0c0e;';
 
-  // 1. Top rig toolbar (Presets, Amber LCD, Scenes A-H, IN/OUT meters, Oversampling, Tap Tempo)
-  const toolbar = document.createElement('div');
-  toolbar.className = 'm-metal';
-  toolbar.style.cssText =
-    'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:8px;flex:none;';
+  // ── 1. BRUSHED TOOLBAR (68 px, zero <select>) ────────────────────────────
+  const toolbar = document.createElement('section');
+  toolbar.dataset.region = 'toolbar';
+  toolbar.className = 'm-brushed';
+  toolbar.style.cssText = `
+    height:68px;flex:none;border-bottom:1px solid #000;padding:0 16px;position:relative;
+    display:flex;align-items:center;gap:16px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.07);
+  `;
+  for (const pos of ['top:5px;left:5px', 'top:5px;right:5px', 'bottom:5px;left:5px', 'bottom:5px;right:5px']) {
+    const sc = document.createElement('span');
+    sc.className = 'm-screw';
+    sc.style.cssText = `position:absolute;${pos};`;
+    toolbar.appendChild(sc);
+  }
 
-  const leftGrp = document.createElement('div');
-  leftGrp.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;';
+  const navGrp = document.createElement('div');
+  navGrp.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:10px;flex:none;';
 
-  const prevBtn = makeChipButton('topbar.preset_nav', '<', false, () => {
-    const len = Math.max(1, store.presets.length);
-    void store.loadPresetAt((store.presetIdx - 1 + len) % len);
-  });
-  const nextBtn = makeChipButton('topbar.preset_nav', '>', false, () => {
-    const len = Math.max(1, store.presets.length);
-    void store.loadPresetAt((store.presetIdx + 1) % len);
-  });
-
-  const presetSel = document.createElement('select');
-  presetSel.dataset.controlId = 'topbar.preset_load';
-  presetSel.style.cssText =
-    'height:24px;max-width:190px;padding:0 7px;border-radius:4px;background:#0a0b0e;border:1px solid #2b313a;color:#ffd08a;font-size:11px;font-weight:600;';
-  const presetItems =
-    store.presets.length > 0 ? store.presets : [{ id: 'factory', name: 'Factory Crunch 800' }];
-  presetItems.forEach((item, idx) => {
-    const o = document.createElement('option');
-    o.value = String(idx);
-    o.textContent = item.name;
-    if (idx === store.presetIdx) o.selected = true;
-    presetSel.appendChild(o);
-  });
-  presetSel.addEventListener('change', () => {
-    void store.loadPresetAt(Number(presetSel.value));
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'm-btn';
+  prevBtn.dataset.controlId = 'topbar.preset_nav';
+  prevBtn.style.cssText = 'width:30px;height:44px;font-size:16px;';
+  prevBtn.textContent = '‹';
+  prevBtn.addEventListener('click', () => {
+    const n = Math.max(1, store.presets.length);
+    void store.loadPresetAt((store.presetIdx - 1 + n) % n);
   });
 
-  const saveBtn = makeChipButton('topbar.preset_save', store.lastSavedStatus || 'Salvar', false, () => {
-    void store.saveActivePreset();
-  });
-
-  const lcd = document.createElement('div');
+  const lcd = document.createElement('button');
+  lcd.type = 'button';
   lcd.className = 'm-lcd';
-  lcd.style.cssText = 'padding:3px 10px;border-radius:4px;min-width:195px;display:flex;align-items:center;gap:8px;';
-  const activeModelName = str(store, 'amp_1.model', 'jcm800_2203').toUpperCase();
+  lcd.dataset.controlId = 'topbar.preset_load';
+  lcd.style.cssText =
+    'width:330px;height:46px;border-radius:5px;padding:0 14px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:2px;text-align:left;cursor:pointer;';
+  const activePreset = store.presets[store.presetIdx];
+  const ampId = str(store, 'amp_1.model', 'dual_rect') as AmpModelId;
   const activeScene = str(store, 'scene.active', 'A');
+  const cleanName = (activePreset?.name ?? 'CALI DUAL RECTO MODERN METAL').replace(/^P0\d\s+/, '').toUpperCase();
   lcd.innerHTML = `
-    <span class="m-lcdtxt m-mono" style="font-size:11px;font-weight:700;">SCENE ${activeScene}</span>
-    <span class="m-lcdtxt m-mono" style="font-size:10.5px;opacity:.9;">${activeModelName}</span>
+    <div style="width:100%;display:flex;gap:10px;align-items:center;font-family:'JetBrains Mono',monospace;font-size:10px;opacity:.85;">
+      <span class="m-lcd-s">SHOW 2026</span>
+      <span class="m-lcd-s">P0${store.presetIdx + 1}</span>
+      <span style="flex:1;"></span>
+      <span class="m-lcd-s">CENA ${activeScene} · HEAVY</span>
+    </div>
+    <div class="m-lcd-t m-mono" style="width:100%;font-size:15px;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      ${cleanName}
+    </div>
+  `;
+  lcd.addEventListener('click', () => showPresetMenuPopover(lcd, store));
+
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'm-btn';
+  nextBtn.dataset.controlId = 'topbar.preset_nav';
+  nextBtn.style.cssText = 'width:30px;height:44px;font-size:16px;';
+  nextBtn.textContent = '›';
+  nextBtn.addEventListener('click', () => {
+    const n = Math.max(1, store.presets.length);
+    void store.loadPresetAt((store.presetIdx + 1) % n);
+  });
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'm-btn m-pri';
+  saveBtn.dataset.controlId = 'topbar.preset_save';
+  saveBtn.style.cssText = 'height:44px;padding:0 12px;font-size:11px;font-weight:700;';
+  saveBtn.textContent = 'SALVAR';
+  saveBtn.addEventListener('click', () => void store.saveActivePreset());
+
+  navGrp.append(prevBtn, lcd, nextBtn, saveBtn);
+  toolbar.appendChild(navGrp);
+
+  const sceneBox = document.createElement('div');
+  sceneBox.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:none;';
+  const sLbl = document.createElement('span');
+  sLbl.className = 'm-lbl';
+  sLbl.style.cssText = 'font-size:9px;';
+  sLbl.textContent = 'Cenas';
+  const sRow = document.createElement('div');
+  sRow.style.cssText = 'display:flex;gap:4px;';
+  for (const sc of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'm-btn m-osw';
+    b.dataset.controlId = 'topbar.scene';
+    b.setAttribute('aria-pressed', activeScene === sc ? 'true' : 'false');
+    b.style.cssText = 'width:32px;height:30px;font-size:12px;font-weight:700;';
+    b.textContent = sc;
+    b.addEventListener('click', () => void store.selectScene(sc));
+    sRow.appendChild(b);
+  }
+  sceneBox.append(sLbl, sRow);
+  toolbar.appendChild(sceneBox);
+
+  const metersBox = document.createElement('div');
+  metersBox.style.cssText = 'display:flex;align-items:center;gap:22px;padding-top:1px;margin-left:auto;flex:none;';
+
+  const ledStack = document.createElement('div');
+  ledStack.style.cssText = 'display:flex;flex-direction:column;gap:5px;';
+  for (const [mKey, mLbl] of [
+    ['in', 'IN'],
+    ['out', 'OUT'],
+  ] as const) {
+    const line = document.createElement('div');
+    line.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    const lbl = document.createElement('span');
+    lbl.className = 'm-lbl';
+    lbl.style.cssText = 'width:26px;font-size:9px;';
+    lbl.textContent = mLbl;
+    const bar = document.createElement('div');
+    bar.dataset.meter = mKey;
+    bar.style.cssText = 'display:flex;gap:2px;padding:3px;background:#050505;border-radius:3px;';
+    for (let i = 0; i < 20; i += 1) {
+      const seg = document.createElement('span');
+      seg.className = 'm-seg';
+      seg.style.background = '#20242b';
+      bar.appendChild(seg);
+    }
+    line.append(lbl, bar);
+    ledStack.appendChild(line);
+  }
+
+  const cpuBox = document.createElement('div');
+  cpuBox.className = 'm-mono';
+  cpuBox.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:10px;white-space:nowrap;color:#a3abb4;';
+  const cpuPct = store.telemetry.cpu_usage_pct ?? 0;
+  const osVal = str(store, 'engine.oversampling', '4x');
+  cpuBox.innerHTML = `
+    <div>CPU <b data-live="cpu-pct" style="color:#3dd8ff;">${cpuPct.toFixed(1)}%</b></div>
+    <div>OS ${osVal}</div>
+  `;
+  metersBox.append(ledStack, cpuBox);
+  toolbar.appendChild(metersBox);
+
+  const rightBtns = document.createElement('div');
+  rightBtns.style.cssText = 'display:flex;gap:6px;flex:none;';
+
+  const tapBtn = document.createElement('button');
+  tapBtn.type = 'button';
+  tapBtn.className = 'm-btn';
+  tapBtn.dataset.controlId = 'topbar.tap_tempo';
+  tapBtn.style.cssText = 'width:54px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;';
+  tapBtn.innerHTML = `<span class="m-mono" style="font-size:12px;font-weight:700;color:#c49a6c;">${Math.round(store.bpm)}</span><span style="font-size:8.5px;color:#8e96a0;letter-spacing:.08em;">TAP</span>`;
+  tapBtn.addEventListener('click', () => store.tapTempo());
+
+  const tunerBtn = document.createElement('button');
+  tunerBtn.type = 'button';
+  tunerBtn.className = 'm-btn';
+  tunerBtn.dataset.controlId = 'ui.nav_screen';
+  tunerBtn.style.cssText = 'width:64px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
+  tunerBtn.innerHTML =
+    '<svg width="18" height="12" viewBox="0 0 18 12" fill="none"><path d="M2 11A7 7 0 0 1 16 11" stroke="#3dd8ff" stroke-width="1.6"/><path d="M9 11L11.5 4" stroke="#29c46a" stroke-width="2" stroke-linecap="round"/></svg><span style="font-size:9px;color:#a3abb4;">AFINADOR</span>';
+  tunerBtn.addEventListener('click', () => store.setScreen('palco'));
+
+  const palcoBtn = document.createElement('button');
+  palcoBtn.type = 'button';
+  palcoBtn.className = 'm-btn';
+  palcoBtn.dataset.controlId = 'ui.nav_screen';
+  palcoBtn.style.cssText = 'width:64px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
+  palcoBtn.innerHTML =
+    '<svg width="16" height="12" viewBox="0 0 16 12" fill="none"><rect x="1" y="1" width="14" height="10" rx="1.5" stroke="#ff8a3d" stroke-width="1.4"/><path d="M4 8h8" stroke="#ff8a3d" stroke-width="1.4"/></svg><span style="font-size:9px;color:#a3abb4;">PALCO</span>';
+  palcoBtn.addEventListener('click', () => store.setScreen('palco'));
+
+  const gearBtn = document.createElement('button');
+  gearBtn.type = 'button';
+  gearBtn.className = 'm-btn';
+  gearBtn.dataset.controlId = 'ui.nav_screen';
+  gearBtn.setAttribute('aria-label', 'Configurações de Áudio');
+  gearBtn.style.cssText = 'width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;';
+  gearBtn.innerHTML =
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.3" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.5V3M8 13V14.5M1.5 8H3M13 8H14.5M3.4 3.4L4.5 4.5M11.5 11.5L12.6 12.6M12.6 3.4L11.5 4.5M4.5 11.5L3.4 12.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+  gearBtn.addEventListener('click', () => store.setScreen('audio'));
+
+  rightBtns.append(tapBtn, tunerBtn, palcoBtn, gearBtn);
+  toolbar.appendChild(rightBtns);
+
+  // ── 2. SIGNAL GRID (136 px, 11x2 fixed matrix) ───────────────────────────
+  const gridSec = document.createElement('section');
+  gridSec.dataset.region = 'grid';
+  gridSec.style.cssText = `
+    height:136px;flex:none;background:linear-gradient(180deg,#0e1013,#0a0b0d);border-bottom:1px solid #000;
+    padding:9px 16px 6px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;
   `;
 
-  leftGrp.append(prevBtn, nextBtn, presetSel, saveBtn, lcd);
+  const gHdr = document.createElement('div');
+  gHdr.style.cssText = 'height:20px;flex:none;display:flex;align-items:center;gap:12px;';
+  const gTitle = document.createElement('span');
+  gTitle.className = 'm-lbl';
+  gTitle.textContent = 'Matriz de sinal';
+  const gHint = document.createElement('span');
+  gHint.style.cssText = 'font-size:11px;color:#9aa3ad;';
+  gHint.textContent = 'clique = editar · duplo clique = bypass · linha B em paralelo (split → merge)';
 
-  // Scenes A-H
-  const sceneGrp = document.createElement('div');
-  sceneGrp.style.cssText = 'display:flex;align-items:center;gap:3px;';
-  ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].forEach((sc) => {
-    sceneGrp.appendChild(
-      makeChipButton('topbar.scene', sc, activeScene === sc, () => void store.selectScene(sc), { scene: sc })
-    );
-  });
+  const osGrp = document.createElement('div');
+  osGrp.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:4px;';
+  const osLbl = document.createElement('span');
+  osLbl.className = 'm-lbl';
+  osLbl.style.cssText = 'font-size:9px;';
+  osLbl.textContent = 'Oversampling';
+  osGrp.appendChild(osLbl);
+  for (const factor of ['2x', '4x', '8x']) {
+    const b = makeChipButton('topbar.oversampling', factor, osVal === factor, () => {
+      void store.setControl('topbar.oversampling', factor);
+    });
+    b.className = 'm-chip m-mono';
+    b.style.cssText = 'height:20px;padding:0 6px;';
+    osGrp.appendChild(b);
+  }
+  gHdr.append(gTitle, gHint, osGrp);
 
-  // Meters, OS & Tap Tempo
-  const rightGrp = document.createElement('div');
-  rightGrp.style.cssText = 'display:flex;align-items:center;gap:10px;flex:none;';
+  const matrix = document.createElement('div');
+  matrix.style.cssText = `
+    flex:1;min-height:0;display:grid;grid-template-columns:repeat(11,minmax(0,1fr));
+    grid-template-rows:52px 44px;gap:6px 6px;align-items:stretch;
+  `;
 
-  const dbToLinear = (db: number) => Math.max(0, Math.min(1, (db + 60) / 60));
-  const meters = document.createElement('div');
-  meters.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
-  const inRow = document.createElement('div');
-  inRow.style.cssText = 'display:flex;align-items:center;gap:5px;';
-  inRow.innerHTML = '<span class="m-lbl" style="width:22px;">IN</span>';
-  inRow.appendChild(makeLedMeter(16, dbToLinear(store.telemetry.input_peak_db ?? -60)));
-  const outRow = document.createElement('div');
-  outRow.style.cssText = 'display:flex;align-items:center;gap:5px;';
-  outRow.innerHTML = '<span class="m-lbl" style="width:22px;">OUT</span>';
-  outRow.appendChild(makeLedMeter(16, dbToLinear(store.telemetry.output_peak_db ?? -60)));
-  meters.append(inRow, outRow);
+  for (const blk of GRID_BLOCKS) {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'm-cell';
+    cell.dataset.controlId = 'ui.inspector_select';
+    cell.dataset.blockId = blk.id;
+    const isSel = store.selectedBlock === blk.id;
+    const enabled = blk.enableKey ? bool(store, blk.enableKey, true) : true;
+    cell.setAttribute('aria-pressed', isSel ? 'true' : 'false');
+    cell.style.cssText = `
+      grid-column:${blk.col};grid-row:${blk.row};
+      height:${blk.row === 1 ? 52 : 44}px;
+      padding:5px 8px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:4px;
+      opacity:${!enabled ? '0.46' : '1'};color:#dbe1e8;text-align:left;cursor:pointer;
+    `;
 
-  const osSel = makeControlSelect(
-    store,
-    'topbar.oversampling',
-    'engine.oversampling',
-    [
-      { value: '2x', label: 'OS 2x' },
-      { value: '4x', label: 'OS 4x' },
-      { value: '8x', label: 'OS 8x' },
-    ],
-    '4x'
-  );
-  const tapBtn = makeChipButton('topbar.tap_tempo', `TAP ${Math.round(store.bpm)}`, false, () => {
-    store.tapTempo();
-  });
-  const stageBtn = makeChipButton('ui.nav_screen', 'PALCO', false, () => {
-    store.setScreen('palco');
-  });
-
-  rightGrp.append(meters, osSel, tapBtn, stageBtn);
-  toolbar.append(leftGrp, sceneGrp, rightGrp);
-
-  // 2. Signal Chain Grid (Row A + optional Parallel Row B)
-  const grid = document.createElement('div');
-  grid.className = 'm-metal';
-  grid.style.cssText = 'padding:6px 10px;border-radius:8px;display:flex;flex-direction:column;gap:5px;flex:none;';
-
-  const rowA = document.createElement('div');
-  rowA.style.cssText = 'display:flex;align-items:center;gap:5px;min-width:0;';
-  BLOCK_ORDER_ROW_A.forEach((b, i) => {
-    if (i > 0) {
-      const cable = document.createElement('span');
-      cable.className = 'm-cable';
-      cable.style.width = '10px';
-      rowA.appendChild(cable);
-    }
-    rowA.appendChild(renderSignalBlockCell(store, b));
-  });
-  grid.appendChild(rowA);
-
-  if (bool(store, 'split.enabled', false)) {
-    const rowB = document.createElement('div');
-    rowB.style.cssText = 'display:flex;align-items:center;gap:5px;padding-left:200px;';
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'width:100%;display:flex;align-items:center;gap:5px;';
+    const dot = document.createElement('span');
+    dot.style.cssText = `width:6px;height:6px;border-radius:50%;flex:none;background:${
+      enabled ? blk.dotColor : '#444b54'
+    };box-shadow:${enabled ? `0 0 6px ${blk.dotColor}aa` : 'none'};`;
     const tag = document.createElement('span');
-    tag.className = 'm-lbl';
-    tag.textContent = 'LINHA B';
-    tag.style.color = '#3dd8ff';
-    rowB.appendChild(tag);
-    BLOCK_ORDER_ROW_B.forEach((b) => rowB.appendChild(renderSignalBlockCell(store, b)));
-    grid.appendChild(rowB);
+    tag.style.cssText = `font-size:9px;font-weight:700;letter-spacing:.08em;color:${blk.dotColor};`;
+    tag.textContent = blk.tag;
+    const ch = document.createElement('span');
+    ch.className = 'm-mono';
+    ch.style.cssText = 'margin-left:auto;font-size:9px;color:#6d7580;';
+    ch.textContent = blk.chTag;
+    topRow.append(dot, tag, ch);
+
+    const sub = document.createElement('span');
+    sub.style.cssText = 'font-size:11px;font-weight:500;color:#dbe1e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;';
+    sub.textContent = blk.subText(store);
+
+    cell.append(topRow, sub);
+    cell.addEventListener('click', () => store.selectBlock(blk.id));
+    cell.addEventListener('dblclick', () => {
+      if (blk.bypassControlId && blk.enableKey) {
+        void store.setControl(blk.bypassControlId, !bool(store, blk.enableKey, true));
+      }
+    });
+    matrix.appendChild(cell);
   }
+  gridSec.append(gHdr, matrix);
 
-  // 3. Main Split: Hardware Stage (Left) + Inspector (Right)
-  const mainArea = document.createElement('div');
-  mainArea.style.cssText =
-    'display:grid;grid-template-columns:1fr 310px;gap:10px;min-height:0;overflow:hidden;';
+  // ── 3. STAGE + INSPECTOR ────────────────────────────────────────────────
+  const bodyArea = document.createElement('div');
+  bodyArea.style.cssText = 'flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 300px;overflow:hidden;';
 
-  // Left: Stage (AmpHead + Tube window + Pedals + Racks)
-  const stage = document.createElement('div');
+  const stage = document.createElement('section');
+  stage.dataset.region = 'stage';
   stage.style.cssText =
-    'display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0;overflow-y:auto;padding-right:4px;';
+    'min-width:0;min-height:0;background:radial-gradient(ellipse at 35% -10%,rgba(255,170,90,0.06) 0%,transparent 55%),repeating-linear-gradient(90deg,rgba(255,255,255,.012) 0 1px,transparent 1px 46px),linear-gradient(180deg,#141518 0%,#0d0e10 62%,#090a0b 100%);padding:14px 18px;display:flex;flex-direction:column;gap:14px;overflow:hidden;';
 
-  const ampSection = document.createElement('div');
-  ampSection.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:8px;align-items:stretch;';
-  ampSection.appendChild(createAmpHeadElement(store));
+  const stageTop = document.createElement('div');
+  stageTop.style.cssText = 'display:flex;gap:16px;height:226px;flex-shrink:0;';
 
-  // Tube window alongside AmpHead
-  const tubeBox = document.createElement('div');
-  tubeBox.className = 'm-metal';
-  tubeBox.style.cssText =
-    'border-radius:10px;padding:6px 8px;display:flex;flex-direction:column;justify-content:space-between;align-items:center;min-width:170px;';
-  const tubeHdr = document.createElement('div');
-  tubeHdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;width:100%;';
-  const bPlusV = Math.max(180, num(store, 'amp_1.preamp_plate_v', 280) * 1.5 - (store.telemetry.gain_reduction_db ?? 0) * 2).toFixed(0);
-  tubeHdr.innerHTML = `<span class="m-lbl">VÁLVULAS</span><span class="m-mono" style="font-size:10px;color:#ffb463;">B+ ${bPlusV}V</span>`;
-  const tubeRow = document.createElement('div');
-  tubeRow.style.cssText = 'display:flex;align-items:flex-end;gap:4px;';
-  const isLit = bool(store, 'amp_1.power', true) && !bool(store, 'amp_1.standby', false);
-  const glow = isLit ? 0.45 + Math.min(0.55, Math.abs(store.telemetry.gain_reduction_db ?? 0) * 0.08 + 0.3) : 0.05;
-  ['V1', 'V2', 'V3', 'V4'].forEach((id) => {
-    tubeRow.appendChild(
-      createTubeElement({
-        id,
-        typeLabel: '12AX7',
-        width: 14,
-        height: 36,
-        radius: '7px 7px 2px 2px',
-        baseWidth: 16,
-        baseHeight: 7,
-        baseBg: '#23262b',
-        glowOp: glow,
-        glowPx: isLit ? 5 : 0,
-        selected: store.selectedTube === id,
-        controlId: 'ui.inspector_select',
-        onClick: () => {
-          store.selectedTube = id;
-          store.setScreen('chassi');
-        },
-      })
-    );
+  const ampSlot = document.createElement('div');
+  ampSlot.dataset.region = 'amp-slot';
+  ampSlot.style.cssText = 'width:788px;height:226px;flex-shrink:0;position:relative;';
+  const ampScaleWrap = document.createElement('div');
+  ampScaleWrap.style.cssText = 'position:absolute;left:0;top:5px;width:1000px;transform:scale(0.788);transform-origin:0 0;';
+  ampScaleWrap.appendChild(createAmpHeadElement(store));
+  ampSlot.appendChild(ampScaleWrap);
+
+  const tubesCard = document.createElement('div');
+  tubesCard.style.cssText =
+    'flex:1;height:226px;border-radius:12px;background:#050505;box-shadow:0 20px 30px rgba(0,0,0,.7),0 0 0 1px #000;padding:8px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;min-width:0;';
+  const tHdr = document.createElement('div');
+  tHdr.style.cssText = 'display:flex;align-items:center;';
+  const liveBPlus = (store.state?.telemetry as { b_plus_v?: number } | null | undefined)?.b_plus_v ?? numSafe(store, 'amp_1.preamp_plate_v', 280);
+  tHdr.innerHTML = `<span class="m-lbl" style="flex:1;font-size:9px;">VÁLVULAS · ${str(store, 'amp_1.preamp_tube', '12ax7').toUpperCase()} · 4× ${str(store, 'amp_1.power_tube', '6l6gc').toUpperCase()}</span><span class="m-mono" style="font-size:9px;color:#ffb347;">B+ ${Math.round(liveBPlus)} V</span>`;
+
+  const tubesRow = document.createElement('div');
+  tubesRow.style.cssText =
+    'flex:1;border-radius:8px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 100%,rgba(255,120,30,.12) 0%,transparent 60%),linear-gradient(180deg,#0b0b0c,#17181a);display:flex;align-items:flex-end;justify-content:center;gap:6px;';
+  const tubeNames = tubeComplementForModel(ampId);
+  const ampIsHot = bool(store, 'amp_1.power', true) && !bool(store, 'amp_1.standby', false);
+  tubeNames.forEach((tLabel, i) => {
+    const isPwr = i >= 4;
+    const tubeId = i === 3 ? 'PI' : `V${i + 1}`;
+    const tubeEl = createTubeElement({
+      id: tubeId,
+      typeLabel: tLabel,
+      width: isPwr ? 34 : 22,
+      height: isPwr ? 108 : 58,
+      radius: isPwr ? '12px 12px 6px 6px' : '10px 10px 4px 4px',
+      baseWidth: isPwr ? 30 : 20,
+      baseHeight: isPwr ? 14 : 8,
+      baseBg: 'linear-gradient(180deg,#2a2a2a,#0a0a0a)',
+      glowOp: ampIsHot ? (isPwr ? 1.0 : 0.78) : 0.15,
+      glowPx: ampIsHot ? 10 : 1,
+      selected: false,
+      controlId: 'ui.nav_screen',
+      onClick: () => {
+        store.selectedTube = `V${i + 1}`;
+        store.setScreen('chassi');
+      },
+    });
+    tubeEl.style.padding = '0';
+    tubeEl.style.marginBottom = '16px';
+    const tLbl = tubeEl.querySelector('span.m-mono') as HTMLElement | null;
+    if (tLbl) {
+      tLbl.style.fontSize = '7.5px';
+      tLbl.style.fontWeight = '400';
+      tLbl.style.color = '#c9ced4';
+    }
+    tubesRow.appendChild(tubeEl);
   });
-  const chassiQuickBtn = makeChipButton('ui.nav_screen', 'Bancada ->', false, () => store.setScreen('chassi'));
-  tubeBox.append(tubeHdr, tubeRow, chassiQuickBtn);
-  ampSection.appendChild(tubeBox);
+  const tubesDeck = document.createElement('div');
+  tubesDeck.style.cssText = 'position:absolute;left:0;right:0;bottom:0;height:16px;background:linear-gradient(180deg,#8f949a,#5b6066 40%,#2c2f33);';
+  tubesRow.appendChild(tubesDeck);
 
-  // Pedalboard strip
-  const driveModelRaw = str(store, 'drive.model', 'ts808');
-  const drivePedal: PedalModelId =
-    driveModelRaw === 'klon' ||
-    driveModelRaw === 'rat' ||
-    driveModelRaw === 'muff' ||
-    driveModelRaw === 'fuzzface' ||
-    driveModelRaw === 'ds1'
-      ? driveModelRaw
-      : 'ts808';
+  const chassiLink = document.createElement('button');
+  chassiLink.type = 'button';
+  chassiLink.dataset.controlId = 'ui.nav_screen';
+  chassiLink.style.cssText = 'border:0;background:transparent;color:#3dd8ff;font-size:10px;font-weight:600;cursor:pointer;padding:0;text-align:right;align-self:flex-end;';
+  chassiLink.textContent = 'Abrir chassi / Mod Shop ›';
+  chassiLink.addEventListener('click', () => store.setScreen('chassi'));
+  tubesCard.append(tHdr, tubesRow, chassiLink);
 
-  const pedalboard = document.createElement('div');
-  pedalboard.className = 'm-grip';
-  pedalboard.style.cssText =
-    'border-radius:10px;border:1px solid #23272e;padding:8px 10px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;';
-  (['ns2', drivePedal, 'ce2', 'mxr10'] as PedalModelId[]).forEach((pid) => {
-    pedalboard.appendChild(createPedalElement(pid, store));
-  });
+  stageTop.append(ampSlot, tubesCard);
 
-  // Rack strip
-  const rackStrip = document.createElement('div');
-  rackStrip.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;';
-  rackStrip.append(
-    createRackElement('comp1176', store),
-    createRackElement('re201', store),
-    createRackElement('plate', store)
+  const stageBottom = document.createElement('div');
+  stageBottom.style.cssText = 'flex:1;min-height:0;display:flex;gap:16px;overflow:hidden;';
+
+  const board = document.createElement('div');
+  board.className = 'm-grip';
+  board.style.cssText =
+    'flex:1;min-width:0;border-radius:10px;position:relative;box-shadow:0 0 0 1px #000;padding:8px 16px 9px;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;';
+  const boardRail = document.createElement('div');
+  boardRail.style.cssText =
+    'position:absolute;left:0;right:0;bottom:0;height:10px;border-radius:0 0 10px 10px;background:linear-gradient(180deg,#5d6268,#2b2e32);pointer-events:none;';
+
+  const boardTopLabels = document.createElement('div');
+  boardTopLabels.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:8px;flex:none;';
+  boardTopLabels.innerHTML =
+    '<span class="m-lbl" style="font-size:9px;">Pedalboard</span><span style="font-size:10px;color:#9aa3ad;">PRÉ-AMP</span><span style="flex:1;height:1px;background:#24282d;"></span><span style="font-size:10px;color:#9aa3ad;">LINHA B / PÓS</span><span style="flex:1;height:1px;background:#24282d;"></span>';
+
+  const pedalsRow = document.createElement('div');
+  pedalsRow.style.cssText = 'flex:1;min-height:0;display:flex;align-items:flex-end;justify-content:center;gap:0;padding:0;overflow:hidden;';
+
+  const wrapScaledPedal = (el: HTMLElement, scale: number, origW: number, origH: number, marginBottom = 0) => {
+    const slot = document.createElement('div');
+    slot.style.cssText = `width:${Math.round(origW * scale)}px;height:${Math.round(origH * scale)}px;position:relative;flex:none;${marginBottom ? `margin-bottom:${marginBottom}px;` : ''}`;
+    const inner = document.createElement('div');
+    inner.style.cssText = `transform:scale(${scale});transform-origin:top left;`;
+    inner.appendChild(el);
+    slot.appendChild(inner);
+    return slot;
+  };
+  const makeCable = (w = 16, mb = 150) => {
+    const c = document.createElement('div');
+    c.className = 'm-cable';
+    c.style.cssText = `width:${w}px;margin-bottom:${mb}px;`;
+    return c;
+  };
+
+  const driveModel = str(store, 'drive.model', 'ts808') as PedalModelId;
+  const driveSizes: Record<string, [number, number]> = {
+    ts808: [130, 210],
+    klon: [128, 200],
+    rat: [116, 180],
+    muff: [160, 200],
+    fuzzface: [180, 180],
+    ds1: [104, 184],
+  };
+  const [dw, dh] = driveSizes[driveModel] ?? [130, 210];
+
+  const splitJoin = document.createElement('div');
+  splitJoin.style.cssText = 'display:flex;align-items:flex-end;margin-bottom:150px;';
+  const cLeft = document.createElement('div');
+  cLeft.className = 'm-cable';
+  cLeft.style.width = '12px';
+  const divider = document.createElement('div');
+  divider.style.cssText =
+    'width:2px;height:190px;margin:0 8px -40px;background:repeating-linear-gradient(180deg,#3dd8ff 0 6px,transparent 6px 11px);opacity:.5;';
+  const cRight = document.createElement('div');
+  cRight.className = 'm-cable';
+  cRight.style.width = '12px';
+  splitJoin.append(cLeft, divider, cRight);
+
+  pedalsRow.append(
+    wrapScaledPedal(createPedalElement('ns2', store), 1.0, 104, 184),
+    makeCable(16, 150),
+    wrapScaledPedal(createPedalElement(driveModel, store), 1.0, dw, dh),
+    splitJoin,
+    wrapScaledPedal(createPedalElement('ce2', store), 1.0, 104, 184),
+    makeCable(16, 110),
+    wrapScaledPedal(createPedalElement('mxr10', store), 1.0, 232, 150, 0)
   );
+  board.append(boardRail, boardTopLabels, pedalsRow);
 
-  stage.append(ampSection, pedalboard, rackStrip);
+  const rack = document.createElement('div');
+  rack.style.cssText =
+    'width:316px;flex-shrink:0;padding:8px 0 0;display:flex;flex-direction:column;gap:6px;overflow:hidden;';
+  const rackHdr = document.createElement('span');
+  rackHdr.className = 'm-lbl';
+  rackHdr.style.fontSize = '9px';
+  rackHdr.textContent = 'Rack · loop / pós-amp';
+  rack.appendChild(rackHdr);
 
-  // Right: Block Inspector Panel
-  const { root: inspRoot, body: inspCardBody } = makePanelCard(
-    `INSPETOR · ${store.selectedBlock.toUpperCase()}`,
-    `Canal ${store.activeInspectorCh}`
-  );
-  inspRoot.style.minHeight = '0';
-
-  const chTabs = document.createElement('div');
-  chTabs.style.cssText = 'display:flex;gap:4px;align-items:center;flex:none;';
-  (['A', 'B', 'C', 'D'] as const).forEach((ch) => {
-    chTabs.appendChild(
-      makeChipButton('ui.inspector_channel', `CH ${ch}`, store.activeInspectorCh === ch, () => {
-        store.activeInspectorCh = ch;
-        store.emit();
-      })
-    );
-  });
-  inspCardBody.appendChild(chTabs);
-  inspCardBody.appendChild(renderInspectorBody(store, store.selectedBlock));
-
-  // Gate Telemetry Readout when Gate selected
-  if (store.selectedBlock === 'gate') {
-    const gState = document.createElement('div');
-    gState.className = 'm-lcd m-mono';
-    gState.style.cssText = 'padding:5px 8px;border-radius:4px;font-size:10px;color:#ffb463;';
-    gState.textContent = `GATE: ${(store.telemetry.gate_state ?? 'open').toUpperCase()} · GR ${(store.telemetry.gain_reduction_db ?? 0).toFixed(1)} dB`;
-    inspCardBody.appendChild(gState);
+  for (const [rmodel, origH, slotH] of [
+    ['comp1176', 130, 74],
+    ['re201', 190, 107],
+    ['plate', 110, 62],
+  ] as const) {
+    const scale = 0.56;
+    const slot = document.createElement('div');
+    slot.style.cssText = `width:314px;height:${slotH}px;position:relative;flex:none;`;
+    const inner = document.createElement('div');
+    inner.style.cssText = `position:absolute;left:0;top:0;width:560px;height:${origH}px;transform:scale(${scale});transform-origin:0 0;`;
+    inner.appendChild(createRackElement(rmodel, store));
+    slot.appendChild(inner);
+    rack.appendChild(slot);
   }
 
-  mainArea.append(stage, inspRoot);
-  root.append(toolbar, grid, mainArea);
+  stageBottom.append(board, rack);
+  stage.append(stageTop, stageBottom);
+
+  const inspector = document.createElement('aside');
+  inspector.dataset.region = 'inspector';
+  inspector.className = 'm-metal';
+  inspector.style.cssText =
+    'border-left:1px solid #000;display:flex;flex-direction:column;min-height:0;box-shadow:inset 1px 0 0 rgba(255,255,255,.05);overflow:hidden;';
+
+  const curDef = GRID_BLOCKS.find((g) => g.id === store.selectedBlock) ?? GRID_BLOCKS[4];
+  const ampMeta = AMP_LABELS[ampId] ?? AMP_LABELS.dual_rect;
+
+  const inspTopSec = document.createElement('div');
+  inspTopSec.style.cssText = 'padding:13px 14px 10px;border-bottom:1px solid #000;display:flex;flex-direction:column;gap:8px;flex:none;';
+
+  const inspHdr = document.createElement('div');
+  inspHdr.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const inspTitle = document.createElement('div');
+  inspTitle.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0;flex:1;';
+  inspTitle.innerHTML = `<span style="width:9px;height:9px;border-radius:50%;background:${curDef.dotColor};box-shadow:0 0 8px ${curDef.dotColor};flex:none;"></span><span class="m-osw" style="font-size:16px;font-weight:600;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${
+    blkAmpTitle(store.selectedBlock, ampMeta.full, curDef.title)
+  }</span>`;
+  inspHdr.appendChild(inspTitle);
+  if (curDef.enableKey && curDef.bypassControlId) {
+    const en = bool(store, curDef.enableKey, true);
+    const stBtn = makeChipButton(curDef.bypassControlId, en ? 'ATIVO' : 'BYPASS', en, () => {
+      void store.setControl(curDef.bypassControlId!, !en);
+    });
+    stBtn.className = 'm-chip m-mono';
+    stBtn.style.height = '20px';
+    inspHdr.appendChild(stBtn);
+  }
+
+  const refSub = document.createElement('div');
+  refSub.style.cssText = 'font-size:11px;color:#a3abb4;line-height:1.4;';
+  refSub.textContent = store.selectedBlock === 'amp' ? ampMeta.ref : curDef.tag;
+
+  const ampChips = document.createElement('div');
+  ampChips.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
+  if (store.selectedBlock === 'amp') {
+    for (const [val, meta] of Object.entries(AMP_LABELS)) {
+      const b = makeChipButton('amp.model', meta.short, ampId === val, () => void store.setControl('amp.model', val));
+      b.style.height = '24px';
+      ampChips.appendChild(b);
+    }
+  }
+
+  const chRow = document.createElement('div');
+  chRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const chLbl = document.createElement('span');
+  chLbl.className = 'm-lbl';
+  chLbl.style.fontSize = '9px';
+  chLbl.textContent = 'Canal';
+  chRow.appendChild(chLbl);
+  for (const ch of ['A', 'B', 'C', 'D'] as const) {
+    const cb = makeChipButton('ui.inspector_channel', ch, store.activeInspectorCh === ch, () => {
+      store.activeInspectorCh = ch;
+      store.emit('full');
+    });
+    cb.className = 'm-chip m-osw';
+    cb.style.cssText = 'width:28px;height:24px;padding:0;justify-content:center;';
+    chRow.appendChild(cb);
+  }
+  const chHint = document.createElement('span');
+  chHint.style.cssText = 'font-size:10px;color:#9aa3ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+  chHint.textContent = 'cada canal guarda um modelo';
+  chRow.appendChild(chHint);
+
+  inspTopSec.append(inspHdr, refSub);
+  if (ampChips.childElementCount > 0) inspTopSec.appendChild(ampChips);
+  inspTopSec.appendChild(chRow);
+
+  const inspBotSec = document.createElement('div');
+  inspBotSec.style.cssText = 'padding:10px 14px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;overflow:hidden;';
+
+  const paramsHdr = document.createElement('div');
+  paramsHdr.style.cssText = 'display:flex;align-items:center;';
+  paramsHdr.innerHTML =
+    '<span class="m-lbl" style="font-size:9px;flex:1;">Parâmetros</span><span class="m-mono" style="font-size:9px;color:#29c46a;">TOCANDO</span>';
+
+  const paramsBody = document.createElement('div');
+  paramsBody.style.cssText = 'display:flex;flex-direction:column;gap:8px;overflow:hidden;';
+  renderInspectorBody(store, paramsBody);
+
+  const modBox = document.createElement('div');
+  modBox.style.cssText =
+    'margin-top:auto;border-radius:6px;padding:9px 10px;background:#0b0c0e;border:1px solid #1f242b;display:flex;flex-direction:column;gap:6px;';
+  const modTop = document.createElement('div');
+  modTop.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const modTitle = document.createElement('span');
+  modTitle.className = 'm-lbl';
+  modTitle.style.cssText = 'font-size:9px;flex:1;';
+  modTitle.textContent = `Modifier · ${store.selectedBlock === 'amp' ? 'GAIN' : curDef.tag}`;
+  const modBtn = document.createElement('button');
+  modBtn.type = 'button';
+  modBtn.className = 'm-chip';
+  modBtn.dataset.controlId = 'modifier.toggle';
+  modBtn.disabled = true;
+  modBtn.title = 'em implementação — Spec 045';
+  modBtn.style.height = '20px';
+  modBtn.textContent = 'OFF';
+  modTop.append(modTitle, modBtn);
+
+  const modSources = document.createElement('div');
+  modSources.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+  for (const sLblText of ['EXP 1', 'EXP 2', 'LFO 1', 'ENV', 'MIDI CC']) {
+    const sb = document.createElement('button');
+    sb.type = 'button';
+    sb.className = 'm-chip m-mono';
+    sb.dataset.controlId = 'modifier.source';
+    sb.disabled = true;
+    sb.title = 'em implementação — Spec 045';
+    sb.style.cssText = 'height:20px;padding:0 5px;font-size:9.5px;';
+    sb.textContent = sLblText;
+    modSources.appendChild(sb);
+  }
+  const modFoot = document.createElement('div');
+  modFoot.className = 'm-mono';
+  modFoot.style.cssText = 'font-size:9.5px;color:#9aa3ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+  modFoot.textContent = 'EXP 1 → faixa 20–80 % · Spec 045';
+  modBox.append(modTop, modSources, modFoot);
+
+  inspBotSec.append(paramsHdr, paramsBody, modBox);
+  inspector.append(inspTopSec, inspBotSec);
+
+  bodyArea.append(stage, inspector);
+  root.append(toolbar, gridSec, bodyArea);
   return root;
+}
+
+function numSafe(store: AppStore, key: string, fallback: number): number {
+  const v = store.getParam(key, fallback);
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+function blkAmpTitle(blk: BlockId, ampTitle: string, defTitle: string): string {
+  return blk === 'amp' ? ampTitle : defTitle;
 }

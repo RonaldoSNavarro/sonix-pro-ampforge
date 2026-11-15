@@ -70,7 +70,7 @@ export class ParamCoalescer {
   }
 
   private scheduleFlush(): void {
-    if (this.scheduled) return;
+    if (this.scheduled || this.inflight) return;
     this.scheduled = true;
     this.rafFn(() => {
       void this.flushNow();
@@ -78,6 +78,9 @@ export class ParamCoalescer {
   }
 
   async flushNow(): Promise<void> {
+    while (this.inflight) {
+      await this.inflight;
+    }
     this.scheduled = false;
     const keys = Object.keys(this.pending);
     if (keys.length === 0) return;
@@ -95,8 +98,11 @@ export class ParamCoalescer {
       }
     };
     this.inflight = run();
-    await this.inflight;
-    this.inflight = null;
+    try {
+      await this.inflight;
+    } finally {
+      this.inflight = null;
+    }
 
     if (Object.keys(this.pending).length > 0 && !this.scheduled) {
       this.scheduleFlush();
@@ -118,6 +124,8 @@ function offlinePreviewStub(
   cmd: string,
   args?: Record<string, unknown>,
 ): Record<string, unknown> {
+  const fixture = (globalThis as { __SONIX_048_FIXTURE__?: Record<string, unknown> })
+    .__SONIX_048_FIXTURE__;
   switch (cmd) {
     case 'set_params':
       return {
@@ -125,49 +133,60 @@ function offlinePreviewStub(
         ignored: [],
       };
     case 'get_state':
-      return {};
+      return (fixture?.state as Record<string, unknown>) ?? {};
     case 'get_audio_status':
+      if (fixture?.audioStatus) {
+        return fixture.audioStatus as Record<string, unknown>;
+      }
       return {
         backend: 'wasapi',
-        mode: 'wasapi_exclusive',
+        mode: 'wasapi_shared',
+        raw_processing: false,
         sample_rate: 48000,
-        input_period_frames: 64,
-        output_period_frames: 64,
-        driver_input_latency_ms: 1.33,
-        driver_output_latency_ms: 1.33,
-        measured_roundtrip_ms: 4.1,
+        input_period_frames: 128,
+        output_period_frames: 128,
+        driver_input_latency_ms: 2.67,
+        driver_output_latency_ms: 2.67,
+        measured_roundtrip_ms: null,
+        estimated_roundtrip_ms: 5.34,
         underruns: 0,
         overruns: 0,
         adc_clips: 0,
-        cpu_avg_pct: 6.4,
-        input_device: 'Preview Audio Device',
-        output_device: 'Preview Audio Device',
-        connected: true,
+        cpu_avg_pct: 0,
+        input_device: '',
+        output_device: '',
+        mode_capabilities: {
+          wasapi_shared: true,
+          wasapi_shared_low_latency: true,
+          wasapi_exclusive: false,
+          asio: false,
+        },
+        connected: false,
       };
     case 'get_devices':
       return {
-        devices: [
-          { name: 'Guitar Hi-Z Input (WASAPI)', is_input: true, is_default: true },
-          { name: 'Studio Monitor Out (WASAPI)', is_output: true, is_default: true },
-        ],
+        devices: (fixture?.devices as unknown[]) ?? [],
       };
     case 'list_presets':
       return {
-        presets: [
-          { id: 'brit800', name: 'P01 Brit 800 JCM2203 Crunch', setlist: 'Show 2026' },
-          { id: 'plexi_jumped', name: 'P02 Plexi 1959 Jumped Lead', setlist: 'Show 2026' },
-          { id: 'cali_modern', name: 'P03 Cali Dual Recto Modern Metal', setlist: 'Show 2026' },
-          { id: 'twin_clean', name: 'P04 US Twin AB763 Clean Sparkle', setlist: 'Show 2026' },
-          { id: 'ac30_chime', name: 'P05 UK 30 Top Boost Chime', setlist: 'Show 2026' },
-        ],
+        presets: (fixture?.presets as unknown[]) ?? [],
       };
+    case 'get_scope': {
+      const mode = String(args?.mode ?? 'waveform');
+      const scopeFix = fixture?.scope as Record<string, unknown> | undefined;
+      if (scopeFix && scopeFix[mode]) {
+        return scopeFix[mode] as Record<string, unknown>;
+      }
+      return {};
+    }
     case 'measure_latency':
       return {
         ok: true,
-        driver_input_latency_ms: 1.33,
-        driver_output_latency_ms: 1.33,
+        driver_input_latency_ms: 2.67,
+        driver_output_latency_ms: 2.67,
         algorithmic_latency_ms: 0.33,
-        measured_roundtrip_ms: 3.12,
+        estimated_roundtrip_ms: 5.67,
+        measured_roundtrip_ms: null,
         sample_rate: 48000,
       };
     case 'calibrate_input':

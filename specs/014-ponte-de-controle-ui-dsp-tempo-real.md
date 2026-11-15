@@ -191,3 +191,4 @@ CA-10, CA-11, CA-14).
   identificador estável).
 - Origem: code review de 2026-11-09 (achados F-01 e F-04), registrado no Cortex
   (`simulador-de-efeitos`).
+- **2026-11-14 (Auditoria Spec 044 CA-4):** O teste original de suavização (`CA-8`) lia apenas `current_effective_gain()` enquanto `gain_smoother` não era aplicado no áudio; corrigido na **Spec 044** com aplicação por sub-bloco em `RealtimeDspChain::process_chunk` e teste medido em saída RMS real (`contract_014_ui_dsp_bridge::test_ca_08_parameter_smoothing_step_response`).

@@ -65,6 +65,48 @@ fn test_ca_02_supported_sample_rates_and_buffer_sizes() {
     }
 }
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+
+struct CountingAlloc;
+
+thread_local! {
+    static ALLOC_COUNTING: Cell<bool> = const { Cell::new(false) };
+    static ALLOC_EVENTS: Cell<usize> = const { Cell::new(0) };
+}
+
+unsafe impl GlobalAlloc for CountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOC_COUNTING.with(|on| {
+            if on.get() {
+                ALLOC_EVENTS.with(|c| c.set(c.get() + 1));
+            }
+        });
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        ALLOC_COUNTING.with(|on| {
+            if on.get() {
+                ALLOC_EVENTS.with(|c| c.set(c.get() + 1));
+            }
+        });
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        ALLOC_COUNTING.with(|on| {
+            if on.get() {
+                ALLOC_EVENTS.with(|c| c.set(c.get() + 1));
+            }
+        });
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL_TEST_ALLOCATOR: CountingAlloc = CountingAlloc;
+
 #[test]
 fn test_ca_03_zero_alloc_and_zero_lock_during_process_block() {
     let config = AudioConfig::new(SampleRate::Rate48000, BufferSize::Size128).unwrap();
@@ -84,15 +126,16 @@ fn test_ca_03_zero_alloc_and_zero_lock_during_process_block() {
     let mut out_l = [0.0f32; 128];
     let mut out_r = [0.0f32; 128];
 
-    // Reset alloc counter
-    engine.reset_rt_alloc_counter();
-
-    // Executa múltiplos ciclos em tempo real
-    for _ in 0..10 {
+    // Medição real com alocador global de contagem na thread do callback
+    ALLOC_EVENTS.with(|c| c.set(0));
+    ALLOC_COUNTING.with(|on| on.set(true));
+    for _ in 0..100 {
         engine.process_block(&in_l, &in_r, &mut out_l, &mut out_r).unwrap();
     }
+    ALLOC_COUNTING.with(|on| on.set(false));
+    let events = ALLOC_EVENTS.with(|c| c.get());
 
-    assert_eq!(engine.rt_alloc_count(), 0, "Alocações no process_block devem ser estritamente ZERO (RNF-005)");
+    assert_eq!(events, 0, "Alocações/desalocações no process_block devem ser estritamente ZERO (RNF-005)");
     assert_eq!(engine.rt_lock_count(), 0, "Locks ou contenções no process_block devem ser ZERO");
 }
 

@@ -4,11 +4,21 @@ use crate::streams::{ScopeFrame, StreamCoordinator, TelemetryFrame, TunerFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sonix_desktop::api::{dispatch, ApiContext};
-use sonix_desktop::audio::AudioStatusTelemetry;
+use sonix_desktop::audio::{
+    AudioDriverError, AudioStatusTelemetry, InputChannel, RealtimeDspChain,
+    RealtimeDuplexAudioStreams, RealtimeDuplexEngine, TelemetryBuffer,
+};
 use sonix_desktop::DesktopAudioHost;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
 use tauri::State;
+
+/// Handles ativos do motor de áudio gerenciados pelo runtime Tauri (Spec 034, CA-3/CA-4/CA-9).
+pub struct AudioRuntimeControl {
+    pub duplex: Arc<RealtimeDuplexEngine>,
+    pub dsp_chain: Arc<Mutex<RealtimeDspChain>>,
+    pub active_streams: Arc<Mutex<Option<RealtimeDuplexAudioStreams>>>,
+}
 
 /// Resposta bruta espelhando `(status, content_type, body)` do despachante puro `api::dispatch`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +32,7 @@ pub struct CommandResponse {
 pub struct AppRuntime {
     pub api_ctx: ApiContext,
     pub streams: Arc<StreamCoordinator>,
+    pub audio_ctrl: Option<Arc<AudioRuntimeControl>>,
     pub _keep_alive: Arc<dyn std::any::Any + Send + Sync>,
 }
 
@@ -199,26 +210,52 @@ pub fn measure_latency(state: State<'_, AppRuntime>) -> Result<Value, String> {
     let sr = status["sample_rate"].as_f64().unwrap_or(48000.0).max(1.0);
     let algo_samples = status["algorithmic_latency_samples"].as_f64().unwrap_or(16.0);
     let algo_ms = (algo_samples / sr) * 1000.0;
-    let total_ms = status["measured_roundtrip_ms"]
+    let estimated_ms = status["estimated_roundtrip_ms"]
         .as_f64()
         .unwrap_or(in_ms + out_ms + algo_ms);
+    let measured_ms = status["measured_roundtrip_ms"].as_f64();
     Ok(json!({
         "ok": true,
         "driver_input_latency_ms": in_ms,
         "driver_output_latency_ms": out_ms,
         "algorithmic_latency_ms": (algo_ms * 100.0).round() / 100.0,
-        "measured_roundtrip_ms": (total_ms * 100.0).round() / 100.0,
+        "estimated_roundtrip_ms": (estimated_ms * 100.0).round() / 100.0,
+        "measured_roundtrip_ms": measured_ms.map(|v| (v * 100.0).round() / 100.0),
         "sample_rate": sr as u32
     }))
 }
 
-#[tauri::command]
-pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<Value, String> {
-    let known_devices = DesktopAudioHost::new().enumerate_devices();
+/// Configura dispositivos/taxa/buffer de áudio reabrindo o stream real e preservando o anterior se falhar (Spec 034, CA-3, CA-4, CA-9).
+pub fn configure_audio_device_with_opener<F>(
+    payload: &Value,
+    api_ctx: &ApiContext,
+    duplex: &Arc<RealtimeDuplexEngine>,
+    dsp_chain: &Arc<Mutex<RealtimeDspChain>>,
+    active_streams: &Arc<Mutex<Option<RealtimeDuplexAudioStreams>>>,
+    opener: F,
+) -> Result<Value, String>
+where
+    F: FnOnce(
+        Arc<RealtimeDuplexEngine>,
+        Arc<Mutex<RealtimeDspChain>>,
+        Arc<TelemetryBuffer>,
+        Option<&str>,
+        Option<&str>,
+        Option<u32>,
+        Option<u32>,
+    ) -> Result<(Option<RealtimeDuplexAudioStreams>, AudioStatusTelemetry), AudioDriverError>,
+{
+    let host = DesktopAudioHost::new();
+    let known_devices = host.enumerate_devices();
     let backend = payload
         .get("backend")
         .and_then(|v| v.as_str())
         .unwrap_or("wasapi");
+    let requested_mode = payload
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or(backend);
+    host.validate_requested_mode(requested_mode)?;
     let sample_rate = payload
         .get("sample_rate")
         .and_then(|v| v.as_u64())
@@ -228,6 +265,7 @@ pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<
     }
     let buffer_size = payload
         .get("buffer_size")
+        .or_else(|| payload.get("buffer"))
         .and_then(|v| v.as_u64())
         .unwrap_or(128) as u32;
     if !matches!(buffer_size, 32 | 64 | 128 | 256 | 512 | 1024) {
@@ -246,61 +284,70 @@ pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<
         .and_then(|v| v.as_str())
         .unwrap_or("left")
         .to_string();
+    duplex.set_input_channel(InputChannel::from_str_opt(&input_channel));
 
-    if let Ok(mut guard) = state.api_ctx.audio_telemetry.lock() {
-        let entry = guard.get_or_insert_with(|| AudioStatusTelemetry {
-            backend: backend.to_string(),
-            mode: if backend == "asio" {
-                "asio_native".to_string()
-            } else {
-                "wasapi_shared".to_string()
-            },
-            fallback_reason: None,
-            raw_processing: false,
-            sample_rate,
-            input_period_frames: buffer_size,
-            output_period_frames: buffer_size,
-            input_device: input_device.clone().unwrap_or_else(|| "Default".to_string()),
-            output_device: output_device.clone().unwrap_or_else(|| "Default".to_string()),
-            driver_input_latency_ms: (buffer_size as f32 / sample_rate as f32) * 1000.0,
-            driver_output_latency_ms: (buffer_size as f32 / sample_rate as f32) * 1000.0,
-            cpu_avg_pct: 4.5,
-            cpu_peak_pct: 7.0,
-            underruns: 0,
-            overruns: 0,
-            panics: 0,
-            adc_clips: 0,
-            measured_roundtrip_ms: None,
-            algorithmic_latency_samples: 16,
-        });
-        entry.backend = backend.to_string();
-        entry.mode = if backend == "asio" {
-            "asio_native".to_string()
-        } else {
-            "wasapi_shared".to_string()
-        };
-        entry.sample_rate = sample_rate;
-        entry.input_period_frames = buffer_size;
-        entry.output_period_frames = buffer_size;
-        if let Some(ref d) = input_device {
-            entry.input_device = d.clone();
-        }
-        if let Some(ref d) = output_device {
-            entry.output_device = d.clone();
-        }
-        let lat_ms = (buffer_size as f32 / sample_rate as f32) * 1000.0;
-        entry.driver_input_latency_ms = lat_ms;
-        entry.driver_output_latency_ms = lat_ms;
+    // Tenta abrir o novo stream antes de desligar/sobrescrever o anterior (atomicidade com rollback em erro)
+    let (new_streams, actual_telemetry) = opener(
+        duplex.clone(),
+        dsp_chain.clone(),
+        api_ctx.telemetry.clone(),
+        input_device.as_deref(),
+        output_device.as_deref(),
+        Some(sample_rate),
+        Some(buffer_size),
+    )
+    .map_err(|e| format!("{}", e))?;
+
+    duplex.set_target_period(actual_telemetry.output_period_frames as usize);
+    if let Ok(mut d) = dsp_chain.lock() {
+        d.prepare(
+            actual_telemetry.sample_rate as f32,
+            (actual_telemetry.output_period_frames as usize).max(2048),
+        );
+    }
+
+    if let Ok(mut stream_guard) = active_streams.lock() {
+        // Substitui stream antigo após abertura bem-sucedida do novo
+        *stream_guard = new_streams;
+    }
+
+    if let Ok(mut guard) = api_ctx.audio_telemetry.lock() {
+        let mut updated = actual_telemetry.clone();
+        updated.backend = backend.to_string();
+        *guard = Some(updated);
     }
 
     Ok(json!({
         "ok": true,
         "backend": backend,
-        "sample_rate": sample_rate,
-        "buffer_size": buffer_size,
+        "sample_rate": actual_telemetry.sample_rate,
+        "buffer_size": actual_telemetry.output_period_frames,
+        "input_device": actual_telemetry.input_device,
+        "output_device": actual_telemetry.output_device,
         "input_channel": input_channel,
         "available_devices": known_devices.len()
     }))
+}
+
+#[tauri::command]
+pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<Value, String> {
+    let Some(ref ctrl) = state.audio_ctrl else {
+        return Err("Controle de áudio não inicializado".to_string());
+    };
+    configure_audio_device_with_opener(
+        &payload,
+        &state.api_ctx,
+        &ctrl.duplex,
+        &ctrl.dsp_chain,
+        &ctrl.active_streams,
+        |duplex, dsp_chain, telemetry, in_dev, out_dev, sr, buf| {
+            let streams = DesktopAudioHost::start_realtime_wasapi_duplex_with_config(
+                duplex, dsp_chain, telemetry, in_dev, out_dev, sr, buf,
+            )?;
+            let tele = streams.telemetry.clone();
+            Ok((Some(streams), tele))
+        },
+    )
 }
 
 #[tauri::command]

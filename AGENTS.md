@@ -11,7 +11,9 @@ specs** (que é o changelog do projeto) estão em `specs/README.md` — leia-o a
 - **Regime SDD + TDD estrito:** cada `CA-n` vira um teste que falha antes da implementação (*red → green*).
 - Spec e implementação são revisadas no **mesmo PR**.
 
-> **Trabalho em andamento (2026-11-13):** Spec 033 — app desktop Tauri v2 com as telas do design e todo controle ligado ao motor. Instruções para o agente implementador em `docs/handoff/ANTIGRAVITY-033-desktop-tauri.md`; design de referência em `docs/ui-desktop/canvas/`.
+> **Estado atual (2026-11-14):** Specs 034–048 (todas as fases 1–6 do review manual das Specs 001–033) implementadas e verificadas: Fases 1–4 (`034`, `037`, `046`, `044`, `036`, `035`, `048`), Fase 5 (`045`, `038`, `039`, `041`, `040`, `047`, `043`) e Fase 6 (`042` — Pitch Shifter & Harmonizer Diatônico). Design de referência em `docs/ui-desktop/canvas/`, renderizado em `docs/ui-desktop/referencia/`. O handoff anterior (`ANTIGRAVITY-033-desktop-tauri.md`) está encerrado.
+
+
 
 
 
@@ -65,6 +67,22 @@ Não existe controle decorativo. Todo knob, chave, jack, botão, pedal, footswit
 - Controles só visuais (ex.: seletor do VU do compressor) são declarados como tal no registro.
 
 Referência: Spec 033 §3, CA-4 e CA-5.
+
+## Rule [20261114-131934-regra-d272]
+# regua-medida-para-invariantes: invariante só conta como verificada por régua medida
+
+**Origem:** review manual de 2026-11-14. Dois contratos passavam verdes enquanto o comportamento estava errado.
+
+## Regra
+Um CA que afirma uma invariante precisa de um teste que **meça** o comportamento e que **reprove** quando ele é violado. Ler o código ou cronometrar não serve como régua.
+
+1. **Tempo real (Specs 037 CA-7, 044 CA-3):** zero-alloc no callback é verificado com um **alocador global de contagem**, ativo só na thread que chama `RealtimeDspChain::process`. Esse alocador conta alocações e desalocações. O teste precisa falhar quando se injeta um `Vec::with_capacity` no `process`.
+2. **Fidelidade visual (Spec 048 CA-10):** spec de UI com design de referência tem régua visual. Um E2E captura cada tela em 1440×900 com dados de fixture e compara com o PNG de `docs/ui-desktop/referencia/` ([[20261114-131933-referencia-3a73]]). O teste reprova com SSIM < 0,85 por região ou < 0,80 na tela inteira.
+3. **Teste de contrato que não falha quando se quebra o comportamento é tautológico:** antes do green, demonstre o red com a quebra real.
+
+## Por quê
+- A Spec 033 passou em todos os CAs (inventário, IPC, ausência de scroll) com uma UI que não se parecia com o design, porque não tinha CA de fidelidade.
+- Os testes "zero-alloc" passavam enquanto o callback liberava a IR antiga, usava `Mutex` no osciloscópio e silenciava ao carregar IR ou preset.
 
 <!-- END CORTEX RULES -->
 

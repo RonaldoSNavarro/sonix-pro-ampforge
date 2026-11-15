@@ -75,3 +75,4 @@ Fontes da verdade e evidências no repositório:
 
 ## Notas
 - Rastreabilidade SRS: Seção 2.1, **RNF-001**, **RNF-002**, **RNF-003**, **RNF-004**, **RNF-005**, **RNF-006**, **RNF-007**.
+- **2026-11-14 (Auditoria Spec 044):** `DspEngine`, `MixedPrecisionSolver` e `SpscTelemetryQueue` permaneceram em uso apenas como biblioteca/testes (produção usa `RealtimeDspChain`); `HalfBandOversampler` e `CpuMonitor` tiveram implementação e medição reais corrigidas na **Spec 044**, com integração completa do oversampling/grafo retomada nas **Specs 039/041/045**.

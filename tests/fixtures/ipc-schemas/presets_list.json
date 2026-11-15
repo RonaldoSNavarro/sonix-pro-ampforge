@@ -1,0 +1,24 @@
+{
+  "presets": [
+    {
+      "id": "brit800",
+      "name": "Brit 800 Crunch",
+      "type": "factory"
+    },
+    {
+      "id": "usdeluxe",
+      "name": "US Deluxe Clean",
+      "type": "factory"
+    },
+    {
+      "id": "recto",
+      "name": "Recto High Gain",
+      "type": "factory"
+    },
+    {
+      "id": "ac30",
+      "name": "AC30 Top Boost",
+      "type": "factory"
+    }
+  ]
+}

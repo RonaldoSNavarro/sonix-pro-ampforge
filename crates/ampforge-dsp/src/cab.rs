@@ -85,6 +85,33 @@ impl BiquadFilter {
         }
     }
 
+    pub fn peaking(fc: f64, gain_db: f64, q: f64, sr: f64) -> Self {
+        let a = 10.0f64.powf(gain_db / 40.0);
+        let w0 = 2.0 * std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499);
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let alpha = sin_w0 / (2.0 * q.max(0.1));
+
+        let b0 = 1.0 + alpha * a;
+        let b1 = -2.0 * cos_w0;
+        let b2 = 1.0 - alpha * a;
+        let a0 = 1.0 + alpha / a;
+        let a1 = -2.0 * cos_w0;
+        let a2 = 1.0 - alpha / a;
+
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
     pub fn low_shelf(fc: f64, gain_db: f64, sr: f64) -> Self {
         let a = 10.0f64.powf(gain_db / 40.0);
         let w0 = 2.0 * std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499);
@@ -282,15 +309,228 @@ impl std::fmt::Display for InvalidImpulseResponseError {
 
 impl std::error::Error for InvalidImpulseResponseError {}
 
+const PART_B: usize = 128;
+const FFT_N: usize = 256;
+const MAX_PARTITIONS: usize = 512;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Complex32 {
+    re: f32,
+    im: f32,
+}
+
+impl Complex32 {
+    #[inline(always)]
+    fn new(re: f32, im: f32) -> Self {
+        Self { re, im }
+    }
+}
+
+/// FFT Radix-2 Cooley-Tukey in-place de 256 pontos (zero-alloc).
+fn fft_256(buf: &mut [Complex32; FFT_N], inverse: bool) {
+    // Bit-reversal permutation (8 bits para 256)
+    for i in 0..FFT_N {
+        let rev = (i as u8).reverse_bits() as usize;
+        if i < rev {
+            buf.swap(i, rev);
+        }
+    }
+
+    let sign = if inverse { 1.0f32 } else { -1.0f32 };
+    let mut half = 1usize;
+    while half < FFT_N {
+        let step = half << 1;
+        let angle_step = sign * std::f32::consts::PI / (half as f32);
+        let w_step_re = angle_step.cos();
+        let w_step_im = angle_step.sin();
+
+        let mut start = 0usize;
+        while start < FFT_N {
+            let mut w_re = 1.0f32;
+            let mut w_im = 0.0f32;
+            for k in 0..half {
+                let even = start + k;
+                let odd = even + half;
+                let b = buf[odd];
+                let t_re = w_re * b.re - w_im * b.im;
+                let t_im = w_re * b.im + w_im * b.re;
+                let a = buf[even];
+                buf[even] = Complex32::new(a.re + t_re, a.im + t_im);
+                buf[odd] = Complex32::new(a.re - t_re, a.im - t_im);
+
+                let next_re = w_re * w_step_re - w_im * w_step_im;
+                let next_im = w_re * w_step_im + w_im * w_step_re;
+                w_re = next_re;
+                w_im = next_im;
+            }
+            start += step;
+        }
+        half = step;
+    }
+
+    if inverse {
+        let inv_n = 1.0f32 / (FFT_N as f32);
+        for c in buf.iter_mut() {
+            c.re *= inv_n;
+            c.im *= inv_n;
+        }
+    }
+}
+
+#[derive(Debug)]
+struct IrPartitionedData {
+    head_taps: [f32; PART_B],
+    head_len: usize,
+    tail_partitions: Vec<[Complex32; FFT_N]>,
+}
+
+impl IrPartitionedData {
+    fn from_samples(samples: &[f32]) -> Self {
+        let capped_len = samples.len().min(MAX_PARTITIONS * PART_B);
+        let mut head_taps = [0.0f32; PART_B];
+        let head_len = capped_len.min(PART_B);
+        head_taps[..head_len].copy_from_slice(&samples[..head_len]);
+
+        let num_parts = (capped_len + PART_B - 1) / PART_B;
+        let tail_count = num_parts.saturating_sub(1);
+        let mut tail_partitions = Vec::with_capacity(tail_count);
+        for p in 1..num_parts {
+            let start = p * PART_B;
+            let end = (start + PART_B).min(capped_len);
+            let mut buf = [Complex32::default(); FFT_N];
+            for (i, &s) in samples[start..end].iter().enumerate() {
+                buf[i] = Complex32::new(s, 0.0);
+            }
+            fft_256(&mut buf, false);
+            tail_partitions.push(buf);
+        }
+
+        Self {
+            head_taps,
+            head_len,
+            tail_partitions,
+        }
+    }
+}
+
+struct PartitionedConvolverState {
+    head_circ: [f32; PART_B],
+    head_pos: usize,
+    in_block: [f32; PART_B],
+    block_pos: usize,
+    tail_out: [f32; PART_B],
+    saved_overlap: [f32; PART_B],
+    fdl: Vec<[Complex32; FFT_N]>,
+    fdl_pos: usize,
+    fdl_valid_count: usize,
+    fft_buf: [Complex32; FFT_N],
+    acc_buf: [Complex32; FFT_N],
+}
+
+impl PartitionedConvolverState {
+    fn new() -> Self {
+        Self {
+            head_circ: [0.0; PART_B],
+            head_pos: 0,
+            in_block: [0.0; PART_B],
+            block_pos: 0,
+            tail_out: [0.0; PART_B],
+            saved_overlap: [0.0; PART_B],
+            fdl: vec![[Complex32::default(); FFT_N]; MAX_PARTITIONS],
+            fdl_pos: 0,
+            fdl_valid_count: 0,
+            fft_buf: [Complex32::default(); FFT_N],
+            acc_buf: [Complex32::default(); FFT_N],
+        }
+    }
+
+    fn reset(&mut self) {
+        self.head_circ.fill(0.0);
+        self.head_pos = 0;
+        self.in_block.fill(0.0);
+        self.block_pos = 0;
+        self.tail_out.fill(0.0);
+        self.saved_overlap.fill(0.0);
+        self.fdl_pos = 0;
+        self.fdl_valid_count = 0;
+    }
+
+    #[inline]
+    fn process_sample(&mut self, x: f32, data: &IrPartitionedData) -> f32 {
+        // 1. Partição 0: FIR direto (latência zero)
+        self.head_circ[self.head_pos] = x;
+        let mut y_head = 0.0f32;
+        let h_len = data.head_len;
+        let h_taps = &data.head_taps;
+        for k in 0..h_len {
+            let idx = (self.head_pos + PART_B - k) & (PART_B - 1);
+            y_head += self.head_circ[idx] * h_taps[k];
+        }
+        self.head_pos = (self.head_pos + 1) & (PART_B - 1);
+
+        // 2. Cauda pré-computada por FFT
+        let y_tail = self.tail_out[self.block_pos];
+        self.in_block[self.block_pos] = x;
+        self.block_pos += 1;
+
+        // 3. Ao completar bloco de 128 amostras, computa FFT Overlap-Add das partições p >= 1
+        if self.block_pos == PART_B {
+            self.block_pos = 0;
+            if !data.tail_partitions.is_empty() {
+                for i in 0..PART_B {
+                    self.fft_buf[i] = Complex32::new(self.in_block[i], 0.0);
+                    self.fft_buf[PART_B + i] = Complex32::default();
+                }
+                fft_256(&mut self.fft_buf, false);
+                self.fdl[self.fdl_pos] = self.fft_buf;
+
+                self.acc_buf.fill(Complex32::default());
+                let valid = self.fdl_valid_count + 1;
+                let max_p = data.tail_partitions.len().min(valid);
+                for p in 0..max_p {
+                    let fdl_idx = (self.fdl_pos + MAX_PARTITIONS - p) % MAX_PARTITIONS;
+                    let x_spec = &self.fdl[fdl_idx];
+                    let h_spec = &data.tail_partitions[p];
+                    for k in 0..FFT_N {
+                        let a = x_spec[k];
+                        let b = h_spec[k];
+                        self.acc_buf[k].re += a.re * b.re - a.im * b.im;
+                        self.acc_buf[k].im += a.re * b.im + a.im * b.re;
+                    }
+                }
+                fft_256(&mut self.acc_buf, true);
+
+                for i in 0..PART_B {
+                    self.tail_out[i] = self.saved_overlap[i] + self.acc_buf[i].re;
+                    self.saved_overlap[i] = self.acc_buf[PART_B + i].re;
+                }
+
+                self.fdl_pos = (self.fdl_pos + 1) % MAX_PARTITIONS;
+                if self.fdl_valid_count < MAX_PARTITIONS {
+                    self.fdl_valid_count += 1;
+                }
+            }
+        }
+
+        y_head + y_tail
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
     sample_rate: f32,
-    samples: Vec<f32>,
+    samples: std::sync::Arc<[f32]>,
+    partitioned: std::sync::Arc<IrPartitionedData>,
 }
 
 impl ImpulseResponse {
     pub fn from_samples(sample_rate: f32, samples: Vec<f32>) -> Self {
-        Self { sample_rate, samples }
+        let partitioned = std::sync::Arc::new(IrPartitionedData::from_samples(&samples));
+        Self {
+            sample_rate,
+            samples: std::sync::Arc::from(samples),
+            partitioned,
+        }
     }
 
     pub fn from_samples_with_normalization(sample_rate: f32, mut samples: Vec<f32>, normalize: bool) -> Self {
@@ -301,7 +541,12 @@ impl ImpulseResponse {
                 *s /= energy;
             }
         }
-        Self { sample_rate, samples }
+        let partitioned = std::sync::Arc::new(IrPartitionedData::from_samples(&samples));
+        Self {
+            sample_rate,
+            samples: std::sync::Arc::from(samples),
+            partitioned,
+        }
     }
 
     pub fn sample_rate(&self) -> f32 {
@@ -369,14 +614,25 @@ impl WavIrLoader {
     }
 
     pub fn load_from_bytes(&self, bytes: &[u8]) -> Result<ImpulseResponse, InvalidImpulseResponseError> {
+        self.load_from_bytes_internal(bytes, true).map(|(ir, _)| ir)
+    }
+
+    pub fn load_from_bytes_with_info(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(ImpulseResponse, u16), InvalidImpulseResponseError> {
         self.load_from_bytes_internal(bytes, true)
     }
 
     pub fn load_wav_unlimited(&self, bytes: &[u8]) -> Result<ImpulseResponse, InvalidImpulseResponseError> {
-        self.load_from_bytes_internal(bytes, false)
+        self.load_from_bytes_internal(bytes, false).map(|(ir, _)| ir)
     }
 
-    fn load_from_bytes_internal(&self, bytes: &[u8], enforce_max_duration: bool) -> Result<ImpulseResponse, InvalidImpulseResponseError> {
+    fn load_from_bytes_internal(
+        &self,
+        bytes: &[u8],
+        enforce_max_duration: bool,
+    ) -> Result<(ImpulseResponse, u16), InvalidImpulseResponseError> {
         if bytes.is_empty() {
             return Err(InvalidImpulseResponseError::EmptyFile);
         }
@@ -484,7 +740,7 @@ impl WavIrLoader {
             ImpulseResponse::from_samples(self.session_sample_rate, samples)
         };
 
-        Ok(ir)
+        Ok((ir, channels))
     }
 }
 
@@ -497,6 +753,7 @@ pub struct VirtualCabProcessor {
     sample_rate: f32,
     custom_ir: Option<ImpulseResponse>,
     target_ir: Option<ImpulseResponse>,
+    retired_ir: Option<ImpulseResponse>,
     ir_enabled: bool,
     ir_crossfade: f32,
     ir_crossfade_step: f32,
@@ -505,9 +762,9 @@ pub struct VirtualCabProcessor {
     delay_pos_mic1: usize,
     delay_line_mic2: Vec<f32>,
     delay_pos_mic2: usize,
-    // Buffer circular para convolução direta FIR de baixa latência (zero latência adicional)
-    ir_circ_buf: Vec<f32>,
-    ir_circ_pos: usize,
+    // Convolução particionada zero-latência (cabeça FIR direta + partições FFT Overlap-Add)
+    conv_custom: PartitionedConvolverState,
+    conv_target: PartitionedConvolverState,
     // Filtros de modelagem de microfone e gabinete
     hicut_filter1: BiquadFilter,
     hicut_filter2: BiquadFilter,
@@ -519,6 +776,10 @@ pub struct VirtualCabProcessor {
     mic2_prox_filter: BiquadFilter,
     mic1_angle_filter: BiquadFilter,
     mic2_angle_filter: BiquadFilter,
+    mic1_model_f1: BiquadFilter,
+    mic1_model_f2: BiquadFilter,
+    mic2_model_f1: BiquadFilter,
+    mic2_model_f2: BiquadFilter,
 }
 
 impl Default for VirtualCabProcessor {
@@ -544,6 +805,7 @@ impl VirtualCabProcessor {
             sample_rate: 48000.0,
             custom_ir: None,
             target_ir: None,
+            retired_ir: None,
             ir_enabled: false,
             ir_crossfade: 1.0,
             ir_crossfade_step: 1.0 / (48000.0 * 0.020),
@@ -551,8 +813,8 @@ impl VirtualCabProcessor {
             delay_pos_mic1: 0,
             delay_line_mic2: vec![0.0; 16384],
             delay_pos_mic2: 0,
-            ir_circ_buf: vec![0.0; 32768],
-            ir_circ_pos: 0,
+            conv_custom: PartitionedConvolverState::new(),
+            conv_target: PartitionedConvolverState::new(),
             hicut_filter1: BiquadFilter::default(),
             hicut_filter2: BiquadFilter::default(),
             open_back_hp: BiquadFilter::default(),
@@ -563,6 +825,10 @@ impl VirtualCabProcessor {
             mic2_prox_filter: BiquadFilter::default(),
             mic1_angle_filter: BiquadFilter::default(),
             mic2_angle_filter: BiquadFilter::default(),
+            mic1_model_f1: BiquadFilter::default(),
+            mic1_model_f2: BiquadFilter::default(),
+            mic2_model_f1: BiquadFilter::default(),
+            mic2_model_f2: BiquadFilter::default(),
         };
         s.update_filters();
         s
@@ -610,23 +876,42 @@ impl VirtualCabProcessor {
     }
 
     pub fn set_custom_ir(&mut self, ir: ImpulseResponse) {
+        if let Some(old) = self.custom_ir.take() {
+            self.retired_ir = Some(old);
+        }
         self.custom_ir = Some(ir);
+        self.conv_custom.reset();
         self.ir_crossfade = 1.0;
-        self.target_ir = None;
+        if let Some(old_t) = self.target_ir.take() {
+            if self.retired_ir.is_none() {
+                self.retired_ir = Some(old_t);
+            }
+        }
     }
 
     pub fn set_target_ir(&mut self, ir: ImpulseResponse) {
         if self.custom_ir.is_none() {
             self.set_custom_ir(ir);
         } else {
-            self.target_ir = Some(ir);
+            if let Some(old_t) = self.target_ir.replace(ir) {
+                self.retired_ir = Some(old_t);
+            }
+            self.conv_target.reset();
             self.ir_crossfade = 0.0;
         }
     }
 
+    pub fn take_retired_ir(&mut self) -> Option<ImpulseResponse> {
+        self.retired_ir.take()
+    }
+
+    pub fn has_retired_ir(&self) -> bool {
+        self.retired_ir.is_some()
+    }
+
     pub fn reset_ir_state(&mut self) {
-        self.ir_circ_buf.fill(0.0);
-        self.ir_circ_pos = 0;
+        self.conv_custom.reset();
+        self.conv_target.reset();
     }
 
     pub fn calculate_impedance_peak(&self, f_min: f32, f_max: f32, f_step: f32) -> (f32, f32) {
@@ -697,10 +982,11 @@ impl VirtualCabProcessor {
         let sr = self.sample_rate as f64;
         let fc = self.conditioning.high_cut_hz.clamp(1000.0, self.sample_rate * 0.45) as f64;
 
-        // Butterworth 2ª ordem passa-baixas (Q = 1 / sqrt(2) = 0.7071) para corte exato de -3 dB na fc
-        let b = BiquadFilter::lowpass(fc, 0.7071, sr);
-        self.hicut_filter1.update_coeffs(b);
-        self.hicut_filter2.update_coeffs(b);
+        // Butterworth 4ª ordem passa-baixas (2 estágios em cascata) para corte exato de -3 dB na fc (-24 dB/oct)
+        let b1 = BiquadFilter::lowpass(fc, 0.5411961, sr);
+        let b2 = BiquadFilter::lowpass(fc, 1.3065630, sr);
+        self.hicut_filter1.update_coeffs(b1);
+        self.hicut_filter2.update_coeffs(b2);
 
         // Open back dipole cancelamento em graves (< 120 Hz)
         if self.speaker_model.is_open_back() {
@@ -718,7 +1004,7 @@ impl VirtualCabProcessor {
                 self.speaker_voicing_filter.update_coeffs(BiquadFilter::high_shelf(2800.0, 2.0, sr));
             }
             SpeakerCabModel::V304x12Closed => {
-                self.speaker_voicing_filter.update_coeffs(BiquadFilter::high_shelf(2500.0, 1.5, sr));
+                self.speaker_voicing_filter.update_coeffs(BiquadFilter::peaking(2200.0, 1.5, 1.8, sr));
             }
             SpeakerCabModel::Greenback4x12Closed => {
                 self.speaker_voicing_filter.update_coeffs(BiquadFilter::default());
@@ -788,6 +1074,42 @@ impl VirtualCabProcessor {
                 &mut self.mic2_angle_filter
             };
 
+            let (model_f1, model_f2) = if slot_idx == 0 {
+                (&mut self.mic1_model_f1, &mut self.mic1_model_f2)
+            } else {
+                (&mut self.mic2_model_f1, &mut self.mic2_model_f2)
+            };
+            match mic.model {
+                MicModel::Sm57 => {
+                    model_f1.update_coeffs(BiquadFilter::peaking(5600.0, 4.0, 2.5, sr));
+                    model_f2.update_coeffs(BiquadFilter::low_shelf(160.0, -3.5, sr));
+                }
+                MicModel::Md421 => {
+                    model_f1.update_coeffs(BiquadFilter::peaking(280.0, -2.5, 1.2, sr));
+                    model_f2.update_coeffs(BiquadFilter::peaking(4500.0, 3.5, 1.3, sr));
+                }
+                MicModel::M88 => {
+                    model_f1.update_coeffs(BiquadFilter::low_shelf(110.0, 2.5, sr));
+                    model_f2.update_coeffs(BiquadFilter::peaking(4000.0, 3.0, 1.5, sr));
+                }
+                MicModel::R121 => {
+                    model_f1.update_coeffs(BiquadFilter::low_shelf(130.0, 2.0, sr));
+                    model_f2.update_coeffs(BiquadFilter::high_shelf(3800.0, -7.5, sr));
+                }
+                MicModel::M160 => {
+                    model_f1.update_coeffs(BiquadFilter::peaking(1800.0, 1.5, 1.0, sr));
+                    model_f2.update_coeffs(BiquadFilter::high_shelf(5500.0, -5.0, sr));
+                }
+                MicModel::U87 => {
+                    model_f1.update_coeffs(BiquadFilter::high_shelf(8000.0, 2.5, sr));
+                    model_f2.update_coeffs(BiquadFilter::peaking(250.0, 0.5, 0.9, sr));
+                }
+                MicModel::C414 => {
+                    model_f1.update_coeffs(BiquadFilter::peaking(3500.0, 3.0, 1.2, sr));
+                    model_f2.update_coeffs(BiquadFilter::high_shelf(9500.0, 4.0, sr));
+                }
+            }
+
             // Atraso de propagação de microfone: delta t = d_cm * 0.01 / 343.0 s
             let delay_sec = (dist_cm * 0.01) / 343.0;
             let delay_samples = delay_sec * sr;
@@ -813,11 +1135,13 @@ impl VirtualCabProcessor {
                 let delayed = delay_line[r_idx0] * (1.0 - d_frac) + delay_line[r_idx1] * d_frac;
                 *delay_pos = (*delay_pos + 1) % line_len;
 
-                // Passa pelos filtros acústicos do microfone
+                // Passa pelos filtros acústicos do microfone e resposta do modelo
                 let mut s = delayed as f64;
                 s = pos_filter.process(s);
                 s = prox_filter.process(s);
                 s = angle_filter.process(s);
+                s = model_f1.process(s);
+                s = model_f2.process(s);
 
                 output[i] += (s * total_gain) as f32;
             }
@@ -829,40 +1153,26 @@ impl VirtualCabProcessor {
             v = self.open_back_hp.process(v);
             v = self.speaker_voicing_filter.process(v);
             v = self.hicut_filter1.process(v);
+            v = self.hicut_filter2.process(v);
             *s = v as f32;
         }
     }
 
     fn process_ir_convolution(&mut self, input: &[f32], output: &mut [f32]) {
-        let circ_len = self.ir_circ_buf.len();
-
         for i in 0..input.len() {
             let x = input[i];
-            self.ir_circ_buf[self.ir_circ_pos] = x;
 
-            let mut y1 = 0.0f32;
-            if let Some(ref ir) = self.custom_ir {
-                let h = ir.samples();
-                let h_len = h.len();
-                let mut sum = 0.0f32;
-                for k in 0..h_len {
-                    let r_idx = (self.ir_circ_pos + circ_len - k) % circ_len;
-                    sum += self.ir_circ_buf[r_idx] * h[k];
-                }
-                y1 = sum;
-            }
+            let y1 = if let Some(ref ir) = self.custom_ir {
+                self.conv_custom.process_sample(x, &ir.partitioned)
+            } else {
+                0.0
+            };
 
-            let mut y2 = 0.0f32;
-            if let Some(ref ir) = self.target_ir {
-                let h = ir.samples();
-                let h_len = h.len();
-                let mut sum = 0.0f32;
-                for k in 0..h_len {
-                    let r_idx = (self.ir_circ_pos + circ_len - k) % circ_len;
-                    sum += self.ir_circ_buf[r_idx] * h[k];
-                }
-                y2 = sum;
-            }
+            let y2 = if let Some(ref ir) = self.target_ir {
+                self.conv_target.process_sample(x, &ir.partitioned)
+            } else {
+                0.0
+            };
 
             let y = if self.target_ir.is_some() {
                 let a = self.ir_crossfade;
@@ -872,13 +1182,23 @@ impl VirtualCabProcessor {
             };
 
             output[i] = y;
-            self.ir_circ_pos = (self.ir_circ_pos + 1) % circ_len;
 
             if self.target_ir.is_some() {
                 self.ir_crossfade += self.ir_crossfade_step;
                 if self.ir_crossfade >= 1.0 {
+                    let old_ir = self.custom_ir.take();
                     self.custom_ir = self.target_ir.take();
+                    std::mem::swap(&mut self.conv_custom, &mut self.conv_target);
+                    self.conv_target.reset();
                     self.ir_crossfade = 1.0;
+                    // Move a IR antiga para retired_ir sem desalocar na thread de áudio (Spec 037, CA-3)
+                    if let Some(old) = old_ir {
+                        if self.retired_ir.is_none() {
+                            self.retired_ir = Some(old);
+                        } else {
+                            std::mem::forget(self.retired_ir.replace(old));
+                        }
+                    }
                 }
             }
         }

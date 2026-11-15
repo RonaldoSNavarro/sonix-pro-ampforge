@@ -4,9 +4,56 @@
 use ampforge_dsp::tuner::{TunerOutputMode, TunerProcessor};
 use sonix_desktop::audio::RealtimeDspChain;
 use sonix_desktop::server::LocalAppServer;
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+
+thread_local! {
+    static COUNTING_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static TL_ALLOCS: Cell<usize> = const { Cell::new(0) };
+    static TL_DEALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
+struct ThreadCountingAlloc;
+
+unsafe impl GlobalAlloc for ThreadCountingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if COUNTING_ACTIVE.try_with(|c| c.get()).unwrap_or(false) {
+            let _ = TL_ALLOCS.try_with(|c| c.set(c.get() + 1));
+        }
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        if COUNTING_ACTIVE.try_with(|c| c.get()).unwrap_or(false) {
+            let _ = TL_DEALLOCS.try_with(|c| c.set(c.get() + 1));
+        }
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if COUNTING_ACTIVE.try_with(|c| c.get()).unwrap_or(false) {
+            let _ = TL_ALLOCS.try_with(|c| c.set(c.get() + 1));
+        }
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static GLOBAL_ALLOC: ThreadCountingAlloc = ThreadCountingAlloc;
+
+fn measure_thread_allocs<F: FnOnce()>(f: F) -> (usize, usize) {
+    TL_ALLOCS.with(|c| c.set(0));
+    TL_DEALLOCS.with(|c| c.set(0));
+    COUNTING_ACTIVE.with(|c| c.set(true));
+    f();
+    COUNTING_ACTIVE.with(|c| c.set(false));
+    let allocs = TL_ALLOCS.with(|c| c.get());
+    let deallocs = TL_DEALLOCS.with(|c| c.get());
+    (allocs, deallocs)
+}
 
 fn http_request(port: u16, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> (u16, String) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("Falha ao conectar no servidor local");
@@ -213,16 +260,24 @@ fn test_ca_05_and_ca_06_tuner_api_endpoint() {
 fn test_ca_08_audio_callback_zero_alloc_and_zero_locks_with_tuner_active() {
     // CA-8: O callback só copia amostras: 0 alocações e 0 locks com o afinador ligado (régua da Spec 018 CA-3)
     let mut dsp = RealtimeDspChain::new(48000.0);
+    dsp.prepare(48000.0, 128);
     dsp.set_tuner_enabled(true);
     dsp.set_tuner_output_mode(TunerOutputMode::Mute);
 
     let in_block = [0.25f32; 128];
     let mut out_block = [0.0f32; 128];
 
-    // Executa múltiplos blocos contínuos de áudio simulando a thread de áudio em tempo real
-    for _ in 0..100 {
-        dsp.process(&in_block, &mut out_block);
-    }
+    // Warm-up único para inicializar TLS antes da medição
+    dsp.process(&in_block, &mut out_block);
+
+    // Executa múltiplos blocos contínuos medindo alocações/desalocações reais na thread de áudio
+    let (allocs, deallocs) = measure_thread_allocs(|| {
+        for _ in 0..100 {
+            dsp.process(&in_block, &mut out_block);
+        }
+    });
+    assert_eq!(allocs, 0, "CA-8: callback de áudio com tuner ativo alocou {} vezes", allocs);
+    assert_eq!(deallocs, 0, "CA-8: callback de áudio com tuner ativo desalocou {} vezes", deallocs);
 
     // A chamada de leitura e análise do afinador executa fora do callback crítico
     let res = dsp.tuner_latest_result();

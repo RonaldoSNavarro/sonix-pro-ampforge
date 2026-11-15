@@ -1,5 +1,5 @@
-import type { AppStore } from '../store';
-import { createKnob } from './Knob';
+import type { AppStore } from '../store.ts';
+import { createKnob } from './Knob.ts';
 
 export type KnobSkin = 'k-marshall' | 'k-fender' | 'k-mesa' | 'k-vox';
 export type AmpModelId = 'plexi_1959' | 'jcm800_2203' | 'twin_ab763' | 'dual_rect' | 'ac30_tb';
@@ -58,13 +58,13 @@ const AMP_THEMES: Record<AmpModelId, AmpTheme> = {
     chassisBg: 'linear-gradient(180deg, #15171a, #0a0b0d)',
     grilleClass: 'g-mesa',
     panelBg:
-      'repeating-linear-gradient(45deg, rgba(255,255,255,0.08) 0 4px, transparent 4px 8px), linear-gradient(180deg, #272b30, #15171a 60%, #0c0d0f)',
+      'repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 3px), linear-gradient(180deg, #242424, #0c0c0c)',
     panelBorder: '#4d535c',
     textColor: '#eef1f4',
     subTextColor: '#a2a9b2',
     knobSkin: 'k-mesa',
     brand: 'CALI RECTO',
-    modelLabel: 'DUAL RECTIFIER · SOLO HEAD · 100W',
+    modelLabel: 'DUAL RECTIFIER · REV F',
     piping: '#9da3aa',
   },
   ac30_tb: {
@@ -139,7 +139,8 @@ function createBatToggle(
   active: boolean,
   upLabel: string,
   downLabel: string,
-  onToggle: () => void
+  onToggle: () => void,
+  showBottomLabel = true
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:1px;flex:none;';
@@ -155,23 +156,25 @@ function createBatToggle(
   btn.dataset.controlId = controlId;
   btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   btn.title = `${label}: ${active ? upLabel : downLabel}`;
-  btn.style.height = '32px';
+  btn.style.height = '44px';
 
   const nut = document.createElement('span');
   nut.className = 'nut';
-  nut.style.top = '7px';
+  nut.style.top = '13px';
   const lev = document.createElement('span');
   lev.className = 'lev';
-  lev.style.top = active ? '0px' : '14px';
+  lev.style.top = active ? '2px' : '22px';
   btn.append(nut, lev);
   btn.addEventListener('click', onToggle);
 
-  const bot = document.createElement('span');
-  bot.className = 'm-lbl';
-  bot.textContent = label || downLabel;
-  bot.style.cssText = 'font-size:7.5px;line-height:1;color:currentColor;';
-
-  wrap.append(top, btn, bot);
+  wrap.append(top, btn);
+  if (showBottomLabel) {
+    const bot = document.createElement('span');
+    bot.className = 'm-lbl';
+    bot.textContent = label || downLabel;
+    bot.style.cssText = 'font-size:7.5px;line-height:1;color:currentColor;';
+    wrap.appendChild(bot);
+  }
   return wrap;
 }
 
@@ -186,11 +189,7 @@ function createJewelLight(lit: boolean, titleText: string): HTMLElement {
     jewel.style.filter = 'brightness(0.26) saturate(0.45)';
     jewel.style.boxShadow = '0 0 0 3px #8a8a8a, 0 0 0 5px #3a3a3a';
   }
-  const lbl = document.createElement('span');
-  lbl.className = 'm-lbl';
-  lbl.textContent = lit ? 'ON' : 'OFF';
-  lbl.style.cssText = 'font-size:7.5px;color:currentColor;';
-  wrap.append(jewel, lbl);
+  wrap.appendChild(jewel);
   return wrap;
 }
 
@@ -240,7 +239,16 @@ function buildKnobControl(
   const [min, max] = desc?.range ?? [0, 10];
   const step = desc?.step ?? 0.1;
   const def = typeof desc?.defaultValue === 'number' ? desc.defaultValue : fallback;
-  return createKnob({
+
+  const col = document.createElement('div');
+  col.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;flex:none;position:relative;';
+
+  const lbl = document.createElement('span');
+  lbl.className = 'm-osw';
+  lbl.textContent = label;
+  lbl.style.cssText = 'font-size:11px;font-weight:600;letter-spacing:.08em;color:currentColor;white-space:nowrap;min-height:15px;';
+
+  const knobEl = createKnob({
     controlId,
     label,
     value: numParam(store, paramKey, def),
@@ -253,8 +261,12 @@ function buildKnobControl(
     onChange: (val) => {
       void store.setControl(controlId, val);
     },
-    onDragState,
+    onDragState: onDragState ?? ((d) => store.setDraggingKnob(d)),
   });
+  const subSlot = document.createElement('div');
+  subSlot.style.cssText = 'min-height:15px;display:flex;justify-content:center;';
+  col.append(lbl, knobEl, subSlot);
+  return col;
 }
 
 export interface AmpHeadOptions {
@@ -282,109 +294,97 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
   const inputJack = strParam(store, 'amp_1.input_jack', 'high');
   const jumpered = boolParam(store, 'amp_1.jumpered', false) || inputJack === 'jumpered';
   const isLit = power && !standby;
-  const kSize = options.compact ? 32 : 38;
+  const kSizeByModel: Record<AmpModelId, number> = {
+    plexi_1959: 54,
+    jcm800_2203: 54,
+    twin_ab763: 40,
+    dual_rect: 50,
+    ac30_tb: 46,
+  };
+  const kSize = options.compact ? 32 : kSizeByModel[model];
 
   const head = document.createElement('section');
   head.className = 'amp-head tolex';
   head.dataset.ampModel = model;
   head.style.cssText = `
     position: relative;
+    width: 1000px;
+    height: 282px;
     display: flex;
     flex-direction: column;
-    border-radius: 10px;
-    border: 2px solid #2b2d32;
-    padding: 8px 10px 9px;
+    border-radius: 12px;
+    padding: 12px;
+    box-sizing: border-box;
     background: ${theme.chassisBg};
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 24px rgba(0,0,0,0.65);
-    gap: 6px;
+    box-shadow: 0 26px 40px rgba(0,0,0,0.75), 0 0 0 1px #000, inset 0 1px 0 rgba(255,255,255,0.08);
+    gap: 8px;
     min-width: 0;
   `;
   if (!enabled) {
     head.style.opacity = '0.72';
   }
 
+  const topStrap = document.createElement('div');
+  topStrap.style.cssText =
+    'position:absolute;left:50%;top:-7px;margin-left:-62px;width:124px;height:12px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,#2a2a2a,#0a0a0a);box-shadow:0 2px 3px rgba(0,0,0,.7);z-index:2;';
+  head.appendChild(topStrap);
+
   // Top grille / window header
   const grille = document.createElement('div');
   grille.className = `amp-grille ${theme.grilleClass}`;
+  const grillePipingByModel: Partial<Record<AmpModelId, string>> = {
+    dual_rect: 'inset 0 0 0 3px #1c1c1c, inset 0 0 0 5px #8f949a',
+    twin_ab763: 'inset 0 0 0 3px #1a1a1a',
+  };
+  const grillePiping =
+    grillePipingByModel[model] ?? `inset 0 0 0 2px ${theme.piping}, inset 0 0 0 3px rgba(0,0,0,0.6)`;
   grille.style.cssText = `
     position: relative;
-    height: ${options.compact ? '36px' : '46px'};
+    flex: 1;
+    min-height: 0;
     border-radius: 6px;
-    border: 1px solid ${theme.piping};
-    box-shadow: inset 0 4px 12px rgba(0,0,0,0.72);
+    box-shadow: ${grillePiping};
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 12px;
+    justify-content: center;
     overflow: hidden;
   `;
 
   const plaque = document.createElement('div');
   plaque.style.cssText =
-    'display:flex;align-items:baseline;gap:10px;padding:2px 9px;border-radius:4px;background:rgba(10,11,14,0.82);border:1px solid rgba(255,255,255,0.16);';
-  plaque.innerHTML = `
-    <span class="m-osw" style="font-size:13px;font-weight:700;letter-spacing:0.12em;color:#ffdca8;">${theme.brand}</span>
-    <span class="m-mono" style="font-size:9px;color:#aeb4bc;">${theme.modelLabel}</span>
-  `;
+    'position:relative;padding:7px 24px;border-radius:5px;background:linear-gradient(180deg,#f4f6f8,#aab0b6 50%,#e1e4e7);box-shadow:0 4px 8px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(0,0,0,.3);';
+  plaque.innerHTML = `<span class="m-osw" style="font-size:30px;font-weight:700;letter-spacing:0.12em;color:#141414;text-shadow:0 1px 0 rgba(255,255,255,.35);">${theme.brand}</span>`;
 
-  const rightHeader = document.createElement('div');
-  rightHeader.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const cornerLbl = document.createElement('span');
+  cornerLbl.className = 'm-mono';
+  cornerLbl.style.cssText = 'position:absolute;right:16px;bottom:9px;font-size:10px;letter-spacing:0.14em;color:rgba(255,240,210,0.6);';
+  cornerLbl.textContent = theme.modelLabel;
 
-  const bypassBtn = document.createElement('button');
-  bypassBtn.type = 'button';
-  bypassBtn.className = 'm-chip';
-  bypassBtn.dataset.controlId = 'amp.enabled';
-  bypassBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-  bypassBtn.textContent = enabled ? 'AMP ON' : 'BYPASS';
-  bypassBtn.addEventListener('click', () => {
-    void store.setControl('amp.enabled', !enabled);
-  });
-
-  const modelSelect = document.createElement('select');
-  modelSelect.dataset.controlId = 'amp.model';
-  modelSelect.style.cssText =
-    'height:22px;padding:0 6px;border-radius:4px;background:#0e1014;border:1px solid #353b44;color:#eef1f4;font-size:10.5px;font-weight:600;';
-  const ampNames: Record<AmpModelId, string> = {
-    plexi_1959: 'Brit 1959 Plexi',
-    jcm800_2203: 'Brit 800 (2203)',
-    twin_ab763: 'US Twin AB763',
-    dual_rect: 'Cali Dual Rectifier',
-    ac30_tb: 'Top Boost AC30',
-  };
-  (Object.keys(ampNames) as AmpModelId[]).forEach((m) => {
-    const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = ampNames[m];
-    if (m === model) opt.selected = true;
-    modelSelect.appendChild(opt);
-  });
-  modelSelect.addEventListener('change', () => {
-    const next = modelSelect.value as AmpModelId;
-    if (options.onSelectAmpModel) {
-      options.onSelectAmpModel(next);
-    } else {
-      void store.setControl('amp.model', next);
-    }
-  });
-
-  rightHeader.append(bypassBtn, modelSelect);
-  grille.append(plaque, rightHeader);
+  grille.append(plaque, cornerLbl);
 
   // Authentic Metal Control Panel
   const panel = document.createElement('div');
   panel.className = 'control-panel';
+  const panelBorderByModel: Partial<Record<AmpModelId, string>> = {
+    dual_rect: 'border: 2px solid #8f949a;',
+    twin_ab763: 'border: 2px solid #a9aeb3;',
+  };
+  const panelBorderCss = panelBorderByModel[model] ?? 'border: none;';
   panel.style.cssText = `
     position: relative;
+    flex: none;
+    height: 130px;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: 18px;
+    padding: 10px 20px;
     border-radius: 5px;
-    border: 1px solid ${theme.panelBorder};
+    ${panelBorderCss}
     background: ${theme.panelBg};
     color: ${theme.textColor};
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -2px 5px rgba(0,0,0,0.45);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), inset 0 -2px 0 rgba(0,0,0,0.3), 0 2px 3px rgba(0,0,0,0.5);
     min-width: 0;
   `;
 
@@ -588,63 +588,97 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
     const spongy = boolParam(store, 'amp_1.spongy', false);
     const rectifier = strParam(store, 'amp_1.rectifier', 'diode');
 
-    panel.appendChild(
-      createJackSocket('high', 'INPUT', true, () => {
-        void store.setControl('amp.input_jack', 'high');
-      })
-    );
-
-    const chSel = document.createElement('select');
-    chSel.dataset.controlId = 'amp.channel_mode';
-    chSel.style.cssText =
-      'height:24px;padding:0 6px;border-radius:4px;background:#111317;border:1px solid #48505a;color:#f3f5f8;font-size:10px;font-weight:700;';
+    const modeBox = document.createElement('div');
+    modeBox.style.cssText =
+      'border-top:1px solid rgba(255,255,255,0.16);padding-top:4px;display:flex;flex-direction:column;gap:6px;flex:none;';
+    modeBox.innerHTML = '<span class="m-osw" style="font-size:10px;font-weight:700;letter-spacing:.18em;color:#e8e8e8;text-align:center;">MODO</span>';
+    const modeGrid = document.createElement('div');
+    modeGrid.style.cssText = 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;';
     (
       [
-        ['clean', 'CH1 CLEAN'],
-        ['pushed', 'CH2 PUSHED'],
-        ['vintage', 'CH2 VINTAGE'],
-        ['modern', 'CH3 MODERN'],
+        ['clean', 'CLEAN'],
+        ['pushed', 'PUSHED'],
+        ['vintage', 'VINTAGE'],
+        ['modern', 'MODERN'],
       ] as const
     ).forEach(([val, text]) => {
-      const o = document.createElement('option');
-      o.value = val;
-      o.textContent = text;
-      if (val === rectMode) o.selected = true;
-      chSel.appendChild(o);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.controlId = 'amp.channel_mode';
+      b.setAttribute('aria-pressed', rectMode === val ? 'true' : 'false');
+      b.style.cssText = `
+        height:22px;padding:0 7px;border-radius:3px;border:1px solid #000;
+        background:linear-gradient(180deg,#2c2c2c,#121212);color:#ddd;font-size:9px;font-weight:700;letter-spacing:.06em;
+        display:flex;align-items:center;gap:5px;cursor:pointer;
+      `;
+      const ledColor = val === 'modern' || val === 'pushed' ? '#ff3b2f' : '#29e07a';
+      b.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${
+        rectMode === val ? ledColor : '#2a2a2a'
+      };box-shadow:${rectMode === val ? `0 0 6px ${ledColor}` : 'none'};"></span><span>${text}</span>`;
+      b.addEventListener('click', () => void store.setControl('amp.channel_mode', val));
+      modeGrid.appendChild(b);
     });
-    chSel.addEventListener('change', () => {
-      void store.setControl('amp.channel_mode', chSel.value);
-    });
-    panel.appendChild(chSel);
+    modeBox.appendChild(modeGrid);
 
-    pushKnob('amp.master', 'amp_1.master', 'OUTPUT', 5.0);
-    pushKnob('amp.presence', 'amp_1.presence', 'PRESENCE', 5.5);
-    pushKnob('amp.bass', 'amp_1.bass', 'BASS', 5.5);
-    pushKnob('amp.middle', 'amp_1.middle', 'MID', 4.5);
-    pushKnob('amp.treble', 'amp_1.treble', 'TREBLE', 6.5);
-    pushKnob('amp.gain', 'amp_1.gain', 'GAIN', 7.2);
+    const knobCluster = document.createElement('div');
+    knobCluster.style.cssText = 'display:flex;align-items:flex-end;gap:16px;flex:none;';
+    knobCluster.append(
+      buildKnobControl(store, 'amp.gain', 'amp_1.gain', 'GAIN', theme.knobSkin, kSize, 7.0, options.onKnobDragState),
+      buildKnobControl(store, 'amp.treble', 'amp_1.treble', 'TREBLE', theme.knobSkin, kSize, 6.0, options.onKnobDragState),
+      buildKnobControl(store, 'amp.middle', 'amp_1.middle', 'MID', theme.knobSkin, kSize, 4.0, options.onKnobDragState),
+      buildKnobControl(store, 'amp.bass', 'amp_1.bass', 'BASS', theme.knobSkin, kSize, 6.0, options.onKnobDragState),
+      buildKnobControl(store, 'amp.presence', 'amp_1.presence', 'PRESENCE', theme.knobSkin, kSize, 5.0, options.onKnobDragState),
+      buildKnobControl(store, 'amp.master', 'amp_1.master', 'MASTER', theme.knobSkin, kSize, 3.5, options.onKnobDragState)
+    );
 
-    panel.appendChild(
-      createBatToggle('amp.spongy', 'VARIAC', spongy, 'SPNGY', 'BOLD', () => {
+    const rearBox = document.createElement('div');
+    rearBox.style.cssText =
+      'border-top:1px solid rgba(255,255,255,0.16);padding-top:4px;display:flex;flex-direction:column;gap:6px;flex:none;';
+    rearBox.innerHTML = '<span class="m-osw" style="font-size:10px;font-weight:700;letter-spacing:.18em;color:#e8e8e8;text-align:center;">TRASEIRO</span>';
+    const rearRow = document.createElement('div');
+    rearRow.style.cssText = 'display:flex;align-items:flex-end;gap:16px;';
+    const isTubeRect = rectifier === '5u4gb' || rectifier === 'gz34';
+    const mkRear = (cid: string, title: string, on: boolean, up: string, dn: string, fn: () => void) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
+      const t = document.createElement('span');
+      t.className = 'm-osw';
+      t.style.cssText = 'font-size:9px;font-weight:600;letter-spacing:.08em;color:#e8e8e8;white-space:nowrap;';
+      t.textContent = title;
+      wrap.append(t, createBatToggle(cid, dn, on, up, dn, fn));
+      return wrap;
+    };
+    rearRow.append(
+      mkRear('chassi.rectifier', 'RECTIFIER', isTubeRect, 'TUBE', 'DIODE', () => {
+        void store.setControl('chassi.rectifier', isTubeRect ? 'diode' : '5u4gb');
+      }),
+      mkRear('amp.spongy', 'POWER', spongy, 'SPONGY', 'BOLD', () => {
         void store.setControl('amp.spongy', !spongy);
       })
     );
-    const isTubeRect = rectifier === '5u4gb' || rectifier === 'gz34';
-    panel.appendChild(
-      createBatToggle('chassi.rectifier', 'RECT', isTubeRect, 'TUBE', 'DIODE', () => {
-        void store.setControl('chassi.rectifier', isTubeRect ? 'diode' : '5u4gb');
-      })
-    );
-    panel.appendChild(
-      createBatToggle('amp.power', 'POWER', power, 'ON', 'OFF', () => {
-        void store.setControl('amp.power', !power);
-      })
-    );
-    panel.appendChild(
-      createBatToggle('amp.standby', 'STBY', standby, 'STBY', 'ON', () => {
+    rearBox.appendChild(rearRow);
+
+    const groupsWrap = document.createElement('div');
+    groupsWrap.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:space-around;gap:14px;min-width:0;';
+    groupsWrap.append(modeBox, knobCluster, rearBox);
+    panel.appendChild(groupsWrap);
+
+    const pwrSep = document.createElement('div');
+    pwrSep.style.cssText = 'width:1px;align-self:stretch;background:rgba(255,255,255,0.16);';
+    panel.appendChild(pwrSep);
+
+    const pwrRow = document.createElement('div');
+    pwrRow.style.cssText = 'display:flex;align-items:center;gap:12px;flex:none;';
+    pwrRow.append(
+      createBatToggle('amp.standby', 'STANDBY', standby, 'STANDBY', '', () => {
         void store.setControl('amp.standby', !standby);
-      })
+      }, false),
+      createBatToggle('amp.power', 'POWER', power, 'POWER', '', () => {
+        void store.setControl('amp.power', !power);
+      }, false),
+      createJewelLight(isLit, 'Jewel Dual Rectifier')
     );
+    panel.appendChild(pwrRow);
   } else {
     // AC30 Top Boost
     const isTopBoost = inputJack !== 'normal';

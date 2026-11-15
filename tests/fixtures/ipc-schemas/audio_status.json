@@ -1,0 +1,29 @@
+{
+  "adc_clips": 0,
+  "algorithmic_latency_samples": 16,
+  "backend": "wasapi",
+  "cpu_avg_pct": 6.5,
+  "cpu_peak_pct": 9.1,
+  "driver_input_latency_ms": 2.67,
+  "driver_output_latency_ms": 2.67,
+  "dsp_contention_silence_blocks": 0,
+  "estimated_roundtrip_ms": 5.34,
+  "fallback_reason": null,
+  "input_device": "Focusrite USB",
+  "input_period_frames": 128,
+  "measured_roundtrip_ms": null,
+  "mode": "wasapi_shared",
+  "mode_capabilities": {
+    "asio": false,
+    "wasapi_exclusive": false,
+    "wasapi_shared": true,
+    "wasapi_shared_low_latency": true
+  },
+  "output_device": "Focusrite USB",
+  "output_period_frames": 128,
+  "overruns": 0,
+  "panics": 0,
+  "raw_processing": false,
+  "sample_rate": 48000,
+  "underruns": 0
+}

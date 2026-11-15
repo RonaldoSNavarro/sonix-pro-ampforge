@@ -4,13 +4,38 @@
 
 use ampforge_dsp::queue::SpscCommandQueue;
 use sonix_core::persistence::SonixPresetDoc;
-use sonix_desktop::audio::{AudioDriverError, DesktopAudioHost};
-use sonix_desktop::midi::{DesktopMidiHost, MidiMessageType};
+use sonix_desktop::audio::{
+    AudioBackendType, AudioDeviceEnumerator, AudioDriverError, DesktopAudioDevice,
+    DesktopAudioHost,
+};
+use sonix_desktop::midi::{DesktopMidiHost, MidiMessageType, MidiPortEnumerator};
 use sonix_plugin::{PluginFormat, SonixPluginProcessor};
+use std::sync::Arc;
+
+struct TestAudioEnumerator;
+impl AudioDeviceEnumerator for TestAudioEnumerator {
+    fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
+        vec![DesktopAudioDevice {
+            id: "test_dev".to_string(),
+            name: "Studio Test Audio Device".to_string(),
+            backend: AudioBackendType::Wasapi,
+            is_input: true,
+            supported_sample_rates: vec![44100, 48000, 96000],
+            supported_buffer_sizes: vec![64, 128, 256],
+        }]
+    }
+}
+
+struct TestMidiEnumerator;
+impl MidiPortEnumerator for TestMidiEnumerator {
+    fn enumerate_input_ports(&self) -> Vec<String> {
+        vec!["Test MIDI Port".to_string()]
+    }
+}
 
 #[test]
 fn test_ca_01_desktop_audio_host_device_enumeration_and_stream_init() {
-    let mut host = DesktopAudioHost::new();
+    let mut host = DesktopAudioHost::with_enumerator(Arc::new(TestAudioEnumerator));
     let devices = host.enumerate_devices();
 
     assert!(!devices.is_empty(), "Audio host must enumerate at least 1 audio device");
@@ -31,7 +56,7 @@ fn test_ca_01_desktop_audio_host_device_enumeration_and_stream_init() {
 
 #[test]
 fn test_ca_02_desktop_midi_input_enumeration_and_cc_queue_forwarding() {
-    let mut midi_host = DesktopMidiHost::new();
+    let mut midi_host = DesktopMidiHost::with_enumerator(Arc::new(TestMidiEnumerator));
     let ports = midi_host.enumerate_input_ports();
     assert!(!ports.is_empty(), "MIDI host must enumerate input ports");
 
@@ -114,7 +139,7 @@ fn test_ca_06_desktop_and_plugin_native_webview_ipc_zero_network_server() {
 
 #[test]
 fn test_ca_07_audio_device_disconnect_safe_handling_without_crash() {
-    let mut host = DesktopAudioHost::new();
+    let mut host = DesktopAudioHost::with_enumerator(Arc::new(TestAudioEnumerator));
     let dev = &host.enumerate_devices()[0];
     host.start_stream(dev, 48000, 128).unwrap();
 

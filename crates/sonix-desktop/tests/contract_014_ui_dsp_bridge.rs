@@ -231,35 +231,72 @@ fn test_ca_06_and_07_lock_free_parameter_delivery_no_bypass_under_contention() {
 
 #[test]
 fn test_ca_08_parameter_smoothing_step_response() {
-    // CA-8: Degrau de amp_1.gain de 2.0 para 9.0 atinge >= 63% em <= 20ms e < 63% em < 5ms
+    // CA-8 (auditado pela Spec 044 CA-4): Degrau de amp_1.gain de 2.0 para 8.0 medido na saída REAL de áudio.
+    // Senoide limpa (baixa amplitude no Twin AB763) produz envelope que atinge < 63% em < 5ms e >= 63% em <= 20ms.
     let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 64);
+    chain.set_amp_model("twin_ab763");
+    chain.set_input_boost(1.0);
+    chain.set_gate_enabled(false);
+    chain.set_cab_enabled(false);
+
+    let mut phase = 0.0f32;
+    let w = 2.0 * std::f32::consts::PI * 440.0 / 48000.0;
+    let mut gen_block = |in_buf: &mut [f32]| {
+        for s in in_buf.iter_mut() {
+            *s = phase.sin() * 0.015;
+            phase += w;
+        }
+    };
+    let rms_of = |buf: &[f32]| -> f32 {
+        (buf.iter().map(|x| x * x).sum::<f32>() / buf.len() as f32).sqrt()
+    };
+
+    let mut in_blk = [0.0f32; 64];
+    let mut out_blk = [0.0f32; 64];
+
+    // Mede regime estacionário em gain = 8.0
+    chain.set_amp_gain(8.0);
+    for _ in 0..120 {
+        gen_block(&mut in_blk);
+        chain.process(&in_blk, &mut out_blk);
+    }
+    let rms_8 = rms_of(&out_blk);
+
+    // Assenta em gain = 2.0
     chain.set_amp_gain(2.0);
-
-    // Aplica degrau para 9.0
-    chain.set_amp_gain(9.0);
-
-    // O ganho alvo variou em 7.0 (de 2.0 para 9.0). 63% de 7.0 = 4.41 -> ganho atingido deve ser >= 6.41
-    // Em 5ms (240 amostras a 48kHz), deve ser < 6.41
-    // Em 20ms (960 amostras), deve ser >= 6.41
-    let in_block = [0.2f32; 128];
-    let mut out_block = [0.0f32; 128];
-
-    // Roda 4 blocos = 512 amostras (~10.6 ms)
-    for _ in 0..4 {
-        chain.process(&in_block, &mut out_block);
+    for _ in 0..120 {
+        gen_block(&mut in_blk);
+        chain.process(&in_blk, &mut out_blk);
     }
-    let gain_10ms = chain.current_effective_gain();
-    assert!(gain_10ms > 2.0, "Ganho deve ter começado a transicionar");
+    let rms_2 = rms_of(&out_blk);
+    assert!(rms_8 > rms_2 * 1.5, "CA-8 sanity: ganho 8 deveria elevar RMS ({} vs {})", rms_8, rms_2);
 
-    // Roda até 960 amostras (~20 ms)
-    for _ in 0..4 {
-        chain.process(&in_block, &mut out_block);
+    // Degrau 2.0 -> 8.0
+    chain.set_amp_gain(8.0);
+
+    // 3 blocos de 64 = 192 amostras = 4.0 ms (< 5 ms) -> deve estar < 63% da transição
+    for _ in 0..3 {
+        gen_block(&mut in_blk);
+        chain.process(&in_blk, &mut out_blk);
     }
-    let gain_20ms = chain.current_effective_gain();
+    let norm_4ms = (rms_of(&out_blk) - rms_2) / (rms_8 - rms_2);
     assert!(
-        gain_20ms >= 6.41,
-        "Ganho após 20ms deve atingir >= 63% da variação: {}",
-        gain_20ms
+        norm_4ms < 0.63,
+        "CA-8: Em 4.0 ms (< 5 ms), saída já saltou {:.1}% (>= 63%), indicando falta de suavização real no áudio!",
+        norm_4ms * 100.0
+    );
+
+    // Mais 12 blocos (total 15 blocos = 960 amostras = 20.0 ms) -> deve atingir >= 63%
+    for _ in 0..12 {
+        gen_block(&mut in_blk);
+        chain.process(&in_blk, &mut out_blk);
+    }
+    let norm_20ms = (rms_of(&out_blk) - rms_2) / (rms_8 - rms_2);
+    assert!(
+        norm_20ms >= 0.63,
+        "CA-8: Em 20.0 ms, saída atingiu apenas {:.1}% (< 63%)!",
+        norm_20ms * 100.0
     );
 }
 

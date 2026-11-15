@@ -91,6 +91,23 @@ impl<T: Copy, const CAP: usize> SpscBuffer<T, CAP> {
     }
 
     #[inline]
+    pub fn len(&self) -> usize {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
+        head.wrapping_sub(tail)
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        CAP
+    }
+
+    #[inline]
+    pub fn remaining_capacity(&self) -> usize {
+        CAP.saturating_sub(self.len())
+    }
+
+    #[inline]
     pub fn pop(&self) -> Option<T> {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
@@ -181,5 +198,78 @@ impl SpscTelemetryQueue {
     #[inline]
     pub fn pop(&self) -> Option<TelemetrySnapshot> {
         self.inner.pop()
+    }
+}
+
+/// Fila SPSC lock-free genérica para transferência de propriedade de recursos pesados
+/// (IR, buffers DI, tabelas pré-alocadas) entre threads sem alocação/desalocação na thread de áudio.
+pub struct SpscOwnedQueue<T, const CAP: usize> {
+    buffer: Box<[UnsafeCell<MaybeUninit<T>>; CAP]>,
+    head: AtomicUsize,
+    _pad1: [u8; 56],
+    tail: AtomicUsize,
+    _pad2: [u8; 56],
+}
+
+unsafe impl<T: Send, const CAP: usize> Sync for SpscOwnedQueue<T, CAP> {}
+unsafe impl<T: Send, const CAP: usize> Send for SpscOwnedQueue<T, CAP> {}
+
+impl<T, const CAP: usize> SpscOwnedQueue<T, CAP> {
+    pub fn new() -> Self {
+        assert!(CAP > 1 && (CAP & (CAP - 1)) == 0, "CAP deve ser potência de 2");
+        let buffer = Box::new(std::array::from_fn(|_| UnsafeCell::new(MaybeUninit::uninit())));
+        Self {
+            buffer,
+            head: AtomicUsize::new(0),
+            _pad1: [0; 56],
+            tail: AtomicUsize::new(0),
+            _pad2: [0; 56],
+        }
+    }
+
+    #[inline]
+    pub fn push(&self, item: T) -> Result<(), T> {
+        let head = self.head.load(Ordering::Relaxed);
+        let tail = self.tail.load(Ordering::Acquire);
+        if head.wrapping_sub(tail) >= CAP {
+            return Err(item);
+        }
+        let idx = head & (CAP - 1);
+        unsafe {
+            let slot = self.buffer[idx].get();
+            (*slot).write(item);
+        }
+        self.head.store(head.wrapping_add(1), Ordering::Release);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn pop(&self) -> Option<T> {
+        let tail = self.tail.load(Ordering::Relaxed);
+        let head = self.head.load(Ordering::Acquire);
+        if tail == head {
+            return None;
+        }
+        let idx = tail & (CAP - 1);
+        let val = unsafe {
+            let slot = self.buffer[idx].get();
+            (*slot).assume_init_read()
+        };
+        self.tail.store(tail.wrapping_add(1), Ordering::Release);
+        Some(val)
+    }
+}
+
+impl<T, const CAP: usize> Drop for SpscOwnedQueue<T, CAP> {
+    fn drop(&mut self) {
+        while let Some(item) = self.pop() {
+            drop(item);
+        }
+    }
+}
+
+impl<T, const CAP: usize> Default for SpscOwnedQueue<T, CAP> {
+    fn default() -> Self {
+        Self::new()
     }
 }

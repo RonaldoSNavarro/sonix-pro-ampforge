@@ -69,3 +69,4 @@ Fontes da verdade e evidências no repositório:
 
 ## Notas
 - Rastreabilidade SRS: **RF-022**, **RF-023**, **RF-024**, **RF-025**; Design System Seção 2.2.
+- **2026-11-14 (Auditoria Spec 044):** `CA-2` / `CA-3` revertidos em produção (`PitchProcessor` sem processamento real na cadeia ao vivo) — retomado pela **Spec 042**; diferenciação acústica completa de modulação, delay e reverb retomada pela **Spec 040**.

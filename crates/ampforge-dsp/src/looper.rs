@@ -28,6 +28,8 @@ pub struct LooperProcessor {
     play_pos: f32,
     reverse: bool,
     half_speed: bool,
+    half_overdub_acc: f32,
+    half_overdub_count: u8,
     can_undo: bool,
     can_redo: bool,
 }
@@ -57,6 +59,8 @@ impl LooperProcessor {
             play_pos: 0.0,
             reverse: false,
             half_speed: false,
+            half_overdub_acc: 0.0,
+            half_overdub_count: 0,
             can_undo: false,
             can_redo: false,
         }
@@ -64,6 +68,20 @@ impl LooperProcessor {
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
+    }
+
+    /// Sizes looper pre-allocated capacity in seconds for the given sample rate (off-RT only).
+    pub fn prepare(&mut self, sample_rate: f32, max_seconds: usize) {
+        self.sample_rate = sample_rate.max(1.0);
+        let new_cap = (max_seconds.max(1) as f32 * self.sample_rate).round() as usize;
+        let new_cap = new_cap.max(1);
+        if new_cap != self.max_capacity {
+            self.max_capacity = new_cap;
+            self.base_buffer.resize(new_cap, 0.0);
+            self.overdub_buffer.resize(new_cap, 0.0);
+            self.undo_buffer.resize(new_cap, 0.0);
+            self.loop_length = self.loop_length.min(new_cap);
+        }
     }
 
     pub fn state(&self) -> LooperState {
@@ -133,10 +151,12 @@ impl LooperProcessor {
     }
 
     pub fn overdub(&mut self) {
-        if self.loop_length > 0 {
-            // Backup current overdub for undo: copia apenas as loop_length amostras (Spec 017 CA-6, CA-9)
+        if self.loop_length > 0 && self.state != LooperState::Overdub {
+            // Backup current overdub for undo only when entering Overdub from another state (Spec 043 CA-5)
             self.undo_buffer[..self.loop_length].copy_from_slice(&self.overdub_buffer[..self.loop_length]);
             self.state = LooperState::Overdub;
+            self.half_overdub_acc = 0.0;
+            self.half_overdub_count = 0;
             self.can_undo = true;
             self.can_redo = false;
         }
@@ -220,7 +240,23 @@ impl LooperProcessor {
                     let loop_out = base_sample + overdub_sample;
 
                     if self.state == LooperState::Overdub {
-                        self.overdub_buffer[read_idx] += input[i];
+                        if self.half_speed {
+                            self.half_overdub_acc += input[i];
+                            self.half_overdub_count = self.half_overdub_count.saturating_add(1);
+                            let mut next_pos = self.play_pos + speed_step;
+                            if next_pos >= len as f32 {
+                                next_pos -= len as f32;
+                            }
+                            let next_idx = (next_pos.floor() as usize) % len;
+                            if next_idx != idx || self.half_overdub_count >= 2 {
+                                self.overdub_buffer[read_idx] +=
+                                    self.half_overdub_acc / (self.half_overdub_count as f32);
+                                self.half_overdub_acc = 0.0;
+                                self.half_overdub_count = 0;
+                            }
+                        } else {
+                            self.overdub_buffer[read_idx] += input[i];
+                        }
                     }
 
                     output[i] = input[i] + loop_out;

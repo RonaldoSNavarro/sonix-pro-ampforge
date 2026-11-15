@@ -2,6 +2,7 @@
 name = "sonix-app"
 version = "1.0.0"
 edition = "2021"
+license.workspace = true
 description = "SONIX PRO // AMPFORGE Desktop App (Tauri v2)"
 
 [lib]

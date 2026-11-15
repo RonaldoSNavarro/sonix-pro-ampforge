@@ -166,6 +166,7 @@ export interface HSliderOptions {
   format?: (v: number) => string;
   fillGradient?: string;
   onChange: (val: number) => void;
+  onDragState?: (dragging: boolean) => void;
 }
 
 export function createHSliderRow(opts: HSliderOptions): HTMLElement {
@@ -175,7 +176,7 @@ export function createHSliderRow(opts: HSliderOptions): HTMLElement {
   const lbl = document.createElement('span');
   lbl.textContent = opts.label;
   lbl.style.cssText =
-    'font-size:11px;width:96px;color:#c9ced4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0';
+    'font-size:11px;width:84px;color:#c9ced4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0';
 
   const track = document.createElement('div');
   track.className = 'm-track';
@@ -196,7 +197,7 @@ export function createHSliderRow(opts: HSliderOptions): HTMLElement {
 
   const readout = document.createElement('span');
   readout.className = 'm-mono';
-  readout.style.cssText = 'font-size:10px;width:60px;text-align:right;flex-shrink:0;color:#d6dce2';
+  readout.style.cssText = 'font-size:10px;width:54px;text-align:right;flex-shrink:0;color:#d6dce2';
   const formatVal = (v: number) =>
     opts.format ? opts.format(v) : `${v.toFixed(opts.step >= 1 ? 0 : 1)}${opts.unit ? ' ' + opts.unit : ''}`;
   readout.textContent = formatVal(opts.value);
@@ -226,15 +227,20 @@ export function createHSliderRow(opts: HSliderOptions): HTMLElement {
       // ignore
     }
     dragging = true;
+    opts.onDragState?.(true);
     applyClientX(e.clientX);
   });
   track.addEventListener('pointermove', (e) => {
     if (!dragging) return;
     applyClientX(e.clientX);
   });
-  track.addEventListener('pointerup', () => {
+  const endSliderDrag = () => {
+    if (!dragging) return;
     dragging = false;
-  });
+    opts.onDragState?.(false);
+  };
+  track.addEventListener('pointerup', endSliderDrag);
+  track.addEventListener('pointercancel', endSliderDrag);
   track.addEventListener('wheel', (e) => {
     e.preventDefault();
     const cur = Number(track.getAttribute('aria-valuenow') ?? opts.value);

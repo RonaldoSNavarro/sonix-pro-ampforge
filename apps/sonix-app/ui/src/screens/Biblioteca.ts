@@ -1,8 +1,8 @@
-import type { AppStore } from '../store';
-import { createAmpHeadElement, type AmpModelId } from '../components/AmpHead';
-import { createPedalElement, type PedalModelId } from '../components/Pedal';
-import { createRackElement, type RackModelId } from '../components/Rack';
-import { makeChipButton, makePanelCard } from './_helpers';
+import type { AppStore } from '../store.ts';
+import { createAmpHeadElement, type AmpModelId } from '../components/AmpHead.ts';
+import { createPedalElement, type PedalModelId } from '../components/Pedal.ts';
+import { createRackElement, type RackModelId } from '../components/Rack.ts';
+import { makeChipButton, makePanelCard } from './_helpers.ts';
 
 interface CatalogEntry<T extends string> {
   id: T;

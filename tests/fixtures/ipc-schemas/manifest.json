@@ -1,0 +1,13 @@
+{
+  "files": [
+    "telemetry.json",
+    "audio_status.json",
+    "devices.json",
+    "scope_transfer.json",
+    "scope_waveform.json",
+    "scope_tonestack.json",
+    "presets_list.json",
+    "presets_load.json"
+  ],
+  "generated_by": "contract_035_ui_backend_contracts"
+}

@@ -112,10 +112,12 @@ pub struct DelayProcessor {
     tone_treble: f32,
     wet_bass_bq: WetBiquad,
     wet_treble_bq: WetBiquad,
-    spring_combs: [[f32; 1024]; 4],
+    spring_combs: [[f32; 2048]; 4],
     spring_pos: [usize; 4],
     spring_lp: [f32; 4],
     wow_phase: f32,
+    current_delay_samples: f32,
+    bbd_fb_lp: f32,
     // Ducking
     ducking_enabled: bool,
     ducking_threshold_db: f32,
@@ -123,12 +125,17 @@ pub struct DelayProcessor {
     ducking_release_ms: f32,
     ducking_gain_reduction_db: f32,
     ducking_envelope: f32,
+    duck_mult: f32,
     // Spillover & Bypass
     bypassed: bool,
     spillover_enabled: bool,
     // Pre-allocated circular buffer (up to 4000 ms at 96 kHz: 384,000 samples)
     buffer: Vec<f32>,
     write_pos: usize,
+    // Pre-allocated reverse grain buffer
+    rev_buffer: Vec<f32>,
+    rev_write_pos: usize,
+    rev_grain_ready: bool,
 }
 
 impl DelayProcessor {
@@ -147,20 +154,26 @@ impl DelayProcessor {
             tone_treble: 5.0,
             wet_bass_bq: WetBiquad::default(),
             wet_treble_bq: WetBiquad::default(),
-            spring_combs: [[0.0; 1024]; 4],
+            spring_combs: [[0.0; 2048]; 4],
             spring_pos: [0; 4],
             spring_lp: [0.0; 4],
             wow_phase: 0.0,
+            current_delay_samples: -1.0,
+            bbd_fb_lp: 0.0,
             ducking_enabled: false,
             ducking_threshold_db: -30.0,
             ducking_attenuation_db: -12.0,
             ducking_release_ms: 150.0,
             ducking_gain_reduction_db: 0.0,
             ducking_envelope: 0.0,
+            duck_mult: 1.0,
             bypassed: false,
             spillover_enabled: false,
             buffer: vec![0.0; max_samples],
             write_pos: 0,
+            rev_buffer: vec![0.0; max_samples],
+            rev_write_pos: 0,
+            rev_grain_ready: false,
         };
         p.update_wet_eq();
         p
@@ -273,12 +286,14 @@ impl DelayProcessor {
 
     #[inline(always)]
     fn step_spring(&mut self, x: f32, fb_gain: f32) -> f32 {
+        let scale = self.sample_rate / 48000.0;
+        let lp_alpha = 1.0 - (-2.0 * std::f32::consts::PI * 8000.0 / self.sample_rate).exp();
         let mut sum = 0.0f32;
         for c in 0..4 {
-            let len = SPRING_LENS[c];
-            let pos = self.spring_pos[c];
+            let len = ((SPRING_LENS[c] as f32 * scale).round() as usize).clamp(1, 2047);
+            let pos = self.spring_pos[c] % len;
             let y = self.spring_combs[c][pos];
-            self.spring_lp[c] = 0.65 * y + 0.35 * self.spring_lp[c];
+            self.spring_lp[c] += lp_alpha * (y - self.spring_lp[c]);
             self.spring_combs[c][pos] = (x + self.spring_lp[c] * fb_gain).clamp(-1.5, 1.5);
             self.spring_pos[c] = if pos + 1 >= len { 0 } else { pos + 1 };
             sum += y;
@@ -291,7 +306,12 @@ impl DelayProcessor {
 
         let wet_ratio = self.mix_pct / 100.0;
         let dry_ratio = 1.0 - wet_ratio;
-        let base_delay_samples = (self.delay_time_ms * 0.001 * self.sample_rate).max(1.0);
+        let target_delay_samples = (self.delay_time_ms * 0.001 * self.sample_rate).max(1.0);
+        if self.current_delay_samples < 0.0 {
+            self.current_delay_samples = target_delay_samples;
+        }
+        let glide_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.030)).exp();
+        let bbd_lp_alpha = 1.0 - (-2.0 * std::f32::consts::PI * 2400.0 / self.sample_rate).exp();
         let buf_len = self.buffer.len();
         let feedback_gain = self.feedback_pct / 100.0;
 
@@ -331,6 +351,8 @@ impl DelayProcessor {
         let threshold_lin = 10.0f32.powf(self.ducking_threshold_db / 20.0);
         let max_duck_gain = 10.0f32.powf(self.ducking_attenuation_db / 20.0);
         let duck_rel_coeff = (-1.0 / (self.sample_rate * (self.ducking_release_ms * 0.001))).exp();
+        let duck_att_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.015)).exp();
+        let duck_rec_alpha = 1.0 - duck_rel_coeff;
 
         for i in 0..input.len() {
             let in_sample = if self.bypassed && self.spillover_enabled {
@@ -341,6 +363,9 @@ impl DelayProcessor {
             } else {
                 input[i]
             };
+
+            self.current_delay_samples +=
+                glide_alpha * (target_delay_samples - self.current_delay_samples);
 
             if self.ducking_enabled {
                 let abs_in = input[i].abs();
@@ -360,11 +385,17 @@ impl DelayProcessor {
                 self.ducking_gain_reduction_db = 0.0;
             }
 
-            let duck_mult = if self.ducking_enabled && self.ducking_envelope > threshold_lin {
+            let target_duck_mult = if self.ducking_enabled && self.ducking_envelope > threshold_lin {
                 max_duck_gain
             } else {
                 1.0
             };
+            let d_alpha = if target_duck_mult < self.duck_mult {
+                duck_att_alpha
+            } else {
+                duck_rec_alpha
+            };
+            self.duck_mult += d_alpha * (target_duck_mult - self.duck_mult);
 
             self.wow_phase += wow_step;
             if self.wow_phase >= 2.0 * std::f32::consts::PI {
@@ -372,38 +403,94 @@ impl DelayProcessor {
             }
             let wow = self.wow_phase.sin() * wow_depth_samples;
 
-            let delayed = if echo_on {
-                let mut acc = 0.0f32;
-                if h1_w > 0.0 {
-                    acc += h1_w * self.read_delay_tap((base_delay_samples + wow).max(1.0));
+            let mut echo_eq = 0.0f32;
+            if echo_on {
+                match self.model {
+                    DelayModel::MultiHeadTapeEcho => {
+                        let mut acc = 0.0f32;
+                        if h1_w > 0.0 {
+                            acc += h1_w
+                                * self.read_delay_tap((self.current_delay_samples + wow).max(1.0));
+                        }
+                        if h2_w > 0.0 {
+                            acc += h2_w
+                                * self.read_delay_tap(
+                                    (self.current_delay_samples * 1.92 + wow).max(1.0),
+                                );
+                        }
+                        if h3_w > 0.0 {
+                            acc += h3_w
+                                * self.read_delay_tap(
+                                    (self.current_delay_samples * 2.83 + wow).max(1.0),
+                                );
+                        }
+                        let b = self.wet_bass_bq.process(acc);
+                        echo_eq = self.wet_treble_bq.process(b);
+                        let fb_signal = (echo_eq * feedback_gain).tanh();
+                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.write_pos = (self.write_pos + 1) % buf_len;
+                    }
+                    DelayModel::AnalogBbdDelay => {
+                        let tap = self.read_delay_tap(self.current_delay_samples.max(1.0));
+                        let b = self.wet_bass_bq.process(tap);
+                        echo_eq = self.wet_treble_bq.process(b);
+                        // BBD HF rolloff inside feedback loop + soft clipping
+                        self.bbd_fb_lp += bbd_lp_alpha * (echo_eq - self.bbd_fb_lp);
+                        let fb_signal = (self.bbd_fb_lp * feedback_gain).tanh();
+                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.write_pos = (self.write_pos + 1) % buf_len;
+                    }
+                    DelayModel::PristineDigitalDelay => {
+                        let tap = self.read_delay_tap(self.current_delay_samples.max(1.0));
+                        let b = self.wet_bass_bq.process(tap);
+                        echo_eq = self.wet_treble_bq.process(b);
+                        let fb_signal = (echo_eq * feedback_gain).clamp(-2.0, 2.0);
+                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.write_pos = (self.write_pos + 1) % buf_len;
+                    }
+                    DelayModel::DualParallelDelay => {
+                        let d_main = self.current_delay_samples.max(1.0);
+                        let t1 = self.read_delay_tap((d_main * 0.75).max(1.0));
+                        let t2 = self.read_delay_tap(d_main);
+                        let combined = 0.5 * (t1 + t2);
+                        let b = self.wet_bass_bq.process(combined);
+                        echo_eq = self.wet_treble_bq.process(b);
+                        let fb_signal = (t2 * feedback_gain).clamp(-2.0, 2.0);
+                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.write_pos = (self.write_pos + 1) % buf_len;
+                    }
+                    DelayModel::PingPongStereo => {
+                        let d_main = self.current_delay_samples.max(1.0);
+                        let t_ping = self.read_delay_tap((d_main * 0.5).max(1.0));
+                        let t_pong = self.read_delay_tap(d_main);
+                        let combined = 0.5 * (t_ping + t_pong);
+                        let b = self.wet_bass_bq.process(combined);
+                        echo_eq = self.wet_treble_bq.process(b);
+                        let fb_signal = (t_pong * feedback_gain).clamp(-2.0, 2.0);
+                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.write_pos = (self.write_pos + 1) % buf_len;
+                    }
+                    DelayModel::ReverseDelay => {
+                        let grain_len =
+                            (target_delay_samples.round() as usize).clamp(64, buf_len);
+                        let read_idx = grain_len - 1 - (self.rev_write_pos % grain_len);
+                        let rev_raw = if self.rev_grain_ready {
+                            self.rev_buffer[read_idx]
+                        } else {
+                            0.0
+                        };
+                        let b = self.wet_bass_bq.process(rev_raw);
+                        echo_eq = self.wet_treble_bq.process(b);
+                        let fb_signal = (echo_eq * feedback_gain).clamp(-2.0, 2.0);
+                        self.rev_buffer[self.rev_write_pos] = in_sample + fb_signal;
+                        self.rev_write_pos += 1;
+                        if self.rev_write_pos >= grain_len {
+                            self.rev_write_pos = 0;
+                            self.rev_grain_ready = true;
+                        }
+                    }
                 }
-                if h2_w > 0.0 {
-                    acc += h2_w * self.read_delay_tap((base_delay_samples * 1.92 + wow).max(1.0));
-                }
-                if h3_w > 0.0 {
-                    acc += h3_w * self.read_delay_tap((base_delay_samples * 2.83 + wow).max(1.0));
-                }
-                acc
-            } else {
-                0.0
-            };
-
-            // EQ Bass & Treble atuam apenas no caminho úmido da fita
-            let echo_eq = if echo_on {
-                let b = self.wet_bass_bq.process(delayed);
-                self.wet_treble_bq.process(b)
-            } else {
-                0.0
-            };
-
-            // Feedback de fita com saturação magnética
-            let fb_signal = if echo_on {
-                (echo_eq * feedback_gain).tanh()
-            } else {
-                0.0
-            };
-            self.buffer[self.write_pos] = in_sample + fb_signal;
-            self.write_pos = (self.write_pos + 1) % buf_len;
+            }
 
             // Mola interna nos modos 5-12
             let spring_wet = if spring_mix > 0.0001 {
@@ -412,12 +499,12 @@ impl DelayProcessor {
                 0.0
             };
 
-            let wet = (echo_eq + spring_wet) * duck_mult;
+            let wet = (echo_eq + spring_wet) * self.duck_mult;
             if self.bypassed && self.spillover_enabled {
                 output[i] = input[i] + wet;
             } else if !echo_on {
                 // Mode 12: Direct signal + Spring Reverb (echo_volume silencioso para eco, reverb_volume comanda a mola)
-                output[i] = input[i] * (1.0 - 0.35 * spring_mix) + spring_wet * duck_mult;
+                output[i] = input[i] * (1.0 - 0.35 * spring_mix) + spring_wet * self.duck_mult;
             } else {
                 output[i] = input[i] * dry_ratio + wet * wet_ratio;
             }

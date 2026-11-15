@@ -63,14 +63,14 @@ pub fn resolved_fmv_components(
             m_pos: map_pot_mid_10pct(m),
         },
         ToneStackTopology::FenderTmbMidScoop => FmvComponents {
-            // Fender Twin Reverb AB763 (100k, 250pF, 47nF, 47nF, 10k Mid)
+            // Fender Twin Reverb AB763 (100k, 250pF, 0.1uF=100nF, 0.047uF=47nF, 10k Mid)
             r_treble: 250_000.0,
             r_bass: 250_000.0,
             r_mid: 10_000.0,
             r_slope: 100_000.0,
             r_load: 1_000_000.0,
             c1: 250e-12,
-            c2: 47e-9,
+            c2: 100e-9,
             c3: 47e-9,
             t_pos: audio_taper(t),
             b_pos: audio_taper(b),

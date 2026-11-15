@@ -1,358 +1,715 @@
-import type { AppStore } from '../store';
-import { createTubeElement } from '../components/Tube';
-import {
-  bool,
-  makeChipButton,
-  makeControlSelect,
-  makeControlSlider,
-  makePanelCard,
-  num,
-  str,
-} from './_helpers';
+import { createKnob } from '../components/Knob.ts';
+import type { AppStore } from '../store.ts';
+import { makeChipButton, num, str } from './_helpers.ts';
 
-const CHASSIS_TUBES: { id: string; stage: string; isPower: boolean }[] = [
-  { id: 'V1', stage: 'Entrada / Triodo 1', isPower: false },
-  { id: 'V2', stage: 'Ganho 2 / Cátodo', isPower: false },
-  { id: 'V3', stage: 'Inversor Fase LTP', isPower: false },
-  { id: 'V4', stage: 'Buffer / Loop FX', isPower: false },
-  { id: 'V5', stage: 'Power Push A', isPower: true },
-  { id: 'V6', stage: 'Power Push B', isPower: true },
-  { id: 'V7', stage: 'Power Pull A', isPower: true },
-  { id: 'V8', stage: 'Power Pull B', isPower: true },
-];
+function buildScopePaths(store: AppStore): {
+  mainPath: string | null;
+  refPath: string | null;
+  pointCount: number;
+  errMsg: string | null;
+  caption: string;
+} {
+  const mode = store.crtMode;
+  const labels: Record<typeof mode, string> = {
+    waveform: 'SAÍDA DO ESTÁGIO DE POTÊNCIA · tracejado = entrada DI',
+    transfer: 'CURVA DE TRANSFERÊNCIA X-Y · ponto de operação e joelho de clipping',
+    tonestack: 'TONE STACK · tracejado = impedância do falante',
+  };
 
-function buildScopeSvg(store: AppStore): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 360 170');
-  svg.style.cssText = 'width:100%;height:170px;display:block;';
-
-  // Grid lines
-  for (let x = 36; x < 360; x += 36) {
-    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    l.setAttribute('x1', String(x));
-    l.setAttribute('y1', '0');
-    l.setAttribute('x2', String(x));
-    l.setAttribute('y2', '170');
-    l.setAttribute('stroke', 'rgba(80,255,140,0.12)');
-    svg.appendChild(l);
-  }
-  for (let y = 34; y < 170; y += 34) {
-    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    l.setAttribute('x1', '0');
-    l.setAttribute('y1', String(y));
-    l.setAttribute('x2', '360');
-    l.setAttribute('y2', String(y));
-    l.setAttribute('stroke', 'rgba(80,255,140,0.12)');
-    svg.appendChild(l);
+  if (store.scopeError) {
+    return {
+      mainPath: null,
+      refPath: null,
+      pointCount: 0,
+      errMsg: `sem dados do motor (${store.scopeError})`,
+      caption: labels[mode],
+    };
   }
 
-  const pts: string[] = [];
-  const samples = store.scope.waveform_out ?? store.telemetry.waveform ?? [];
-  if (store.crtMode === 'wave') {
-    if (samples.length > 4) {
-      samples.slice(0, 128).forEach((s: number, i: number, arr: number[]) => {
-        const x = (i / Math.max(1, arr.length - 1)) * 360;
-        const y = 85 - Math.max(-1, Math.min(1, s)) * 68;
-        pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-      });
-    } else {
-      const asym = num(store, 'amp_1.triode_asym', 0.2);
-      const gain = num(store, 'amp_1.gain', 6.5) / 4;
-      for (let i = 0; i <= 120; i += 1) {
-        const ph = (i / 120) * Math.PI * 4;
-        const raw = Math.sin(ph) * gain + asym * 0.25;
-        const clipped = Math.tanh(raw) - asym * 0.1;
-        pts.push(`${(i * 3).toFixed(1)},${(85 - clipped * 60).toFixed(1)}`);
-      }
+  let mainPts: Array<{ x: number; y: number }> = [];
+  let refPts: Array<{ x: number; y: number }> = [];
+  if (mode === 'waveform') {
+    const raw = store.scope.waveform as unknown;
+    const outArr = Array.isArray(raw)
+      ? (raw as number[])
+      : raw && typeof raw === 'object' && Array.isArray((raw as { output?: unknown }).output)
+        ? ((raw as { output: number[] }).output)
+        : [];
+    const diArr =
+      raw && typeof raw === 'object' && Array.isArray((raw as { di?: unknown }).di)
+        ? ((raw as { di: number[] }).di)
+        : [];
+    if (outArr.length >= 2) {
+      mainPts = outArr.map((v, i) => ({ x: (i / (outArr.length - 1)) * 600, y: 80 - v * 62 }));
     }
-  } else if (store.crtMode === 'transfer') {
-    const xs = store.scope.transfer_x ?? [];
-    const ys = store.scope.transfer_y ?? [];
-    if (xs.length > 4 && xs.length === ys.length) {
-      xs.forEach((xv, i) => {
-        const px = ((xv + 1) * 0.5) * 360;
-        const py = 85 - Math.max(-1, Math.min(1, ys[i])) * 62;
-        pts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
-      });
-    } else {
-      const asym = num(store, 'amp_1.triode_asym', 0.2);
-      const sat = num(store, 'amp_1.xformer_sat', 4) / 8;
-      for (let i = 0; i <= 90; i += 1) {
-        const u = (i / 90) * 2 - 1;
-        const yVal = Math.tanh((u + asym * 0.35) * (1.8 + sat * 2)) - Math.tanh(asym * 0.35);
-        pts.push(`${(i * 4).toFixed(1)},${(85 - yVal * 62).toFixed(1)}`);
-      }
+    if (diArr.length >= 2) {
+      refPts = diArr.map((v, i) => ({ x: (i / (diArr.length - 1)) * 600, y: 80 - v * 62 }));
     }
-  } else {
-    const tsDb = store.scope.tonestack_db ?? [];
-    if (tsDb.length > 4) {
-      tsDb.forEach((db, i, arr) => {
-        const x = (i / Math.max(1, arr.length - 1)) * 360;
-        const y = 85 - Math.max(-24, Math.min(24, db)) * 2.4;
-        pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-      });
-    } else {
-      const bass = num(store, 'amp_1.bass', 5.5) / 10;
-      const mid = num(store, 'amp_1.middle', 5.0) / 10;
-      const treb = num(store, 'amp_1.treble', 6.0) / 10;
-      for (let i = 0; i <= 90; i += 1) {
-        const f = i / 90;
-        const curve =
-          bass * Math.exp(-Math.pow((f - 0.16) * 4, 2)) +
-          mid * Math.exp(-Math.pow((f - 0.45) * 4.2, 2)) * 0.8 +
-          treb * Math.exp(-Math.pow((f - 0.82) * 3.5, 2));
-        pts.push(`${(i * 4).toFixed(1)},${(148 - curve * 112).toFixed(1)}`);
-      }
-    }
+  } else if (mode === 'transfer' && Array.isArray(store.scope.transfer) && store.scope.transfer.length >= 2) {
+    mainPts = store.scope.transfer.map((p) => ({
+      x: ((p.x + 1) / 2) * 600,
+      y: 80 - p.y * 62,
+    }));
+  } else if (mode === 'tonestack' && Array.isArray(store.scope.tonestack) && store.scope.tonestack.length >= 2) {
+    const ts = store.scope.tonestack;
+    mainPts = ts.map((p, i) => ({
+      x: (i / (ts.length - 1)) * 600,
+      y: 60 - p.db * 4,
+    }));
   }
 
-  const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-  poly.setAttribute('fill', 'none');
-  poly.setAttribute('stroke', '#5cff96');
-  poly.setAttribute('stroke-width', '2.1');
-  poly.setAttribute('points', pts.join(' '));
-  svg.appendChild(poly);
-  return svg;
+  if (mainPts.length === 0) {
+    return { mainPath: null, refPath: null, pointCount: 0, errMsg: null, caption: labels[mode] };
+  }
+
+  const d = mainPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const refD =
+    refPts.length >= 2
+      ? refPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
+      : null;
+  return {
+    mainPath: d,
+    refPath: refD,
+    pointCount: mainPts.length,
+    errMsg: null,
+    caption: labels[mode],
+  };
+}
+
+function makeTrackControl(
+  store: AppStore,
+  controlId: string,
+  paramKey: string,
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+  def: number,
+  formatVal: (v: number) => string,
+  compact = false
+): HTMLElement {
+  const val = num(store, paramKey, def);
+  const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+  const top = document.createElement('div');
+  top.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+  const lbl = document.createElement('span');
+  lbl.style.cssText = `font-size:${compact ? '10' : '11'}px;color:#c9ced4;`;
+  lbl.textContent = label;
+  const txt = document.createElement('span');
+  txt.className = 'm-mono';
+  txt.style.cssText = 'font-size:10.5px;color:#aeb4bc;';
+  txt.textContent = formatVal(val);
+  top.append(lbl, txt);
+
+  const track = document.createElement('div');
+  track.className = 'm-track';
+  track.setAttribute('data-control-id', controlId);
+  track.setAttribute('role', 'slider');
+  track.tabIndex = 0;
+  track.setAttribute('aria-label', label);
+  track.setAttribute('aria-valuemin', String(min));
+  track.setAttribute('aria-valuemax', String(max));
+  track.setAttribute('aria-valuenow', String(val));
+
+  const fill = document.createElement('div');
+  fill.className = 'm-fill';
+  fill.style.width = `${pct.toFixed(1)}%`;
+  const thumb = document.createElement('div');
+  thumb.className = 'm-thumb';
+  thumb.style.left = `${pct.toFixed(1)}%`;
+  track.append(fill, thumb);
+
+  const commit = (raw: number) => {
+    const snapped = Math.round(Math.max(min, Math.min(max, raw)) / step) * step;
+    const clean = Number(snapped.toFixed(4));
+    const p = Math.max(0, Math.min(100, ((clean - min) / (max - min)) * 100));
+    fill.style.width = `${p.toFixed(1)}%`;
+    thumb.style.left = `${p.toFixed(1)}%`;
+    txt.textContent = formatVal(clean);
+    track.setAttribute('aria-valuenow', String(clean));
+    void store.setControl(controlId, clean);
+  };
+
+  let dragging = false;
+  const fromPtr = (e: PointerEvent) => {
+    const r = track.getBoundingClientRect();
+    if (r.width <= 0) return;
+    const u = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    commit(min + u * (max - min));
+  };
+  track.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    try {
+      track.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    fromPtr(e);
+  });
+  track.addEventListener('pointermove', (e) => {
+    if (dragging) fromPtr(e);
+  });
+  track.addEventListener('pointerup', () => {
+    dragging = false;
+  });
+  track.addEventListener('keydown', (e) => {
+    const dir = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 0;
+    if (!dir) return;
+    e.preventDefault();
+    commit(Number(track.getAttribute('aria-valuenow') ?? def) + dir * step);
+  });
+
+  wrap.append(top, track);
+  return wrap;
 }
 
 export function renderBancadaScreen(store: AppStore): HTMLElement {
   const root = document.createElement('div');
-  root.dataset.screen = 'chassi';
-  root.style.cssText =
-    'height:100%;display:grid;grid-template-columns:1.15fr 0.85fr;gap:10px;padding:10px;min-height:0;overflow:hidden;';
+  root.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column;background:#0b0c0e;overflow:hidden;';
 
-  // Left: Open Chassis + Turret Board + Transformers + V1..V8
-  const chassis = document.createElement('section');
-  chassis.className = 'alu';
-  chassis.style.cssText =
-    'border-radius:10px;border:1px solid #8a9099;padding:12px;display:flex;flex-direction:column;justify-content:space-between;gap:10px;min-height:0;overflow:hidden;';
+  const ampModel = str(store, 'amp_1.model', 'dual_rect');
+  const ampNames: Record<string, string> = {
+    plexi: 'PLEXI 1959',
+    jcm800: 'BRIT 800 · 2203',
+    dual_rect: 'CALI RECTO · 3CH',
+    twin: 'TWIN REVERB',
+    ac30: 'AC30 TOP BOOST',
+  };
+  const preTubeRaw = str(store, 'amp_1.preamp_tube', '12ax7');
+  const pwrTubeRaw = str(store, 'amp_1.power_tube', 'el34');
+  const rectRaw = str(store, 'amp_1.rectifier', 'diode');
+  const impRaw = str(store, 'amp_1.impedance_ohms', '8');
+  const biasMa = num(store, 'amp_1.bias_ma', 38);
+  const sagVal = num(store, 'amp_1.sag', 3.0);
+  const bplus = rectRaw === 'diode' ? 464 : rectRaw === 'gz34' ? 440 : 426;
 
-  const hdr = document.createElement('div');
-  hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;color:#111418;';
-  const preampTube = str(store, 'amp_1.preamp_tube', '12ax7').toUpperCase();
-  const powerTube = str(store, 'amp_1.power_tube', 'el34').toUpperCase();
-  const rect = str(store, 'amp_1.rectifier', 'diode').toUpperCase();
-  const bPlus = Math.max(180, num(store, 'amp_1.preamp_plate_v', 280) * 1.5 - (store.telemetry.gain_reduction_db ?? 0) * 2).toFixed(0);
-  hdr.innerHTML = `
-    <div>
-      <div class="m-osw" style="font-size:15px;font-weight:700;letter-spacing:0.08em;">BANCADA MOD SHOP · CHASSI ABERTO</div>
-      <div class="m-mono" style="font-size:10.5px;color:#2b313a;">${preampTube} PRÉ · ${powerTube} POWER · RETIF. ${rect}</div>
-    </div>
-    <div class="m-lcd" style="padding:4px 10px;border-radius:5px;">
-      <span class="m-lcdtxt m-mono" style="font-size:11px;font-weight:700;">B+ ${bPlus}V · SAG ${num(store, 'amp_1.sag', 3).toFixed(1)}</span>
-    </div>
-  `;
+  // ── Top Bar ────────────────────────────────────────────────────────────────
+  const topBar = document.createElement('div');
+  topBar.className = 'm-metal';
+  topBar.style.cssText =
+    'height:56px;flex:none;display:flex;align-items:center;gap:16px;padding:0 18px;border-bottom:1px solid #000;box-shadow:inset 0 1px 0 rgba(255,255,255,.06);';
 
-  // Physical Transformers + Caps + Tubes stage
-  const hwStage = document.createElement('div');
-  hwStage.style.cssText =
-    'background:linear-gradient(180deg,#1a1d22,#0f1114);border-radius:8px;padding:12px;border:1px solid #30353e;display:flex;flex-direction:column;gap:12px;';
+  const backBtn = document.createElement('button');
+  backBtn.className = 'm-btn';
+  backBtn.style.cssText =
+    'height:34px;padding:0 14px;border-radius:6px;background:linear-gradient(180deg,#30353c,#1a1d21);border:1px solid #000;color:#e8eaed;font-size:12px;display:flex;align-items:center;gap:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12);';
+  backBtn.setAttribute('data-control-id', 'ui.nav_screen');
+  backBtn.textContent = '‹ Rig';
+  backBtn.addEventListener('click', () => store.setScreen('main'));
 
-  const xfRow = document.createElement('div');
-  xfRow.style.cssText = 'display:flex;align-items:flex-end;justify-content:space-between;gap:12px;';
+  const dot = document.createElement('span');
+  dot.style.cssText = 'width:9px;height:9px;border-radius:50%;background:#ff5a1f;box-shadow:0 0 8px #ff5a1f;flex:none;';
 
-  const pt = document.createElement('div');
-  pt.className = 'xfmr';
-  pt.style.cssText = 'width:86px;height:66px;padding:6px;display:flex;flex-direction:column;justify-content:space-between;color:#c2c7cf;';
-  pt.innerHTML = '<div class="bell" style="height:10px;border-radius:2px;"></div><span class="m-mono" style="font-size:9px;text-align:center;">POWER PT</span>';
+  const title = document.createElement('span');
+  title.className = 'm-osw';
+  title.style.cssText = 'font-size:20px;font-weight:600;letter-spacing:.05em;color:#e8eaed;text-transform:uppercase;white-space:nowrap;';
+  title.textContent = `${ampNames[ampModel] ?? ampModel.toUpperCase()} — CHASSI`;
 
-  const caps = document.createElement('div');
-  caps.style.cssText = 'display:flex;gap:8px;align-items:flex-end;';
-  for (const capLbl of ['100µF', '100µF', '47µF']) {
-    const c = document.createElement('div');
-    c.className = 'cap-electrolytic';
-    c.style.cssText = 'width:26px;height:44px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;font-size:7px;color:#fff;';
-    c.textContent = capLbl;
-    caps.appendChild(c);
+  const sub = document.createElement('span');
+  sub.style.cssText = 'font-size:11px;color:#9aa3ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+  sub.textContent = 'clique numa válvula para inspecionar · valores simulados pelo modelo, não medições';
+
+  const testWrap = document.createElement('div');
+  testWrap.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:8px;flex:none;';
+  const testLbl = document.createElement('span');
+  testLbl.className = 'm-lbl';
+  testLbl.style.cssText = 'font-size:9px;white-space:nowrap;';
+  testLbl.textContent = 'SINAL DE TESTE';
+  const boostVal = num(store, 'main.input_boost', 1.0);
+  const boostDb = Math.round(20 * Math.log10(Math.max(0.1, boostVal)) - 15);
+  const boostCtrl = makeTrackControl(store, 'main.input_boost', 'main.input_boost', '', 0.1, 8.0, 0.05, 1.0, () => '', true);
+  boostCtrl.style.cssText = 'width:150px;flex:none;';
+  const boostFirst = boostCtrl.firstElementChild as HTMLElement | null;
+  if (boostFirst) boostFirst.style.display = 'none';
+  const boostTxt = document.createElement('span');
+  boostTxt.className = 'm-mono';
+  boostTxt.style.cssText = 'font-size:11px;width:56px;color:#e8eaed;white-space:nowrap;';
+  boostTxt.textContent = `${boostDb} dBFS`;
+  testWrap.append(testLbl, boostCtrl, boostTxt);
+
+  topBar.append(backBtn, dot, title, sub, testWrap);
+  root.appendChild(topBar);
+
+  // ── Main Content Split ─────────────────────────────────────────────────────
+  const main = document.createElement('div');
+  main.style.cssText = 'flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 380px;overflow:hidden;';
+
+  // Left: Workbench containing 470px Chassis Bay + Scope Row
+  const left = document.createElement('div');
+  left.style.cssText =
+    'display:flex;flex-direction:column;gap:16px;padding:20px 22px;min-height:0;background:radial-gradient(ellipse at 45% 30%,rgba(255,150,70,0.08) 0%,transparent 55%),repeating-linear-gradient(90deg,rgba(255,255,255,.012) 0 1px,transparent 1px 46px),linear-gradient(180deg,#141518,#0b0c0d);overflow:hidden;';
+
+  const bay = document.createElement('div');
+  bay.style.cssText = 'height:470px;flex:none;position:relative;display:flex;flex-direction:column;justify-content:flex-end;';
+
+  // Brushed aluminum chassis apron (150px at bottom of 470px chassis box) + phenolic turret board
+  const apron = document.createElement('div');
+  apron.className = 'alu';
+  apron.style.cssText =
+    'position:absolute;left:0;right:0;bottom:0;height:150px;border-radius:6px;box-shadow:0 30px 40px rgba(0,0,0,.7),0 0 0 1px #000;';
+  for (const pos of ['left:10px;top:10px;', 'right:10px;top:10px;', 'left:10px;bottom:10px;', 'right:10px;bottom:10px;']) {
+    const sc = document.createElement('span');
+    sc.className = 'm-screw';
+    sc.style.cssText = `position:absolute;${pos}`;
+    apron.appendChild(sc);
   }
 
-  const tubesRow = document.createElement('div');
-  tubesRow.style.cssText = 'display:flex;align-items:flex-end;gap:8px;flex:1;justify-content:center;';
-  const isLit = bool(store, 'amp_1.power', true) && !bool(store, 'amp_1.standby', false);
-  const glowOp = isLit ? 0.55 + Math.min(0.45, num(store, 'amp_1.bias_ma', 38) / 80) : 0.04;
-  for (const t of CHASSIS_TUBES) {
-    tubesRow.appendChild(
-      createTubeElement({
-        id: t.id,
-        typeLabel: t.isPower ? powerTube.slice(0, 5) : preampTube.slice(0, 5),
-        width: t.isPower ? 24 : 16,
-        height: t.isPower ? 64 : 44,
-        radius: t.isPower ? '11px 11px 3px 3px' : '8px 8px 2px 2px',
-        baseWidth: t.isPower ? 28 : 18,
-        baseHeight: t.isPower ? 14 : 8,
-        baseBg: t.isPower ? 'linear-gradient(90deg,#1a1a1a,#3a3a3a,#151515)' : '#2b2e34',
-        glowOp,
-        glowPx: isLit ? 8 : 0,
-        selected: store.selectedTube === t.id,
-        controlId: 'ui.inspector_select',
-        onClick: () => {
-          store.selectedTube = t.id;
-          store.emit();
-        },
-      })
-    );
+  const board = document.createElement('div');
+  board.className = 'turret';
+  board.style.cssText =
+    'position:absolute;left:150px;right:150px;bottom:14px;height:58px;border-radius:3px;box-shadow:0 4px 6px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.12);display:flex;align-items:center;justify-content:space-around;padding:0 14px;';
+  const bandStyles = [
+    'linear-gradient(180deg,#d9c79a 0 18%,#8b4513 18% 30%,#111 30% 42%,#e53935 42% 54%,#d9c79a 54% 76%,#c9a227 76% 88%,#d9c79a 88%)',
+    'linear-gradient(180deg,#d9c79a 0 18%,#e53935 18% 30%,#7e57c2 30% 42%,#ff9800 42% 54%,#d9c79a 54% 76%,#c9a227 76% 88%,#d9c79a 88%)',
+    'linear-gradient(180deg,#d9c79a 0 18%,#ffeb3b 18% 30%,#7e57c2 30% 42%,#8b4513 42% 54%,#d9c79a 54% 76%,#c9a227 76% 88%,#d9c79a 88%)',
+  ];
+  for (let i = 0; i < 22; i++) {
+    const colWrap = document.createElement('div');
+    colWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
+    const isCap = i % 4 === 2 || i % 7 === 5;
+    colWrap.innerHTML = `
+      <span style="width:6px;height:6px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#9a9a9a 60%,#555)"></span>
+      <span style="width:${isCap ? 14 : 8}px;height:26px;border-radius:${isCap ? '6px' : '4px'};background:${
+        isCap ? 'linear-gradient(90deg,#b98a1e,#f0c64a 40%,#c4931f)' : bandStyles[i % 3]
+      }"></span>
+      <span style="width:6px;height:6px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#9a9a9a 60%,#555)"></span>
+    `;
+    board.appendChild(colWrap);
+  }
+  apron.appendChild(board);
+  bay.appendChild(apron);
+
+  const hwRow = document.createElement('div');
+  hwRow.style.cssText = 'position:relative;display:flex;align-items:flex-end;justify-content:center;gap:14px;padding:0 24px 112px;';
+
+  const bellCss =
+    'background:radial-gradient(ellipse at 40% 20%,#45474b 0%,#1b1c1e 60%,#0b0b0c 100%);box-shadow:inset 0 2px 0 rgba(255,255,255,.12);';
+  const makeXfmr = (w: number, h: number, lblText: string, subText: string, withBells: boolean) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;flex:none;';
+    if (withBells) {
+      const topBell = document.createElement('div');
+      topBell.style.cssText = `width:120px;height:34px;border-radius:12px 12px 0 0;${bellCss}`;
+      wrap.appendChild(topBell);
+    }
+    const box = document.createElement('div');
+    box.className = 'xfmr';
+    box.style.cssText = `width:${w}px;height:${h}px;border-radius:3px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;`;
+    box.innerHTML = `<div style="padding:6px 10px;border-radius:2px;background:#d8d2bf;box-shadow:0 1px 2px rgba(0,0,0,.6)"><span class="m-mono" style="font-size:9px;color:#222;font-weight:700">${lblText}</span></div>${
+      subText ? `<span class="m-mono" style="font-size:9px;color:#9aa3ad">${subText}</span>` : ''
+    }`;
+    wrap.appendChild(box);
+    if (withBells) {
+      const botBell = document.createElement('div');
+      botBell.style.cssText = `width:120px;height:14px;border-radius:0 0 4px 4px;${bellCss}`;
+      wrap.appendChild(botBell);
+    }
+    return wrap;
+  };
+
+  hwRow.appendChild(makeXfmr(130, 170, 'TRANSF. FORÇA', `B+ ${bplus} V`, true));
+
+  // Dual blue electrolytic capacitors
+  const capPair = document.createElement('div');
+  capPair.style.cssText = 'display:flex;gap:6px;align-items:flex-end;flex:none;';
+  for (let i = 0; i < 2; i++) {
+    const cap = document.createElement('div');
+    cap.style.cssText =
+      'width:40px;height:112px;border-radius:6px 6px 3px 3px;background:linear-gradient(90deg,#0e2a55 0%,#2d5ea8 30%,#1b417d 60%,#0b2148 100%);box-shadow:0 12px 18px rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;position:relative;';
+    cap.innerHTML =
+      '<span style="position:absolute;top:0;left:0;right:0;height:8px;border-radius:6px 6px 0 0;background:linear-gradient(180deg,#d9dde1,#8f969c)"></span>' +
+      '<span class="m-mono" style="writing-mode:vertical-rl;transform:rotate(180deg);font-size:8px;color:#dfe8f5;letter-spacing:.06em">50µF 500V</span>';
+    capPair.appendChild(cap);
+  }
+  hwRow.appendChild(capPair);
+
+  // Tubes row (4 preamp + 4 power)
+  const tubesWrap = document.createElement('div');
+  tubesWrap.style.cssText = 'display:flex;align-items:flex-end;gap:6px;margin:0 6px;';
+  const selTube = store.selectedTube || 'V7';
+  const preNames = ['V1', 'V2', 'V3', 'PI'];
+  const pwrNames = ['V5', 'V6', 'V7', 'V8'];
+  const pwrLabelMap: Record<string, string> = { el34: 'EL34', '6l6gc': '6L6GC', kt88: 'KT88', el84_variant: 'EL84' };
+  const pwrDims: Record<string, [number, number]> = { el34: [56, 196], '6l6gc': [56, 186], kt88: [62, 206], el84_variant: [40, 138] };
+  const [pwW, pwH] = pwrDims[pwrTubeRaw] ?? [56, 196];
+
+  for (const tName of [...preNames, ...pwrNames]) {
+    const isPwr = pwrNames.includes(tName);
+    const selected = selTube === tName;
+    const w = isPwr ? pwW : 34;
+    const h = isPwr ? pwH : 104;
+    const bw = isPwr ? w - 4 : 30;
+    const bh = isPwr ? 22 : 12;
+    const sw = isPwr ? w + 6 : 38;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('aria-pressed', String(selected));
+    btn.setAttribute('aria-label', `Válvula ${tName}`);
+    btn.style.cssText = `
+      background:transparent;border:0;padding:6px 4px 0;border-radius:10px;outline:2px solid ${selected ? '#3dd8ff' : 'transparent'};outline-offset:2px;
+      display:flex;flex-direction:column;align-items:center;cursor:pointer;color:inherit;
+    `;
+    const glowPx = selected ? 20 : 10;
+    const glowOp = selected ? 1 : 0.7;
+    btn.innerHTML = `
+      <div style="filter:drop-shadow(0 0 ${glowPx}px rgba(255,120,30,.65));display:flex;flex-direction:column;align-items:center">
+        <div style="position:relative;overflow:hidden;width:${w}px;height:${h}px;border-radius:${isPwr ? '26px 26px 8px 8px' : '16px 16px 6px 6px'};border:1px solid rgba(255,255,255,.28);background:linear-gradient(90deg,rgba(255,255,255,.05) 0%,rgba(255,255,255,.3) 14%,rgba(255,255,255,.06) 30%,rgba(255,255,255,.02) 72%,rgba(255,255,255,.16) 88%,rgba(255,255,255,.04) 100%)">
+          <div style="position:absolute;left:0;right:0;top:0;height:20%;background:radial-gradient(ellipse at 50% 0%,rgba(215,222,230,.8) 0%,rgba(120,128,138,.4) 55%,transparent 80%)"></div>
+          <div style="position:absolute;left:22%;right:22%;top:24%;bottom:18%;border-radius:2px;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 5px),linear-gradient(90deg,#2b2b2b,#6c6c6c 45%,#8f8f8f 50%,#3a3a3a);box-shadow:inset 0 0 0 1px rgba(0,0,0,.4)"></div>
+          <span style="position:absolute;left:12%;right:12%;top:22%;height:3px;background:rgba(230,230,220,.55);border-radius:1px"></span>
+          <span style="position:absolute;left:12%;right:12%;bottom:16%;height:3px;background:rgba(230,230,220,.55);border-radius:1px"></span>
+          <div style="position:absolute;left:0;right:0;bottom:4%;height:46%;background:radial-gradient(ellipse at 50% 72%,rgba(255,200,110,.95) 0%,rgba(255,110,25,.62) 30%,rgba(255,80,10,.16) 58%,transparent 74%);mix-blend-mode:screen;opacity:${glowOp}"></div>
+        </div>
+        <div style="width:${bw}px;height:${bh}px;border-radius:3px 3px 5px 5px;background:${isPwr ? 'linear-gradient(180deg,#523c2a,#241910)' : 'linear-gradient(180deg,#3d3025,#1c150f)'};display:flex;align-items:center;justify-content:center;box-shadow:0 3px 4px rgba(0,0,0,.6)">
+          <span class="m-mono" style="font-size:7px;color:#e9dccb">${isPwr ? (pwrLabelMap[pwrTubeRaw] ?? 'EL34') : preTubeRaw.toUpperCase()}</span>
+        </div>
+        <div style="width:${sw}px;height:8px;background:linear-gradient(180deg,#bfc4c9,#6d7379);border-radius:0 0 3px 3px"></div>
+      </div>
+      <span class="m-mono" style="font-size:10px;font-weight:700;color:${selected ? '#3dd8ff' : '#c9ced4'};margin:6px 0 4px">${tName}</span>
+    `;
+    btn.addEventListener('click', () => {
+      store.selectedTube = tName;
+      store.emit();
+    });
+    tubesWrap.appendChild(btn);
+  }
+  hwRow.appendChild(tubesWrap);
+
+  const outWrap = document.createElement('div');
+  outWrap.style.cssText = 'display:flex;gap:10px;align-items:flex-end;flex:none;';
+  outWrap.appendChild(makeXfmr(120, 150, 'TRANSF. SAÍDA', `${impRaw} Ω`, false));
+  const choke = document.createElement('div');
+  choke.className = 'xfmr';
+  choke.style.cssText = 'width:68px;height:88px;border-radius:3px;display:flex;align-items:center;justify-content:center;';
+  choke.innerHTML = '<span class="m-mono" style="font-size:8px;color:#9aa3ad">CHOKE</span>';
+  outWrap.appendChild(choke);
+  hwRow.appendChild(outWrap);
+  bay.appendChild(hwRow);
+  left.appendChild(bay);
+
+  // Lower Split: CRT Oscilloscope + Fonte Card (minmax(0,1fr) 260px)
+  const lower = document.createElement('div');
+  lower.style.cssText = 'flex:1;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;min-height:0;';
+
+  const crtCard = document.createElement('div');
+  crtCard.style.cssText =
+    'border-radius:10px;padding:10px;background:linear-gradient(180deg,#2a2d31,#121315);box-shadow:0 10px 20px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.1);display:flex;gap:12px;min-width:0;';
+
+  const scopeCol = document.createElement('div');
+  scopeCol.className = 'crt';
+  scopeCol.style.cssText = 'flex:1;border-radius:14px;position:relative;overflow:hidden;min-width:0;';
+
+  const gridOverlay = document.createElement('div');
+  gridOverlay.style.cssText =
+    'position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(80,255,170,.09) 0 1px,transparent 1px 25%),repeating-linear-gradient(90deg,rgba(80,255,170,.09) 0 1px,transparent 1px 10%);pointer-events:none;';
+  const midLine = document.createElement('div');
+  midLine.style.cssText = 'position:absolute;left:0;right:0;top:50%;height:1px;background:rgba(80,255,170,.22);pointer-events:none;';
+  scopeCol.append(gridOverlay, midLine);
+
+  const scopeData = buildScopePaths(store);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 600 160');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+  let svgHtml = '';
+  if (scopeData.refPath) {
+    svgHtml += `<path d="${scopeData.refPath}" fill="none" stroke="rgba(87,255,176,0.28)" stroke-width="1.2" stroke-dasharray="4 4"/>`;
+  }
+  if (scopeData.mainPath) {
+    svgHtml += `<path data-scope-series="${store.crtMode}" data-point-count="${scopeData.pointCount}" d="${scopeData.mainPath}" fill="none" stroke="#57ffb0" stroke-width="2.2" style="filter:drop-shadow(0 0 4px #57ffb0)"/>`;
+  }
+  svg.innerHTML = svgHtml;
+  scopeCol.appendChild(svg);
+
+  const scopeHdr = document.createElement('span');
+  scopeHdr.className = 'm-mono';
+  scopeHdr.style.cssText = 'position:absolute;left:12px;top:8px;font-size:10px;color:#57ffb0;opacity:.8;';
+  scopeHdr.textContent = scopeData.caption;
+  scopeCol.appendChild(scopeHdr);
+
+  if (scopeData.errMsg) {
+    const errDiv = document.createElement('div');
+    errDiv.className = 'm-mono';
+    errDiv.style.cssText =
+      'position:absolute;inset:24px 0 32px;display:flex;align-items:center;justify-content:center;color:#ff6a4a;font-size:12px;font-weight:700;text-align:center;';
+    errDiv.textContent = scopeData.errMsg;
+    scopeCol.appendChild(errDiv);
   }
 
-  const ot = document.createElement('div');
-  ot.className = 'xfmr';
-  ot.style.cssText = 'width:86px;height:66px;padding:6px;display:flex;flex-direction:column;justify-content:space-between;color:#c2c7cf;';
-  ot.innerHTML = `<div class="bell" style="height:10px;border-radius:2px;"></div><span class="m-mono" style="font-size:9px;text-align:center;">OT ${str(store, 'amp_1.impedance_ohms', '16')}Ω</span>`;
+  const crtFoot = document.createElement('div');
+  crtFoot.style.cssText = 'position:absolute;left:12px;bottom:6px;display:flex;gap:4px;';
+  for (const [m, lbl] of [
+    ['waveform', 'Forma de onda'],
+    ['transfer', 'Transferência'],
+    ['tonestack', 'Tone stack'],
+  ] as const) {
+    const btn = makeChipButton('chassi.crt_mode', lbl, store.crtMode === m, () => {
+      store.crtMode = m;
+      void store.refreshScope();
+    });
+    btn.className = 'm-mono';
+    btn.style.cssText = `height:20px;padding:0 8px;border-radius:3px;border:1px solid rgba(87,255,176,.35);background:${
+      store.crtMode === m ? 'rgba(87,255,176,.22)' : 'rgba(8,24,18,.6)'
+    };color:${store.crtMode === m ? '#57ffb0' : '#7cb099'};font-size:10px;cursor:pointer;`;
+    crtFoot.appendChild(btn);
+  }
+  const clipLbl = document.createElement('span');
+  clipLbl.className = 'm-mono';
+  clipLbl.style.cssText = 'position:absolute;right:12px;bottom:8px;font-size:10px;color:#57ffb0;opacity:.8;';
+  clipLbl.textContent = 'saturação suave';
+  scopeCol.append(crtFoot, clipLbl);
 
-  xfRow.append(pt, caps, tubesRow, ot);
+  // Headroom column inside CRT bezel (130px)
+  const headCol = document.createElement('div');
+  headCol.style.cssText = 'width:130px;flex:none;display:flex;flex-direction:column;gap:8px;justify-content:center;';
+  const hTop = document.createElement('span');
+  hTop.className = 'm-lbl';
+  hTop.style.cssText = 'font-size:9px;';
+  hTop.textContent = 'Headroom';
+  const hBars = document.createElement('div');
+  hBars.style.cssText =
+    'height:120px;width:22px;border-radius:4px;background:#050505;padding:3px;box-sizing:border-box;display:flex;flex-direction:column-reverse;gap:2px;';
+  const litSegs = Math.max(2, Math.min(14, Math.round(14 - sagVal * 0.7)));
+  for (let i = 0; i < 14; i++) {
+    const lit = i < litSegs;
+    const col = i < 4 ? '#ff3b2f' : i < 7 ? '#ffc400' : '#29c46a';
+    const seg = document.createElement('span');
+    seg.style.cssText = `flex:1;border-radius:1px;background:${lit ? col : '#1a1c1f'};box-shadow:${lit ? `0 0 4px ${col}` : 'none'};`;
+    hBars.appendChild(seg);
+  }
+  const hBot = document.createElement('span');
+  hBot.className = 'm-mono';
+  hBot.style.cssText = 'font-size:10px;color:#c9ced4;';
+  hBot.textContent = litSegs > 7 ? 'folga confortável' : 'perto do limite';
+  headCol.append(hTop, hBars, hBot);
 
-  // Turret Board schematic preview
-  const turret = document.createElement('div');
-  turret.className = 'turret';
-  turret.style.cssText =
-    'border-radius:6px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;color:#f3dec0;';
-  const selectedTubeInfo = CHASSIS_TUBES.find((t) => t.id === store.selectedTube) ?? CHASSIS_TUBES[0];
-  turret.innerHTML = `
-    <span class="m-mono" style="font-size:10.5px;">VÁLVULA SELECIONADA: <strong>${selectedTubeInfo.id}</strong> (${selectedTubeInfo.stage})</span>
-    <span class="m-mono" style="font-size:10px;color:#ffd093;">B+ PRÉ: ${num(store, 'amp_1.preamp_plate_v', 280).toFixed(0)}V · BIAS: ${num(store, 'amp_1.bias_ma', 38).toFixed(1)}mA</span>
-  `;
+  crtCard.append(scopeCol, headCol);
 
-  hwStage.append(xfRow, turret);
+  // FONTE Card (260px grid column)
+  const fonteCard = document.createElement('div');
+  fonteCard.style.cssText =
+    'border-radius:10px;padding:14px;background:linear-gradient(180deg,#1d2024,#121315);box-shadow:0 10px 20px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.08);display:flex;flex-direction:column;gap:10px;';
+  fonteCard.innerHTML = '<span class="m-lbl" style="font-size:9px;">FONTE</span>';
 
-  // CRT Oscilloscope box
-  const crtWrap = document.createElement('div');
-  crtWrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
-  const crtBar = document.createElement('div');
-  crtBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
-  crtBar.innerHTML = '<span class="m-lbl" style="color:#1b1f25;">OSCILOSCÓPIO DE BANCADA (TELEMETRIA EM TEMPO REAL)</span>';
-  const crtModes = document.createElement('div');
-  crtModes.style.cssText = 'display:flex;gap:4px;';
-  (
-    [
-      ['wave', 'Forma Onda'],
-      ['transfer', 'Curva Transf.'],
-      ['tonestack', 'Tone Stack'],
-    ] as const
-  ).forEach(([m, lbl]) => {
-    crtModes.appendChild(
-      makeChipButton('chassi.crt_mode', lbl, store.crtMode === m, () => {
-        store.crtMode = m;
-        void store.transport.setStreamVisible(true, m);
-        store.emit();
-      })
-    );
-  });
-  crtBar.appendChild(crtModes);
+  const rectGrp = document.createElement('div');
+  rectGrp.style.cssText = 'display:flex;background:#0b0c0e;border:1px solid #000;border-radius:6px;padding:2px;';
+  for (const [val, lbl] of [
+    ['diode', 'Diodo'],
+    ['gz34', 'GZ34'],
+    ['5u4gb', '2× 5U4GB'],
+  ] as const) {
+    const b = makeChipButton('chassi.rectifier', lbl, rectRaw === val, () => store.setControl('chassi.rectifier', val));
+    b.style.cssText = `flex:1;height:28px;border-radius:4px;border:0;font-size:11px;cursor:pointer;justify-content:center;background:${
+      rectRaw === val ? '#232830' : 'transparent'
+    };color:${rectRaw === val ? '#f0f3f7' : '#8a939e'};font-weight:${rectRaw === val ? '600' : '500'};`;
+    rectGrp.appendChild(b);
+  }
+  fonteCard.appendChild(rectGrp);
 
-  const crt = document.createElement('div');
-  crt.className = 'crt';
-  crt.style.cssText = 'border-radius:8px;padding:6px 10px;';
-  crt.appendChild(buildScopeSvg(store));
-  crtWrap.append(crtBar, crt);
+  const sagCtrl = makeTrackControl(store, 'chassi.sag', 'amp_1.sag', 'Sag', 0, 10, 0.1, 3.0, (v) => v.toFixed(1), true);
+  sagCtrl.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const sagTop = sagCtrl.firstElementChild as HTMLElement | null;
+  const sagTrack = sagCtrl.children[1] as HTMLElement | null;
+  if (sagTop && sagTrack && sagTop.children.length === 2) {
+    const sagName = sagTop.children[0] as HTMLElement;
+    const sagReadout = sagTop.children[1] as HTMLElement;
+    sagCtrl.innerHTML = '';
+    sagName.style.cssText = 'font-size:11px;width:40px;color:#c9ced4;';
+    sagReadout.style.cssText = 'font-size:10px;width:28px;text-align:right;';
+    sagCtrl.append(sagName, sagTrack, sagReadout);
+  }
+  fonteCard.appendChild(sagCtrl);
 
-  chassis.append(hdr, hwStage, crtWrap);
+  const impTitle = document.createElement('span');
+  impTitle.className = 'm-lbl';
+  impTitle.style.cssText = 'font-size:9px;margin-top:4px;';
+  impTitle.textContent = 'CARGA (SECUNDÁRIO)';
+  const impGrp = document.createElement('div');
+  impGrp.style.cssText = 'display:flex;background:#0b0c0e;border:1px solid #000;border-radius:6px;padding:2px;';
+  for (const val of ['4', '8', '16']) {
+    const b = makeChipButton('chassi.impedance_ohms', `${val} Ω`, impRaw === val, () => store.setControl('chassi.impedance_ohms', val));
+    b.className = 'm-mono';
+    b.style.cssText = `flex:1;height:28px;border-radius:4px;border:0;font-size:11px;cursor:pointer;justify-content:center;background:${
+      impRaw === val ? '#232830' : 'transparent'
+    };color:${impRaw === val ? '#f0f3f7' : '#8a939e'};font-weight:${impRaw === val ? '600' : '500'};`;
+    impGrp.appendChild(b);
+  }
+  fonteCard.append(impTitle, impGrp);
 
-  // Right: Tabbed Circuit & Tube Mods Panel
-  const { root: modCard, body: modBody } = makePanelCard('MODIFICAÇÕES DE CIRCUITO E VÁLVULAS', 'Spec 031 Real DSP');
-  const tabs = document.createElement('div');
-  tabs.style.cssText = 'display:flex;gap:6px;flex:none;';
-  tabs.append(
-    makeChipButton('ui.subtab', 'Válvulas & Fonte', store.chassiTab === 'tube', () => {
-      store.chassiTab = 'tube';
+  lower.append(crtCard, fonteCard);
+  left.appendChild(lower);
+
+  // ── Right Sidebar (380px) ──────────────────────────────────────────────────
+  const side = document.createElement('aside');
+  side.className = 'm-metal';
+  side.style.cssText = 'border-left:1px solid #000;display:flex;flex-direction:column;min-height:0;box-shadow:inset 1px 0 0 rgba(255,255,255,.05);overflow:hidden;';
+
+  const tabsRow = document.createElement('div');
+  tabsRow.style.cssText = 'height:36px;flex:none;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #000;';
+  for (const [tabId, lbl] of [
+    ['tube', 'Válvula'],
+    ['circuit', 'Circuito'],
+  ] as const) {
+    const on = store.chassiTab === tabId;
+    const b = makeChipButton('ui.subtab', lbl, on, () => {
+      store.chassiTab = tabId;
       store.emit();
-    }),
-    makeChipButton('ui.subtab', 'Bias, NFB & Tone Stack', store.chassiTab === 'circuit', () => {
-      store.chassiTab = 'circuit';
-      store.emit();
-    })
-  );
-  modBody.appendChild(tabs);
+    });
+    b.style.cssText = `height:36px;padding:0;justify-content:center;background:transparent;border:0;border-bottom:2px solid ${on ? '#ff8a3d' : 'transparent'};border-radius:0;color:${on ? '#e8eaed' : '#9aa3ad'};font-size:12px;font-weight:600;cursor:pointer;`;
+    tabsRow.appendChild(b);
+  }
+  side.appendChild(tabsRow);
 
-  const controlsBox = document.createElement('div');
-  controlsBox.style.cssText = 'display:flex;flex-direction:column;gap:9px;overflow-y:auto;flex:1;min-height:0;';
+  const sideBody = document.createElement('div');
+  sideBody.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;';
 
   if (store.chassiTab === 'tube') {
-    const addSelectRow = (label: string, controlId: string, key: string, choices: { value: string; label: string }[], def: string) => {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
-      const l = document.createElement('span');
-      l.className = 'm-lbl';
-      l.textContent = label;
-      row.append(l, makeControlSelect(store, controlId, key, choices, def));
-      controlsBox.appendChild(row);
-    };
-    addSelectRow(
-      'Válvula de Pré',
-      'chassi.preamp_tube',
-      'amp_1.preamp_tube',
-      [
-        { value: '12ax7', label: '12AX7 (ECC83 High Gain)' },
-        { value: '12at7', label: '12AT7 (ECC81 Lower Mu / Clean)' },
-        { value: 'ef86_variant', label: 'EF86 Pentode (Rich Harmonic)' },
-      ],
-      '12ax7'
-    );
-    addSelectRow(
-      'Válvula de Potência',
-      'chassi.power_tube',
-      'amp_1.power_tube',
-      [
-        { value: 'el34', label: 'EL34 (British Mid Crunch)' },
-        { value: '6l6gc', label: '6L6GC (US Deep Headroom)' },
-        { value: 'kt88', label: 'KT88 (Tight Modern Punch)' },
-        { value: 'el84_variant', label: 'EL84 Class-A Quad (Chime)' },
-      ],
-      'el34'
-    );
-    addSelectRow(
-      'Retificador da Fonte',
-      'chassi.rectifier',
-      'amp_1.rectifier',
-      [
-        { value: 'diode', label: 'Silício Solid-State (Rígido)' },
-        { value: 'gz34', label: 'GZ34 / 5AR4 (Sag Médio)' },
-        { value: '5u4gb', label: '5U4GB Dual Valve (Sag Vintage)' },
-      ],
-      'diode'
-    );
-    addSelectRow(
-      'Impedância OT',
-      'chassi.impedance_ohms',
-      'amp_1.impedance_ohms',
-      [
-        { value: '4', label: '4 Ohms' },
-        { value: '8', label: '8 Ohms' },
-        { value: '16', label: '16 Ohms' },
-      ],
-      '16'
-    );
-    controlsBox.append(
-      makeControlSlider(store, 'chassi.sag', 'amp_1.sag', 'Sag da Fonte B+', 3.0),
-      makeControlSlider(store, 'chassi.preamp_plate_v', 'amp_1.preamp_plate_v', 'Tensão de Placa (B+ Pré)', 280)
-    );
+    const sec1 = document.createElement('div');
+    sec1.style.cssText = 'padding:14px 16px;border-bottom:1px solid #000;display:flex;flex-direction:column;gap:6px;';
+    const isSelPwr = pwrNames.includes(selTube);
+    const titleBox = document.createElement('div');
+    titleBox.style.cssText = 'display:flex;align-items:baseline;gap:10px;';
+    const activeLabel = isSelPwr ? (pwrLabelMap[pwrTubeRaw] ?? 'EL34') : preTubeRaw.toUpperCase();
+    titleBox.innerHTML = `<span class="m-osw" style="font-size:26px;font-weight:600;color:#e8eaed">${selTube}</span><span class="m-mono" style="font-size:14px;color:#ffb347">${activeLabel}</span>`;
+    const roleSub = document.createElement('span');
+    roleSub.style.cssText = 'font-size:11px;color:#9aa3ad;';
+    roleSub.textContent = isSelPwr
+      ? `Potência · push-pull, par ${selTube === 'V5' || selTube === 'V6' ? 'A' : 'B'} · fixed bias`
+      : 'Pré-amplificador · estágio de ganho triodo';
+
+    const chipsRow = document.createElement('div');
+    chipsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;';
+    if (isSelPwr) {
+      for (const [v, lbl] of [
+        ['el34', 'EL34'],
+        ['6l6gc', '6L6GC'],
+        ['kt88', 'KT88'],
+        ['el84_variant', 'EL84'],
+      ] as const) {
+        const b = makeChipButton('chassi.power_tube', lbl, pwrTubeRaw === v, () => store.setControl('chassi.power_tube', v));
+        b.style.cssText += ';height:28px;padding:0 10px;border-radius:5px;font-size:11px;font-weight:600;';
+        chipsRow.appendChild(b);
+      }
+    } else {
+      for (const v of ['12ax7', 'ecc83', '12at7', '12ay7', 'ef86'] as const) {
+        const b = makeChipButton('chassi.preamp_tube', v.toUpperCase(), preTubeRaw === v, () => store.setControl('chassi.preamp_tube', v));
+        b.style.cssText += ';height:28px;padding:0 10px;border-radius:5px;font-size:11px;font-weight:600;';
+        chipsRow.appendChild(b);
+      }
+    }
+    sec1.append(titleBox, roleSub, chipsRow);
+    sideBody.appendChild(sec1);
+
+    // Dual analog cream VU meters (84px tall) with bezel
+    const metersGrid = document.createElement('div');
+    metersGrid.style.cssText =
+      'padding:14px 16px;border-bottom:1px solid #000;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;';
+    const plateV = isSelPwr ? bplus - 12 : Math.round(bplus * 0.44);
+    const curDeg = -62 + Math.min(1, biasMa / 80) * 124;
+    const vDeg = -62 + Math.min(1, plateV / 600) * 124;
+    for (const [mTitle, mTxt, mCol, mUnit, deg] of [
+      ['CORRENTE DE PLACA', `${Math.round(biasMa)} mA`, '#29c46a', 'AMPERAGEM', curDeg],
+      ['TENSÃO DE PLACA', `${plateV} V`, '#e8eaed', 'TENSÃO', vDeg],
+    ] as const) {
+      const mBox = document.createElement('div');
+      mBox.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+      mBox.innerHTML = `
+        <span class="m-lbl" style="font-size:9px">${mTitle}</span>
+        <div style="border-radius:5px;padding:5px;background:linear-gradient(180deg,#2a2d31,#121315);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 6px rgba(0,0,0,.6)">
+          <div class="vuface" style="height:84px;border-radius:3px;position:relative;overflow:hidden;box-shadow:inset 0 2px 8px rgba(0,0,0,.5)">
+            <svg viewBox="0 0 160 84" style="position:absolute;inset:0;width:100%;height:100%" aria-hidden="true">
+              <path d="M22 70 A62 62 0 0 1 138 70" stroke="#2a2214" stroke-width="1.2" fill="none"/>
+              <path d="M112 31 A62 62 0 0 1 138 70" stroke="#c0251a" stroke-width="3.5" fill="none"/>
+              <g stroke="#2a2214" stroke-width="1.2"><path d="M22 70 l-5 -3"/><path d="M37 41 l-4 -4"/><path d="M60 24 l-2 -5"/><path d="M80 20 v-6"/><path d="M100 24 l2 -5"/><path d="M123 41 l4 -4"/><path d="M138 70 l5 -3"/></g>
+              <text x="80" y="58" font-family="Oswald, sans-serif" font-size="9" fill="#2a2214" text-anchor="middle" letter-spacing="1.5">${mUnit}</text>
+              <g transform="rotate(${deg.toFixed(1)} 80 82)"><path d="M80 82 L80 22" stroke="#141414" stroke-width="1.5" stroke-linecap="round"/></g>
+              <circle cx="80" cy="82" r="6" fill="#1a1a1a"/>
+            </svg>
+          </div>
+        </div>
+        <span class="m-mono" style="font-size:12px;font-weight:700;color:${mCol}">${mTxt}</span>
+      `;
+      metersGrid.appendChild(mBox);
+    }
+    sideBody.appendChild(metersGrid);
+
+    const sec3 = document.createElement('div');
+    sec3.style.cssText = 'padding:14px 16px;display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;';
+
+    const adjHdr = document.createElement('span');
+    adjHdr.className = 'm-lbl';
+    adjHdr.style.cssText = 'font-size:9px;';
+    adjHdr.textContent = 'AJUSTES DA VÁLVULA';
+    sec3.appendChild(adjHdr);
+
+    const biasRow = document.createElement('div');
+    biasRow.style.cssText = 'display:flex;align-items:center;gap:16px;';
+    const biasKnob = createKnob({
+      controlId: 'chassi.bias_ma',
+      label: 'Bias de Grade',
+      value: biasMa,
+      min: 20,
+      max: 55,
+      step: 0.5,
+      defaultValue: 38.0,
+      skinClass: 'k-marshall',
+      sizePx: 70,
+      onChange: (v) => store.setControl('chassi.bias_ma', v),
+      onDragState: (d) => store.setDraggingKnob(d),
+    });
+    const biasNegV = -(52 - (biasMa - 20) * 0.45);
+    const biasMeta = document.createElement('div');
+    biasMeta.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+    biasMeta.innerHTML = `<span class="m-osw" style="font-size:14px;font-weight:600;letter-spacing:.06em;color:#e8eaed">BIAS</span><span class="m-mono" style="font-size:16px;font-weight:700;color:#ffb347">${biasNegV.toFixed(1)} V</span><span style="font-size:10px;color:#9aa3ad">${biasMa > 45 ? 'quente' : biasMa < 30 ? 'frio' : 'nominal'} (${biasMa.toFixed(1)} mA)</span>`;
+    biasRow.append(biasKnob, biasMeta);
+    sec3.appendChild(biasRow);
+
+    // Note box
+    const dissW = ((plateV * biasMa) / 1000).toFixed(1);
+    const dissMax = pwrTubeRaw === 'kt88' ? 42 : pwrTubeRaw === '6l6gc' ? 30 : 25;
+    const dissPct = Math.round((Number(dissW) / dissMax) * 100);
+    const noteBox = document.createElement('div');
+    noteBox.style.cssText =
+      'margin-top:auto;padding:10px 12px;border-radius:6px;background:rgba(61,216,255,.06);border:1px solid rgba(61,216,255,.2);font-size:11px;color:#c9ced4;line-height:1.5;';
+    noteBox.textContent = isSelPwr
+      ? `Dissipação estimada ${dissW} W de ${dissMax} W (${dissPct} %). Bias mais quente = mais corrente e compressão mais cedo; valores do modelo, não de medição.`
+      : 'Trocar para 12AT7/12AY7 reduz o ganho deste estágio (fator de amplificação menor). Valores simulados pelo modelo WDF.';
+    sec3.appendChild(noteBox);
+    sideBody.appendChild(sec3);
   } else {
+    sideBody.style.cssText = 'flex:1;min-height:0;padding:14px 16px;display:flex;flex-direction:column;gap:11px;overflow:hidden;';
+    sideBody.appendChild(makeTrackControl(store, 'chassi.preamp_plate_v', 'amp_1.preamp_plate_v', 'Tensão de placa do pré', 180, 320, 2, 260, (v) => `${Math.round(v)} V`));
+    sideBody.appendChild(makeTrackControl(store, 'chassi.triode_asym', 'amp_1.triode_asym', 'Assimetria triodo', 0, 10, 0.1, 3.0, (v) => v.toFixed(1)));
+    sideBody.appendChild(makeTrackControl(store, 'chassi.nfb', 'amp_1.nfb', 'Realimentação (NFB)', 0, 10, 0.1, 5.0, (v) => v.toFixed(1)));
+    sideBody.appendChild(makeTrackControl(store, 'chassi.xformer_sat', 'amp_1.xformer_sat', 'Saturação do trafo', 0, 10, 0.1, 4.0, (v) => v.toFixed(1)));
+
+    const tsLbl = document.createElement('span');
+    tsLbl.className = 'm-lbl';
+    tsLbl.style.cssText = 'font-size:9.5px;margin-top:6px;';
+    tsLbl.textContent = 'TOPOLOGIA TONE STACK';
     const tsRow = document.createElement('div');
-    tsRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
-    tsRow.innerHTML = '<span class="m-lbl">Topologia Tone Stack</span>';
-    tsRow.appendChild(
-      makeControlSelect(
-        store,
-        'chassi.tonestack',
-        'amp_1.tonestack',
-        [
-          { value: 'model', label: 'Original do Amplificador' },
-          { value: 'marshall', label: 'FMV Marshall Stack' },
-          { value: 'fender', label: 'Blackface AB763 Stack' },
-          { value: 'vox', label: 'Top Boost Passivo' },
-          { value: 'baxandall', label: 'Baxandall Ativo / Studio' },
-        ],
-        'model'
-      )
-    );
-    controlsBox.append(
-      tsRow,
-      makeControlSlider(store, 'chassi.bias_ma', 'amp_1.bias_ma', 'Bias de Grade (Class AB)', 38),
-      makeControlSlider(store, 'chassi.nfb', 'amp_1.nfb', 'Realimentação Negativa (NFB)', 5.0),
-      makeControlSlider(store, 'chassi.xformer_sat', 'amp_1.xformer_sat', 'Saturação Trafo Saída', 4.0),
-      makeControlSlider(store, 'chassi.triode_asym', 'amp_1.triode_asym', 'Assimetria de Tríodos', 0.2)
-    );
+    tsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
+    const curTs = str(store, 'amp_1.tonestack', 'marshall');
+    for (const [k, l] of [
+      ['baxandall', 'Baxandall'],
+      ['fender', 'Fender TMB'],
+      ['marshall', 'Marshall'],
+      ['vox', 'Vox Top Boost'],
+      ['mesa', 'Mesa Pré'],
+    ] as const) {
+      const b = makeChipButton('chassi.tonestack', l, curTs === k, () => store.setControl('chassi.tonestack', k));
+      b.style.cssText += ';padding:4px 8px;font-size:10px;';
+      tsRow.appendChild(b);
+    }
+    sideBody.append(tsLbl, tsRow);
   }
 
-  modBody.appendChild(controlsBox);
-  root.append(chassis, modCard);
+  side.appendChild(sideBody);
+  main.append(left, side);
+  root.appendChild(main);
   return root;
 }

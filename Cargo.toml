@@ -12,7 +12,7 @@ members = [
 version = "1.0.0"
 edition = "2021"
 authors = ["SONIX PRO // AMPFORGE Team"]
-license = "Proprietary"
+license = "GPL-3.0-or-later"
 
 [profile.release]
 opt-level = 3

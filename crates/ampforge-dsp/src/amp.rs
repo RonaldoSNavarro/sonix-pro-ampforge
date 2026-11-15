@@ -473,6 +473,7 @@ pub struct WhiteBoxAmpProcessor {
     aa_filters: [BiquadFilter; 14],
     ai_filters: [BiquadFilter; 4],
     target_model_id: Option<AmpModelId>,
+    target_mod_settings: Option<ChassisModSettings>,
     target_voicing_filter1: BiquadFilter,
     target_voicing_filter2: BiquadFilter,
     model_crossfade: f32,
@@ -481,6 +482,7 @@ pub struct WhiteBoxAmpProcessor {
     sag_state: f64,
     xformer_lf_state: f64,
     speaker_res_filter: BiquadFilter,
+    speaker_resonance_hz: f32,
     lfo_phase: f64,
     standby_env: f64,
     smooth_tube_gain: f64,
@@ -489,29 +491,33 @@ pub struct WhiteBoxAmpProcessor {
 
 #[derive(Debug, Clone)]
 struct SpringReverbTank {
-    lines: [[f64; 1024]; 4],
+    lines: [[f64; 2048]; 4],
     lens: [usize; 4],
     idx: [usize; 4],
     lp: [f64; 4],
+    lp_alpha: f64,
 }
 
 impl Default for SpringReverbTank {
     fn default() -> Self {
         Self {
-            lines: [[0.0; 1024]; 4],
+            lines: [[0.0; 2048]; 4],
             lens: [347, 509, 683, 887],
             idx: [0; 4],
             lp: [0.0; 4],
+            lp_alpha: 1.0 - (-2.0 * std::f64::consts::PI * 3650.0 / 48000.0).exp(),
         }
     }
 }
 
 impl SpringReverbTank {
     fn set_sample_rate(&mut self, sr: f32) {
-        let scale = (sr as f64 / 48000.0).clamp(0.5, 2.0);
+        let fs = (sr as f64).max(1.0);
+        let scale = (fs / 48000.0).clamp(0.5, 2.0);
+        self.lp_alpha = (1.0 - (-2.0 * std::f64::consts::PI * 3650.0 / fs).exp()).clamp(0.01, 0.99);
         let base = [347.0, 509.0, 683.0, 887.0];
         for i in 0..4 {
-            self.lens[i] = ((base[i] * scale).round() as usize).clamp(64, 1023);
+            self.lens[i] = ((base[i] * scale).round() as usize).clamp(64, 2047);
             if self.idx[i] >= self.lens[i] {
                 self.idx[i] = 0;
             }
@@ -525,7 +531,7 @@ impl SpringReverbTank {
             let p = self.idx[k];
             let raw = self.lines[k][p];
             // High-frequency spring dispersion & damping
-            self.lp[k] += 0.38 * (raw - self.lp[k]);
+            self.lp[k] += self.lp_alpha * (raw - self.lp[k]);
             d[k] = self.lp[k];
         }
         // Hadamard scattering matrix with g = 0.895 for authentic long AB763 spring decay
@@ -573,6 +579,53 @@ fn triode_adaa1(x: f64, prev: &mut f64, k_p: f64, k_n: f64) -> f64 {
     };
     *prev = x;
     y
+}
+
+/// Evaluates the static first-stage preamp triode transfer curve matching `AmpBlock::process`.
+pub fn static_preamp_transfer(
+    x: f64,
+    model: AmpModelId,
+    preamp_tube: PreampTube,
+    asym: f64,
+    plate_v: f64,
+) -> f64 {
+    let (tube_gain, ef86_knee) = match preamp_tube {
+        PreampTube::Ax7A => (1.0f64, 1.0f64),
+        PreampTube::At7 => (0.58f64, 0.85f64),
+        PreampTube::Ay7 => (0.45f64, 0.78f64),
+        PreampTube::Ef86 => (1.22f64, 1.35f64),
+    };
+    let v1_headroom = (plate_v / 250.0).max(0.1);
+    let kp_base = (1.0 + 1.2 * asym) * ef86_knee;
+    let kn_base = ((1.0 - 0.55 * asym) * ef86_knee).max(0.35);
+
+    let (u, kp, kn, out_scale) = match model {
+        AmpModelId::BritPlexi1959 => ((x * tube_gain) / v1_headroom, kp_base, kn_base, v1_headroom),
+        AmpModelId::BritJcm800_2203 => (
+            (x * 1.15 * tube_gain) / v1_headroom,
+            kp_base * 1.15,
+            kn_base * 0.90,
+            v1_headroom,
+        ),
+        AmpModelId::UsTwinBlackface65 => {
+            let th = v1_headroom * 1.35;
+            ((x * tube_gain) / th, kp_base * 0.85, kn_base, th)
+        }
+        AmpModelId::CaliDualRectoRevF => (
+            (x * 1.25 * tube_gain) / v1_headroom,
+            kp_base * 1.25,
+            kn_base * 0.85,
+            v1_headroom,
+        ),
+        AmpModelId::UkAc30TopBoost => (
+            (x * tube_gain) / v1_headroom,
+            kp_base * 1.05,
+            kn_base * 0.92,
+            v1_headroom,
+        ),
+    };
+    let k = if asym <= 1e-4 || u >= 0.0 { kp } else { kn };
+    (u / (1.0 + (k * u) * (k * u)).sqrt()) * out_scale
 }
 
 #[inline(always)]
@@ -753,26 +806,27 @@ const SINC_WEIGHTS: [[f64; 8]; 8] = [
 
 impl WhiteBoxAmpProcessor {
     pub fn create_voicing_filters(model: AmpModelId, sr: f64) -> (BiquadFilter, BiquadFilter) {
+        // Curvas físicas documentadas em docs/amps/voicing-fontes.md
         match model {
             AmpModelId::BritJcm800_2203 => (
-                BiquadFilter::peaking(1600.0, 3.5, 1.2, sr),
-                BiquadFilter::low_shelf(120.0, -2.5, sr),
+                BiquadFilter::peaking(1600.0, 2.0, 1.1, sr),
+                BiquadFilter::low_shelf(110.0, -1.5, sr),
             ),
             AmpModelId::BritPlexi1959 => (
-                BiquadFilter::peaking(2500.0, 6.0, 0.9, sr),
-                BiquadFilter::peaking(120.0, 4.0, 1.0, sr),
+                BiquadFilter::peaking(2400.0, 2.5, 0.9, sr),
+                BiquadFilter::low_shelf(120.0, 1.5, sr),
             ),
             AmpModelId::UsTwinBlackface65 => (
-                BiquadFilter::peaking(450.0, -8.0, 0.9, sr),
-                BiquadFilter::high_shelf(4500.0, 4.0, sr),
+                BiquadFilter::high_shelf(4500.0, 1.5, sr),
+                BiquadFilter::low_shelf(80.0, 0.5, sr),
             ),
             AmpModelId::CaliDualRectoRevF => (
-                BiquadFilter::peaking(85.0, 4.0, 1.4, sr),
-                BiquadFilter::peaking(750.0, -3.5, 1.1, sr),
+                BiquadFilter::peaking(85.0, 2.0, 1.4, sr),
+                BiquadFilter::peaking(750.0, -2.0, 1.1, sr),
             ),
             AmpModelId::UkAc30TopBoost => (
-                BiquadFilter::peaking(4200.0, 5.0, 1.2, sr),
-                BiquadFilter::low_shelf(150.0, -5.0, sr),
+                BiquadFilter::peaking(3800.0, 2.5, 1.1, sr),
+                BiquadFilter::low_shelf(140.0, -2.5, sr),
             ),
         }
     }
@@ -808,12 +862,14 @@ impl WhiteBoxAmpProcessor {
             aa_filters: [BiquadFilter::default(); 14],
             ai_filters: [BiquadFilter::default(); 4],
             target_model_id: None,
+            target_mod_settings: None,
             model_crossfade: 0.0,
             crossfade_step: 1.0 / (48000.0 * 0.020),
             oversampling_factor: 8,
             sag_state: 0.0,
             xformer_lf_state: 0.0,
             speaker_res_filter: BiquadFilter::default(),
+            speaker_resonance_hz: 98.0,
             lfo_phase: 0.0,
             standby_env: 1.0,
             smooth_tube_gain: 1.0,
@@ -880,6 +936,12 @@ impl WhiteBoxAmpProcessor {
         self.mod_settings.rectifier = rec;
     }
 
+    /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
+    pub fn current_b_plus_v(&self) -> f32 {
+        let factor = (1.0 - self.sag_state as f32).max(0.15);
+        self.mod_settings.preamp_plate_v * factor
+    }
+
     pub fn set_negative_feedback(&mut self, nfb: f32) {
         self.mod_settings.nfb = nfb.clamp(0.0, 10.0);
     }
@@ -902,14 +964,14 @@ impl WhiteBoxAmpProcessor {
 
     pub fn set_target_model(&mut self, model: AmpModelId) {
         if model != self.model_id {
-            let sr = self.sample_rate as f64 * 8.0;
+            let sr = self.sample_rate as f64 * (self.oversampling_factor.max(2) as f64);
             let (v1, v2) = Self::create_voicing_filters(model, sr);
             self.target_voicing_filter1 = v1;
             self.target_voicing_filter2 = v2;
             self.target_model_id = Some(model);
+            self.target_mod_settings = Some(nominal_mod_settings_for_model(model));
             self.model_crossfade = 0.0;
             self.crossfade_step = 1.0 / (self.sample_rate * 0.020).max(1.0);
-            self.mod_settings = nominal_mod_settings_for_model(model);
         }
     }
 
@@ -934,25 +996,54 @@ impl WhiteBoxAmpProcessor {
     }
 
     fn update_aa_filters(&mut self) {
-        let os = self.oversampling_factor as f64;
+        let os = self.oversampling_factor.max(2) as f64;
         let fs_base = self.sample_rate as f64;
         let fs_os = fs_base * os;
-        let fc = 15000.0f64.min(fs_base * 0.35);
 
-        self.aa_filters[0] = BiquadFilter::lowpass(fc, 0.707, fs_os);
-        self.aa_filters[1] = BiquadFilter::lowpass(fc, 0.707, fs_os);
-        self.aa_filters[2] = BiquadFilter::lowpass(fc * 1.08, 0.85, fs_os);
-        self.aa_filters[3] = BiquadFilter::lowpass(fc * 1.08, 0.85, fs_os);
-        self.aa_filters[4] = BiquadFilter::notch((fs_base * 0.52).min(fs_os * 0.48), 1.4, fs_os);
-        self.aa_filters[5] = BiquadFilter::notch((fs_base * 0.65).min(fs_os * 0.48), 1.5, fs_os);
-        self.aa_filters[6] = BiquadFilter::notch((fs_base * 0.78).min(fs_os * 0.48), 1.6, fs_os);
-        self.aa_filters[7] = BiquadFilter::notch((fs_base * 0.90).min(fs_os * 0.48), 1.8, fs_os);
-        self.aa_filters[8] = BiquadFilter::notch((fs_base * 1.15).min(fs_os * 0.48), 2.0, fs_os);
-        self.aa_filters[9] = BiquadFilter::notch((fs_base * 1.35).min(fs_os * 0.48), 2.0, fs_os);
-        self.aa_filters[10] = BiquadFilter::notch((fs_base * 1.60).min(fs_os * 0.48), 2.0, fs_os);
-        self.aa_filters[11] = BiquadFilter::notch((fs_base * 1.85).min(fs_os * 0.48), 2.0, fs_os);
-        self.aa_filters[12] = BiquadFilter::notch((fs_base * 2.20).min(fs_os * 0.48), 2.0, fs_os);
-        self.aa_filters[13] = BiquadFilter::notch((fs_base * 2.60).min(fs_os * 0.48), 2.0, fs_os);
+        // 14th-order Chebyshev Type I (7 cascaded biquads, 0.2 dB passband ripple)
+        // Flat 20 Hz..18 kHz (ripple <= 0.25 dB) and >= 70 dB attenuation at fs_base / 2.
+        let n_order = 14.0f64;
+        let fp = 18300.0f64.min(fs_base * 0.385);
+        let eps = (10.0f64.powf(0.20 / 10.0) - 1.0).sqrt();
+        let gamma = ((1.0 / eps) + (1.0 / (eps * eps) + 1.0).sqrt()).ln() / n_order;
+        let sinh_g = gamma.sinh();
+        let cosh_g = gamma.cosh();
+        let k_warp = (std::f64::consts::PI * fp / fs_os).tan();
+        let k2 = k_warp * k_warp;
+
+        for k in 0..7 {
+            let theta = std::f64::consts::PI * (2.0 * (k as f64) + 1.0) / (2.0 * n_order);
+            let sigma = -sinh_g * theta.sin();
+            let omega = cosh_g * theta.cos();
+            let r2 = sigma * sigma + omega * omega;
+            let b_ana = -2.0 * sigma;
+            let a0 = 1.0 + b_ana * k_warp + r2 * k2;
+            let b0 = (r2 * k2) / a0;
+            self.aa_filters[k] = BiquadFilter {
+                b0,
+                b1: 2.0 * b0,
+                b2: b0,
+                a1: (2.0 * (r2 * k2 - 1.0)) / a0,
+                a2: (1.0 - b_ana * k_warp + r2 * k2) / a0,
+                x1: 0.0,
+                x2: 0.0,
+                y1: 0.0,
+                y2: 0.0,
+            };
+        }
+        for k in 7..14 {
+            self.aa_filters[k] = BiquadFilter {
+                b0: 1.0,
+                b1: 0.0,
+                b2: 0.0,
+                a1: 0.0,
+                a2: 0.0,
+                x1: 0.0,
+                x2: 0.0,
+                y1: 0.0,
+                y2: 0.0,
+            };
+        }
 
         let fc_ai = 20000.0f64.min(fs_base * 0.42);
         for i in 0..4 {
@@ -960,10 +1051,38 @@ impl WhiteBoxAmpProcessor {
         }
     }
 
+    pub fn measure_aa_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
+        let fs_os = (self.sample_rate as f64) * (self.oversampling_factor.max(2) as f64);
+        let w = 2.0 * std::f64::consts::PI * freq_hz / fs_os;
+        let cos_w = w.cos();
+        let sin_w = w.sin();
+        let cos_2w = (2.0 * w).cos();
+        let sin_2w = (2.0 * w).sin();
+        let mut mag_sq = 1.0f64;
+        for f in &self.aa_filters {
+            let num_re = f.b0 + f.b1 * cos_w + f.b2 * cos_2w;
+            let num_im = -f.b1 * sin_w - f.b2 * sin_2w;
+            let den_re = 1.0 + f.a1 * cos_w + f.a2 * cos_2w;
+            let den_im = -f.a1 * sin_w - f.a2 * sin_2w;
+            let n2 = num_re * num_re + num_im * num_im;
+            let d2 = (den_re * den_re + den_im * den_im).max(1e-24);
+            mag_sq *= n2 / d2;
+        }
+        10.0 * mag_sq.max(1e-18).log10()
+    }
+
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
         self.spring_reverb.set_sample_rate(self.sample_rate);
         self.update_aa_filters();
+    }
+
+    pub fn set_speaker_resonance_hz(&mut self, hz: f32) {
+        self.speaker_resonance_hz = hz.clamp(50.0, 200.0);
+    }
+
+    pub fn speaker_resonance_hz(&self) -> f32 {
+        self.speaker_resonance_hz
     }
 
     pub fn panel(&self) -> &AmpFrontPanel {
@@ -1025,11 +1144,21 @@ impl WhiteBoxAmpProcessor {
             sr,
         );
 
-        // Feedback loop filters: Depth (65-130 Hz) & Presence (>2 kHz) (Spec 016, CA-7)
-        let depth_db = (self.panel.depth as f64 / 10.0) * 6.5;
-        let pres_db = (self.panel.presence as f64 / 10.0) * 6.5;
+        // Effective NFB: Dual Rectifier Modern mode disconnects global NFB per Rev-F schematic
+        let eff_nfb = if self.model_id == AmpModelId::CaliDualRectoRevF
+            && self.panel.channel_mode == AmpChannelMode::Modern
+        {
+            0.0
+        } else {
+            self.mod_settings.nfb as f64
+        };
+        let nfb_scale = (eff_nfb / 10.0).clamp(0.0, 1.0);
+
+        // Feedback loop filters: Depth (65-130 Hz) & Presence (>2 kHz) modulated by NFB loop (Spec 016 CA-7, Spec 039 CA-8)
+        let depth_db = (self.panel.depth as f64 / 10.0) * 6.5 * nfb_scale;
+        let pres_db = (self.panel.presence as f64 / 10.0) * 10.0 * nfb_scale;
         self.depth_filter.update_coeffs(BiquadFilter::peaking(85.0, depth_db, 2.5, sr));
-        self.presence_filter.update_coeffs(BiquadFilter::peaking(4200.0, pres_db, 2.2, sr));
+        self.presence_filter.update_coeffs(BiquadFilter::peaking(4000.0, pres_db, 1.4, sr));
 
         // Subtle power-section/transformer voicing per model
         let (v1_cur, v2_cur) = if self.mod_settings.tonestack != ToneStackTopology::Model {
@@ -1120,11 +1249,11 @@ impl WhiteBoxAmpProcessor {
             1.0
         };
 
-        let calc_power_drive = |model: AmpModelId, gain: f32, master: f32, ch_mode: AmpChannelMode| -> f64 {
+        let calc_power_drive = |model: AmpModelId, gain: f32, vol2: f32, master: f32, ch_mode: AmpChannelMode| -> f64 {
             match model {
                 AmpModelId::BritPlexi1959 => {
-                    let master_pot = master as f64 / 10.0;
-                    (1.0 + master_pot.powi(3) * 28.0 + (gain as f64 / 10.0) * 1.4) / power_tube_headroom
+                    // Plexi 1959SLP has no Master Volume; power drive comes from Vol I & Vol II
+                    (1.0 + (gain as f64 / 10.0) * 18.0 + (vol2 as f64 / 10.0) * 6.0) / power_tube_headroom
                 }
                 AmpModelId::UsTwinBlackface65 => {
                     (0.85 + (gain as f64 / 10.0) * 2.2) / power_tube_headroom
@@ -1145,7 +1274,7 @@ impl WhiteBoxAmpProcessor {
                 }
                 AmpModelId::BritJcm800_2203 => {
                     let master_pot = master as f64 / 10.0;
-                    (1.0 + master_pot * 4.5) / power_tube_headroom
+                    (0.25 + master_pot.powi(3) * 28.0) / power_tube_headroom
                 }
             }
         };
@@ -1153,6 +1282,7 @@ impl WhiteBoxAmpProcessor {
         let cur_drive = calc_power_drive(
             self.model_id,
             self.panel.input_gain,
+            self.panel.volume_2,
             self.panel.master_volume,
             self.panel.channel_mode,
         );
@@ -1160,6 +1290,7 @@ impl WhiteBoxAmpProcessor {
             calc_power_drive(
                 target,
                 self.panel.input_gain,
+                self.panel.volume_2,
                 self.panel.master_volume,
                 self.panel.channel_mode,
             )
@@ -1182,14 +1313,10 @@ impl WhiteBoxAmpProcessor {
         let crossover_depth = bias_deficit * 0.70;
         let crossover_width = 0.025;
 
-        // Effective NFB: Dual Rectifier Modern mode disconnects global NFB per Rev-F schematic
-        let eff_nfb = if self.model_id == AmpModelId::CaliDualRectoRevF
-            && self.panel.channel_mode == AmpChannelMode::Modern
-        {
-            0.0
-        } else {
-            self.mod_settings.nfb as f64
-        };
+        // Sample-rate-invariant coefficients for base-rate filters (Spec 039 CA-4)
+        let alpha_bright = (1.0 - (-2.0 * std::f64::consts::PI * 1200.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
+        let alpha_ch2 = (1.0 - (-2.0 * std::f64::consts::PI * 310.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
+        let alpha_standby = (1.0 - (-1.0 / (fs_base.max(1.0) * 0.00014)).exp()).clamp(0.001, 0.99);
 
         // Secondary output transformer impedance shifts damping factor and resonance height
         let imp_factor = match self.panel.impedance_ohms {
@@ -1198,8 +1325,9 @@ impl WhiteBoxAmpProcessor {
             _ => 1.24,
         };
         let res_boost_db = ((10.0 - eff_nfb) / 10.0) * 4.5 * imp_factor;
+        let res_hz = self.speaker_resonance_hz.clamp(50.0, 200.0) as f64;
         self.speaker_res_filter
-            .update_coeffs(BiquadFilter::peaking(98.0, res_boost_db, 2.0, sr));
+            .update_coeffs(BiquadFilter::peaking(res_hz, res_boost_db, 2.0, sr));
 
         // AC30 Tone Cut filter alpha (shunt LPF after LTP PI before EL84 power stage)
         let fc_cut_hz = 18000.0 * (750.0f64 / 18000.0).powf((self.panel.cut as f64 / 10.0).clamp(0.0, 1.0));
@@ -1232,7 +1360,7 @@ impl WhiteBoxAmpProcessor {
             0.0
         };
         let rev_mix = if is_twin_vibrato_ch {
-            (self.panel.reverb as f64 / 10.0).clamp(0.0, 1.0) * 0.72
+            (self.panel.reverb as f64 / 10.0).clamp(0.0, 1.0) * 1.45
         } else {
             0.0
         };
@@ -1243,7 +1371,7 @@ impl WhiteBoxAmpProcessor {
             let tube_gain = self.smooth_tube_gain;
 
             // Smooth Power/Standby mute envelope (drops below 1e-6 inside ~2.5 ms)
-            self.standby_env += 0.14 * (live_target - self.standby_env);
+            self.standby_env += alpha_standby * (live_target - self.standby_env);
             if self.standby_env < 1e-9 && live_target == 0.0 {
                 self.standby_env = 0.0;
             }
@@ -1251,19 +1379,18 @@ impl WhiteBoxAmpProcessor {
             let raw_in = if input[i].is_finite() { input[i] as f64 } else { 0.0 };
             let mut s_in = raw_in * input_pad;
 
-            // 1. Input Bright Cap Filter at base rate (Spec 003 CA-3)
+            // 1. Input Bright Cap Filter at base rate (Spec 003 CA-3, Spec 039 CA-4)
+            self.bright_state += alpha_bright * (s_in - self.bright_state);
             if bright_effective_boost > 0.001 {
                 let high_pass = s_in - self.bright_state;
-                self.bright_state = 0.85 * self.bright_state + 0.15 * s_in;
                 s_in += high_pass * (bright_effective_boost * 2.0);
-            } else {
-                self.bright_state = 0.85 * self.bright_state + 0.15 * s_in;
             }
 
             // Keep parallel Normal channel low/mid contour state updated for Plexi Ch II
+            // Note: s_in already includes input_pad (-6 dB on Low2), do not apply input_pad twice.
+            self.bright2_state += alpha_ch2 * (s_in - self.bright2_state);
             let ch2_hp = s_in - self.bright2_state;
-            self.bright2_state = 0.96 * self.bright2_state + 0.04 * s_in;
-            let s_ch2_base = (s_in * 0.65 + self.bright2_state * 0.70 - ch2_hp * 0.10) * vol2_lin * input_pad;
+            let s_ch2_base = (s_in * 0.65 + self.bright2_state * 0.70 - ch2_hp * 0.10) * vol2_lin;
 
             for k in 0..7 {
                 self.interp_hist[k] = self.interp_hist[k + 1];
@@ -1346,11 +1473,11 @@ impl WhiteBoxAmpProcessor {
                         let v1b_in = one_pole_hpf(&mut self.interstage_hp1, s_after_v1a, alpha_hp_tight);
                         let kp_cold = (1.0 + 11.0 * asym) * ef86_knee;
                         let kn_cold = ((1.0 - 2.6 * asym) * ef86_knee).max(0.35);
-                        let v1b = triode_adaa1((v1b_in * 1.35) / v1_headroom, &mut self.adaa_s2_prev, kp_cold, kn_cold)
+                        let v1b = triode_adaa1((v1b_in * 1.08) / v1_headroom, &mut self.adaa_s2_prev, kp_cold, kn_cold)
                             * v1_headroom;
                         // V2a + V2b Cathode Follower
                         let v2_in = one_pole_hpf(&mut self.interstage_hp2, v1b, alpha_hp_loose);
-                        triode_adaa1((v2_in * 1.1) / v1_headroom, &mut self.adaa_s3_prev, kp_base, kn_base)
+                        triode_adaa1((v2_in * 1.0) / v1_headroom, &mut self.adaa_s3_prev, kp_base, kn_base)
                             * v1_headroom
                     }
                     AmpModelId::UsTwinBlackface65 => {
@@ -1527,6 +1654,9 @@ impl WhiteBoxAmpProcessor {
                 if self.model_crossfade >= 1.0 {
                     let target = self.target_model_id.take().unwrap();
                     self.model_id = target;
+                    if let Some(ms) = self.target_mod_settings.take() {
+                        self.mod_settings = ms;
+                    }
                     self.voicing_filter1 = self.target_voicing_filter1;
                     self.voicing_filter2 = self.target_voicing_filter2;
                     self.model_crossfade = 0.0;

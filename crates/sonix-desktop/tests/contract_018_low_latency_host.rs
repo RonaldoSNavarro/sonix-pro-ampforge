@@ -206,6 +206,7 @@ fn test_ca_07_api_audio_status_telemetry_schema() {
         panics: 0,
         adc_clips: 0,
         measured_roundtrip_ms: Some(10.5),
+        estimated_roundtrip_ms: 5.34,
         algorithmic_latency_samples: 0,
     };
     

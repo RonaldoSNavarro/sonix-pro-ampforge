@@ -190,6 +190,29 @@ pub struct SforgePackage {
     irs: HashMap<String, Vec<u8>>,
 }
 
+fn validate_safe_relative_path(rel_path: &str) -> Result<(), PackageIntegrityError> {
+    if rel_path.is_empty()
+        || rel_path.contains('\0')
+        || rel_path.starts_with('/')
+        || rel_path.contains('\\')
+        || rel_path.contains(':')
+        || rel_path.contains("..")
+    {
+        return Err(PackageIntegrityError::PathTraversalDetected(
+            rel_path.to_string(),
+        ));
+    }
+    if rel_path
+        .split('/')
+        .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Err(PackageIntegrityError::PathTraversalDetected(
+            rel_path.to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl SforgePackage {
     pub fn new(preset: SonixPresetDoc) -> Self {
         Self {
@@ -199,11 +222,7 @@ impl SforgePackage {
     }
 
     pub fn add_ir(&mut self, relative_path: &str, bytes: Vec<u8>) -> Result<(), PackageIntegrityError> {
-        if relative_path.contains("..") || relative_path.starts_with('/') || relative_path.starts_with('\\') {
-            return Err(PackageIntegrityError::PathTraversalDetected(
-                relative_path.to_string(),
-            ));
-        }
+        validate_safe_relative_path(relative_path)?;
         self.irs.insert(relative_path.to_string(), bytes);
         Ok(())
     }
@@ -270,9 +289,7 @@ impl SforgePackage {
         // 2. Verify all files
         let mut irs = HashMap::new();
         for (rel_path, file_bytes) in payload.files {
-            if rel_path.contains("..") || rel_path.starts_with('/') || rel_path.starts_with('\\') {
-                return Err(PackageIntegrityError::PathTraversalDetected(rel_path));
-            }
+            validate_safe_relative_path(&rel_path)?;
 
             let actual_hash = Self::hash_bytes(&file_bytes);
             let expected_hash = payload.manifest.get(&rel_path).ok_or_else(|| {
@@ -290,6 +307,16 @@ impl SforgePackage {
             }
 
             irs.insert(rel_path, file_bytes);
+        }
+
+        // 3. Verify every manifest entry (except preset.json) has a corresponding payload file
+        for manifest_key in payload.manifest.keys() {
+            if manifest_key != "preset.json" && !irs.contains_key(manifest_key) {
+                return Err(PackageIntegrityError::CorruptedArchive(format!(
+                    "Entrada '{}' listada no manifesto sem arquivo correspondente",
+                    manifest_key
+                )));
+            }
         }
 
         Ok(Self { preset, irs })

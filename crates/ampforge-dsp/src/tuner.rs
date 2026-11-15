@@ -43,6 +43,7 @@ pub struct TunerProcessor {
     mute_gain: f32,
     d_scratch: Vec<f32>,
     d_prime_scratch: Vec<f32>,
+    last_poly_cents: [f32; 6],
 }
 
 impl Default for TunerProcessor {
@@ -63,6 +64,7 @@ impl TunerProcessor {
             mute_gain: 1.0,
             d_scratch: vec![0.0; 4096],
             d_prime_scratch: vec![0.0; 4096],
+            last_poly_cents: [0.0; 6],
         }
     }
 
@@ -137,6 +139,10 @@ impl TunerProcessor {
                 cents_deviation: 0.0,
                 frequency_hz: 0.0,
             };
+        }
+
+        if self.mode == TunerMode::Polyphonic {
+            self.update_polyphonic_from_samples(signal);
         }
 
         // YIN Algorithm:
@@ -233,6 +239,10 @@ impl TunerProcessor {
 
         let freq = self.sample_rate / tau_sub;
 
+        if self.mode == TunerMode::Polyphonic {
+            self.update_polyphonic_from_samples(signal);
+        }
+
         if freq < 60.0 || freq > 1400.0 {
             return TunerPitchResult {
                 note_name: "---".to_string(),
@@ -244,7 +254,11 @@ impl TunerProcessor {
         // Convert freq to MIDI note and cents deviation from nearest semitone
         let midi_float = 69.0 + 12.0 * (freq / self.a4_ref).log2();
         let nearest_midi = midi_float.round() as i32;
-        let cents = (midi_float - nearest_midi as f32) * 100.0;
+        let mut cents = (midi_float - nearest_midi as f32) * 100.0;
+
+        if self.temperament == TunerTemperament::SweetenedGuitar {
+            cents -= Self::sweetened_offset_cents(nearest_midi);
+        }
 
         let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
         let note_idx = ((nearest_midi % 12) + 12) % 12;
@@ -258,22 +272,147 @@ impl TunerProcessor {
         }
     }
 
+    /// Peterson StroboStomp "GTR" Sweetened Guitar Tuning offsets (cents relative to Equal Temperament):
+    /// E2 (-2.4), A2 (-2.0), D3 (-1.6), G3 (-3.2), B3 (-1.0), E4 (-2.0).
+    fn sweetened_offset_cents(midi: i32) -> f32 {
+        match midi {
+            40 => -2.4, // E2
+            45 => -2.0, // A2
+            50 => -1.6, // D3
+            55 => -3.2, // G3
+            59 => -1.0, // B3
+            64 => -2.0, // E4
+            _ => match ((midi % 12) + 12) % 12 {
+                4 => -2.2,  // E
+                9 => -2.0,  // A
+                2 => -1.6,  // D
+                7 => -3.2,  // G
+                11 => -1.0, // B
+                _ => 0.0,
+            },
+        }
+    }
+
+    fn estimate_string_freq_hanning(samples: &[f32], f_ref: f32, sample_rate: f32) -> f32 {
+        let n = samples.len();
+        if n < 64 {
+            return f_ref;
+        }
+        let shift = (n / 8).max(1);
+        let m = n - shift;
+        let inv_m1 = 1.0 / ((m - 1) as f64);
+        let w_ref = 2.0 * std::f64::consts::PI * (f_ref as f64) / (sample_rate as f64);
+        let mut re0 = 0.0f64;
+        let mut im0 = 0.0f64;
+        let mut re1 = 0.0f64;
+        let mut im1 = 0.0f64;
+        for i in 0..m {
+            let win = 0.54 - 0.46 * (2.0 * std::f64::consts::PI * (i as f64) * inv_m1).cos();
+            let angle = w_ref * (i as f64);
+            let c = angle.cos();
+            let s = angle.sin();
+            let x0 = (samples[i] as f64) * win;
+            let x1 = (samples[i + shift] as f64) * win;
+            re0 += x0 * c;
+            im0 -= x0 * s;
+            re1 += x1 * c;
+            im1 -= x1 * s;
+        }
+        // X1 * conj(X0) * exp(-j * w_ref * shift) -> phase is (w_actual - w_ref) * shift
+        let cross_re = re1 * re0 + im1 * im0;
+        let cross_im = im1 * re0 - re1 * im0;
+        let shift_ang = w_ref * (shift as f64);
+        let sc = shift_ang.cos();
+        let ss = shift_ang.sin();
+        let norm_re = cross_re * sc + cross_im * ss;
+        let norm_im = cross_im * sc - cross_re * ss;
+        let delta_w = norm_im.atan2(norm_re) / (shift as f64);
+        ((w_ref + delta_w) * (sample_rate as f64) / (2.0 * std::f64::consts::PI)) as f32
+    }
+
+    fn update_polyphonic_from_samples(&mut self, samples: &[f32]) {
+        let base_strings = [
+            (40i32, 82.40689f32),
+            (45, 110.00000),
+            (50, 146.83238),
+            (55, 195.99772),
+            (59, 246.94165),
+            (64, 329.62756),
+        ];
+        let n = samples.len().min(self.d_scratch.len());
+        if n < 64 {
+            return;
+        }
+        let a4_scale = self.a4_ref / 440.0;
+        let mut f_refs = [0.0f32; 6];
+        let mut a_coef = [0.0f64; 6];
+        let mut b_coef = [0.0f64; 6];
+
+        // Pass 1: estimate complex Fourier coefficients for each string (Hanning-windowed)
+        let inv_n1 = 1.0 / ((n - 1) as f64);
+        let norm = 4.0 / (n as f64); // 2/N * 2 for Hanning mean 0.5
+        for (k, &(midi, f_eq)) in base_strings.iter().enumerate() {
+            let offset_c = if self.temperament == TunerTemperament::SweetenedGuitar {
+                Self::sweetened_offset_cents(midi)
+            } else {
+                0.0
+            };
+            f_refs[k] = f_eq * a4_scale * 2.0f32.powf(offset_c / 1200.0);
+            let w = 2.0 * std::f64::consts::PI * (f_refs[k] as f64) / (self.sample_rate as f64);
+            let mut sum_c = 0.0f64;
+            let mut sum_s = 0.0f64;
+            for i in 0..n {
+                let win = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * (i as f64) * inv_n1).cos());
+                let x = (samples[i] as f64) * win;
+                let ang = w * (i as f64);
+                sum_c += x * ang.cos();
+                sum_s += x * ang.sin();
+            }
+            a_coef[k] = sum_c * norm;
+            b_coef[k] = sum_s * norm;
+        }
+
+        // Pass 2: subtract interfering strings and measure each string cleanly
+        for s_idx in 0..6 {
+            for i in 0..n {
+                let mut r = samples[i] as f64;
+                for j in 0..6 {
+                    if j != s_idx {
+                        let w =
+                            2.0 * std::f64::consts::PI * (f_refs[j] as f64) / (self.sample_rate as f64);
+                        let ang = w * (i as f64);
+                        r -= a_coef[j] * ang.cos() + b_coef[j] * ang.sin();
+                    }
+                }
+                self.d_scratch[i] = r as f32;
+            }
+            let f_ref = f_refs[s_idx];
+            let f_est = Self::estimate_string_freq_hanning(&self.d_scratch[..n], f_ref, self.sample_rate);
+            if f_est > 20.0 {
+                self.last_poly_cents[s_idx] = 1200.0 * (f_est / f_ref).log2();
+            } else {
+                self.last_poly_cents[s_idx] = 0.0;
+            }
+        }
+    }
+
     pub fn detect_polyphonic_status(&self) -> Vec<PolyphonicStringStatus> {
         let strings = [
-            (1, "E2", 82.41),
-            (2, "A2", 110.00),
-            (3, "D3", 146.83),
-            (4, "G3", 196.00),
-            (5, "B3", 246.94),
-            (6, "E4", 329.63),
+            (1, "E2"),
+            (2, "A2"),
+            (3, "D3"),
+            (4, "G3"),
+            (5, "B3"),
+            (6, "E4"),
         ];
 
         strings
             .iter()
-            .map(|&(idx, note, _f)| PolyphonicStringStatus {
+            .enumerate()
+            .map(|(i, &(idx, note))| PolyphonicStringStatus {
                 string_index: idx,
                 note: note.to_string(),
-                cents_deviation: 0.0,
+                cents_deviation: self.last_poly_cents[i],
             })
             .collect()
     }

@@ -2,21 +2,26 @@
 //! Host de Áudio Nativo Desktop Standalone e Duplex Real-Time (WASAPI, ASIO, CoreAudio, ALSA, JACK)
 //! Suporte a captura física P2/P3 e processamento lock-free em tempo real (Spec 012 & Spec 013)
 
-use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use thiserror::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use ampforge_dsp::amp::{AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
-use ampforge_dsp::cab::{SpeakerCabModel, VirtualCabProcessor};
+use ampforge_dsp::cab::{ImpulseResponse, MicModel, SpeakerCabModel, VirtualCabProcessor};
 use ampforge_dsp::dag::{MixerChannelConfig, MixerNode, SplitMode, SplitNode};
 use ampforge_dsp::fx::delay::{DelayModel, DelayProcessor};
 use ampforge_dsp::fx::drive::{DriveModel, DriveProcessor};
-use ampforge_dsp::fx::dynamics::{CompressorProcessor, CompressorTopology, GateState, NoiseGateMode, NoiseGateProcessor};
+use ampforge_dsp::fx::dynamics::{CompressorProcessor, CompressorTopology, NoiseGateMode, NoiseGateProcessor};
+pub use ampforge_dsp::fx::dynamics::GateState;
 use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
 use ampforge_dsp::fx::modulation::{ModModel, ModulationProcessor};
+use ampforge_dsp::fx::pitch::{PitchKey, PitchModel, PitchProcessor, ScaleType};
 use ampforge_dsp::fx::reverb::{ReverbModel, ReverbProcessor};
 use ampforge_dsp::looper::{LooperPosition, LooperProcessor};
+use ampforge_dsp::modshop::{PowerTube, PreampTube, RectifierType, ToneStackTopology};
+use ampforge_dsp::queue::SpscOwnedQueue;
 use ampforge_dsp::tuner::{TunerOutputMode, TunerPitchResult, TunerProcessor};
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -86,9 +91,64 @@ impl InputChannel {
             }
         }
     }
+
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            InputChannel::Left => 0,
+            InputChannel::Right => 1,
+            InputChannel::Sum => 2,
+        }
+    }
+
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => InputChannel::Right,
+            2 => InputChannel::Sum,
+            _ => InputChannel::Left,
+        }
+    }
+
+    pub fn from_str_opt(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "right" => InputChannel::Right,
+            "sum" => InputChannel::Sum,
+            _ => InputChannel::Left,
+        }
+    }
+
+    pub fn convert_interleaved_i16(&self, interleaved: &[i16], channels: usize, out: &mut [f32]) {
+        let ch = channels.max(1);
+        let frames = out.len().min(interleaved.len() / ch);
+        const INV_I16: f32 = 1.0 / 32768.0;
+        match self {
+            InputChannel::Left => {
+                for i in 0..frames {
+                    out[i] = interleaved[i * ch] as f32 * INV_I16;
+                }
+            }
+            InputChannel::Right => {
+                for i in 0..frames {
+                    out[i] = if ch >= 2 {
+                        interleaved[i * ch + 1] as f32 * INV_I16
+                    } else {
+                        interleaved[i * ch] as f32 * INV_I16
+                    };
+                }
+            }
+            InputChannel::Sum => {
+                for i in 0..frames {
+                    out[i] = if ch >= 2 {
+                        0.5 * ((interleaved[i * ch] as f32 + interleaved[i * ch + 1] as f32) * INV_I16)
+                    } else {
+                        interleaved[i * ch] as f32 * INV_I16
+                    };
+                }
+            }
+        }
+    }
 }
 
-/// Snapshot de Telemetria de Áudio Completo (Spec 018, CA-7)
+/// Snapshot de Telemetria de Áudio Completo (Spec 018 CA-7 & Spec 036 CA-2/CA-3/CA-4)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AudioStatusTelemetry {
     pub backend: String,
@@ -109,6 +169,8 @@ pub struct AudioStatusTelemetry {
     pub panics: u64,
     pub adc_clips: u64,
     pub measured_roundtrip_ms: Option<f32>,
+    #[serde(default)]
+    pub estimated_roundtrip_ms: f32,
     #[serde(default)]
     pub algorithmic_latency_samples: u32,
 }
@@ -234,11 +296,11 @@ pub fn measure_loopback_latency(
     }
 }
 
-/// Host de Áudio Simulado para Testes de Contrato de Tempo Real e Baixa Latência (Spec 018)
+/// Host de Áudio Simulado para Testes de Contrato de Tempo Real e Baixa Latência (Spec 018 & 034)
 pub struct SimulatedAudioHost {
     sample_rate: u32,
     period_frames: usize,
-    buffer: Arc<LockFreeSpscRingBuffer>,
+    duplex: RealtimeDuplexEngine,
     phase: f32,
     drift_ppm: f32,
     drift_fraction: f32,
@@ -249,24 +311,23 @@ pub struct SimulatedAudioHost {
     panics: Arc<AtomicU64>,
     test_panic_triggered: bool,
     device_lost: bool,
+    zero_fill_samples: u64,
     dsp_chain: RealtimeDspChain,
 }
 
 impl SimulatedAudioHost {
     pub fn new(sample_rate: u32, period_frames: usize) -> Self {
-        let buffer_cap = (period_frames * 8).next_power_of_two();
-        let ring = Arc::new(LockFreeSpscRingBuffer::new(buffer_cap));
-        // Pré-carrega o buffer com exatamente 1 período para iniciar equilibrado
-        let warmup = vec![0.0f32; period_frames];
-        ring.push_slice(&warmup);
+        let pf = period_frames.max(16);
+        let buffer_cap = (pf * 8).next_power_of_two();
+        let duplex = RealtimeDuplexEngine::with_target_period(buffer_cap, pf);
 
         let mut chain = RealtimeDspChain::new(sample_rate as f32);
-        chain.prepare(sample_rate as f32, period_frames);
+        chain.prepare(sample_rate as f32, pf);
 
         Self {
             sample_rate,
-            period_frames,
-            buffer: ring,
+            period_frames: pf,
+            duplex,
             phase: 0.0,
             drift_ppm: 0.0,
             drift_fraction: 0.0,
@@ -277,12 +338,90 @@ impl SimulatedAudioHost {
             panics: Arc::new(AtomicU64::new(0)),
             test_panic_triggered: false,
             device_lost: false,
+            zero_fill_samples: 0,
             dsp_chain: chain,
         }
     }
 
     pub fn queue_occupancy(&self) -> usize {
-        self.buffer.occupied()
+        self.duplex.available_samples()
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn period_frames(&self) -> usize {
+        self.period_frames
+    }
+
+    pub fn zero_fill_samples(&self) -> u64 {
+        self.zero_fill_samples
+    }
+
+    pub fn reset_zero_fill_counter(&mut self) {
+        self.zero_fill_samples = 0;
+    }
+
+    pub fn clean_input_ring(&self) -> Arc<CleanInputRing> {
+        self.dsp_chain.clean_input_ring()
+    }
+
+    pub fn dsp_chain_mut(&mut self) -> &mut RealtimeDspChain {
+        &mut self.dsp_chain
+    }
+
+    pub fn set_audio_device(
+        &mut self,
+        sample_rate: u32,
+        buffer_size: usize,
+    ) -> Result<AudioStatusTelemetry, String> {
+        if !matches!(sample_rate, 44100 | 48000 | 88200 | 96000) {
+            return Err(format!("Taxa de amostragem não suportada pelo dispositivo: {} Hz", sample_rate));
+        }
+        if !matches!(buffer_size, 32 | 64 | 128 | 256 | 512 | 1024) {
+            return Err(format!("Tamanho de buffer recusado pelo dispositivo: {} frames", buffer_size));
+        }
+        let buffer_cap = (buffer_size * 8).next_power_of_two();
+        self.duplex = RealtimeDuplexEngine::with_target_period(buffer_cap, buffer_size);
+        self.sample_rate = sample_rate;
+        self.period_frames = buffer_size;
+        self.dsp_chain.prepare(sample_rate as f32, buffer_size);
+        Ok(self.current_status_telemetry())
+    }
+
+    pub fn current_status_telemetry(&self) -> AudioStatusTelemetry {
+        let lat_ms = (self.period_frames as f32 / self.sample_rate as f32) * 1000.0;
+        let algo_lat = self.dsp_chain.algorithmic_latency_samples();
+        let algo_ms = (algo_lat as f32 / self.sample_rate.max(1) as f32) * 1000.0;
+        AudioStatusTelemetry {
+            backend: "wasapi".to_string(),
+            mode: match self.current_mode {
+                AudioMode::WasapiExclusive => "wasapi_exclusive",
+                AudioMode::WasapiSharedLowLatency => "wasapi_shared_low_latency",
+                AudioMode::Asio => "asio_native",
+                _ => "wasapi_shared",
+            }
+            .to_string(),
+            fallback_reason: self.fallback_reason.clone(),
+            raw_processing: true,
+            sample_rate: self.sample_rate,
+            input_period_frames: self.period_frames as u32,
+            output_period_frames: self.period_frames as u32,
+            input_device: "Simulated Input Device".to_string(),
+            output_device: "Simulated Output Device".to_string(),
+            driver_input_latency_ms: lat_ms,
+            driver_output_latency_ms: lat_ms,
+            cpu_avg_pct: 0.0,
+            cpu_peak_pct: 0.0,
+            underruns: 0,
+            overruns: 0,
+            panics: self.panics.load(Ordering::Relaxed),
+            adc_clips: self.dsp_chain.adc_clips(),
+            measured_roundtrip_ms: None,
+            estimated_roundtrip_ms: lat_ms + lat_ms + algo_ms,
+            algorithmic_latency_samples: algo_lat,
+        }
     }
 
     pub fn set_drift_ppm(&mut self, ppm: f32) {
@@ -378,24 +517,32 @@ impl SimulatedAudioHost {
         }
 
         let in_buf = vec![sample_val; in_count];
-        self.buffer.push_slice(&in_buf);
+        self.duplex.push_captured_samples(&in_buf);
 
-        // Alvo em repouso = 1 período (128). Ocupação transitória pós-push = 2 períodos (256)
-        let occ = self.buffer.occupied();
+        // Alvo em repouso = 1 período. Ocupação transitória pós-push = 2 períodos
+        let occ = self.duplex.available_samples();
         let expected_transient = period * 2;
+        let hysteresis = (period / 8).max(16);
 
         let mut samples_to_consume = period;
-        if occ > expected_transient + 16 {
+        if occ > expected_transient + hysteresis {
             samples_to_consume += 1;
-        } else if occ < expected_transient.saturating_sub(16) {
+        } else if occ < expected_transient.saturating_sub(hysteresis) {
             samples_to_consume = samples_to_consume.saturating_sub(1);
         }
 
         let mut out_buf = vec![0.0f32; samples_to_consume];
-        self.buffer.pop_slice(&mut out_buf);
+        let popped = self.duplex.pop_samples_raw(&mut out_buf);
+        if popped < samples_to_consume {
+            self.zero_fill_samples += (samples_to_consume - popped) as u64;
+        }
     }
 
     pub fn tick_sine_1khz(&mut self) -> Vec<f32> {
+        self.tick_sine_freq(1000.0)
+    }
+
+    pub fn tick_sine_freq(&mut self, freq_hz: f32) -> Vec<f32> {
         let period = self.period_frames;
         let mut out = vec![0.0f32; period];
 
@@ -416,7 +563,7 @@ impl SimulatedAudioHost {
             self.drift_fraction += 1.0;
         }
 
-        let w = 2.0 * std::f32::consts::PI * 1000.0 / (self.sample_rate as f32);
+        let w = 2.0 * std::f32::consts::PI * freq_hz / (self.sample_rate as f32);
         let mut in_buf = vec![0.0f32; in_count];
         for i in 0..in_count {
             in_buf[i] = (self.phase).sin();
@@ -427,30 +574,34 @@ impl SimulatedAudioHost {
         }
 
         // Simula captura produzindo na fila
-        self.buffer.push_slice(&in_buf);
+        self.duplex.push_captured_samples(&in_buf);
 
         // Simula reprodução consumindo da fila
-        let occ = self.buffer.occupied();
+        let occ = self.duplex.available_samples();
         let expected_transient = period * 2;
+        let hysteresis = (period / 8).max(16);
 
         let mut consume_len = period;
-        if occ > expected_transient + 16 {
+        if occ > expected_transient + hysteresis {
             consume_len += 1;
-        } else if occ < expected_transient.saturating_sub(16) {
+        } else if occ < expected_transient.saturating_sub(hysteresis) {
             consume_len = consume_len.saturating_sub(1);
         }
 
         let mut raw_slice = vec![0.0f32; consume_len];
-        self.buffer.pop_slice(&mut raw_slice);
+        let popped = self.duplex.pop_samples_raw(&mut raw_slice);
+        if popped < consume_len {
+            self.zero_fill_samples += (consume_len - popped) as u64;
+        }
 
         // Reamostragem suave de interpolação linear para exatamente `period` amostras
-        let mut popped = vec![0.0f32; period];
+        let mut popped_buf = vec![0.0f32; period];
         for i in 0..period {
             let pos = (i as f32 / period as f32) * (raw_slice.len() as f32);
             let idx = (pos as usize).min(raw_slice.len().saturating_sub(1));
             let frac = pos - idx as f32;
             let next_idx = (idx + 1).min(raw_slice.len().saturating_sub(1));
-            popped[i] = raw_slice[idx] * (1.0 - frac) + raw_slice[next_idx] * frac;
+            popped_buf[i] = raw_slice[idx] * (1.0 - frac) + raw_slice[next_idx] * frac;
         }
 
         // Processamento DSP e transporte com proteção contra pânico (Spec 018, CA-2 & CA-11)
@@ -459,11 +610,24 @@ impl SimulatedAudioHost {
             self.panics.fetch_add(1, Ordering::Relaxed);
             out.fill(0.0);
         } else {
-            // Entrega sinal que atravessou a fila com reamostragem contínua anti-deriva
-            out.copy_from_slice(&popped);
+            out.copy_from_slice(&popped_buf);
         }
 
         out
+    }
+
+    pub fn push_sine_to_chain(&mut self, freq_hz: f32, frames: usize) {
+        let w = 2.0 * std::f32::consts::PI * freq_hz / (self.sample_rate as f32);
+        let mut in_buf = vec![0.0f32; frames];
+        let mut out_buf = vec![0.0f32; frames];
+        for s in in_buf.iter_mut() {
+            *s = self.phase.sin() * 0.5;
+            self.phase += w;
+            if self.phase > 2.0 * std::f32::consts::PI {
+                self.phase -= 2.0 * std::f32::consts::PI;
+            }
+        }
+        self.dsp_chain.process(&in_buf, &mut out_buf);
     }
 }
 
@@ -477,9 +641,138 @@ pub struct DesktopAudioDevice {
     pub supported_buffer_sizes: Vec<u32>,
 }
 
+pub trait AudioDeviceEnumerator: Send + Sync {
+    fn enumerate_devices(&self) -> Vec<DesktopAudioDevice>;
+}
+
+#[derive(Debug, Default)]
+pub struct CpalAudioEnumerator;
+
+impl CpalAudioEnumerator {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn host_backend() -> AudioBackendType {
+        if cfg!(target_os = "windows") {
+            AudioBackendType::Wasapi
+        } else if cfg!(target_os = "macos") {
+            AudioBackendType::CoreAudio
+        } else {
+            AudioBackendType::Alsa
+        }
+    }
+
+    fn collect_sample_rates(device: &cpal::Device, is_input: bool) -> Vec<u32> {
+        let mut rates = Vec::new();
+        let ranges = if is_input {
+            device.supported_input_configs().ok().map(|it| {
+                it.map(|r| (r.min_sample_rate(), r.max_sample_rate()))
+                    .collect::<Vec<_>>()
+            })
+        } else {
+            device.supported_output_configs().ok().map(|it| {
+                it.map(|r| (r.min_sample_rate(), r.max_sample_rate()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        if let Some(list) = ranges {
+            for candidate in [44100u32, 48000, 88200, 96000] {
+                if list.iter().any(|&(lo, hi)| candidate >= lo && candidate <= hi) {
+                    rates.push(candidate);
+                }
+            }
+        }
+        if rates.is_empty() {
+            if is_input {
+                if let Ok(def) = device.default_input_config() {
+                    rates.push(def.sample_rate());
+                }
+            } else if let Ok(def) = device.default_output_config() {
+                rates.push(def.sample_rate());
+            }
+        }
+        rates
+    }
+}
+
+impl AudioDeviceEnumerator for CpalAudioEnumerator {
+    fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
+        let host = cpal::default_host();
+        let backend = Self::host_backend();
+        let mut out = Vec::new();
+
+        let default_in_name = host
+            .default_input_device()
+            .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()));
+        let default_out_name = host
+            .default_output_device()
+            .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()));
+
+        let mut inputs_list = Vec::new();
+        if let Ok(inputs) = host.input_devices() {
+            for (idx, dev) in inputs.enumerate() {
+                let name = dev
+                    .description()
+                    .map(|d| d.name().to_string())
+                    .unwrap_or_else(|_| format!("Input Device {}", idx + 1));
+                let rates = Self::collect_sample_rates(&dev, true);
+                if rates.is_empty() {
+                    continue;
+                }
+                let is_default = default_in_name.as_deref() == Some(name.as_str());
+                inputs_list.push((
+                    is_default,
+                    DesktopAudioDevice {
+                        id: format!("in_{}", idx),
+                        name,
+                        backend: backend.clone(),
+                        is_input: true,
+                        supported_sample_rates: rates,
+                        supported_buffer_sizes: vec![64, 128, 256, 512, 1024],
+                    },
+                ));
+            }
+        }
+        inputs_list.sort_by_key(|(is_def, _)| std::cmp::Reverse(*is_def));
+        out.extend(inputs_list.into_iter().map(|(_, d)| d));
+
+        let mut outputs_list = Vec::new();
+        if let Ok(outputs) = host.output_devices() {
+            for (idx, dev) in outputs.enumerate() {
+                let name = dev
+                    .description()
+                    .map(|d| d.name().to_string())
+                    .unwrap_or_else(|_| format!("Output Device {}", idx + 1));
+                let rates = Self::collect_sample_rates(&dev, false);
+                if rates.is_empty() {
+                    continue;
+                }
+                let is_default = default_out_name.as_deref() == Some(name.as_str());
+                outputs_list.push((
+                    is_default,
+                    DesktopAudioDevice {
+                        id: format!("out_{}", idx),
+                        name,
+                        backend: backend.clone(),
+                        is_input: false,
+                        supported_sample_rates: rates,
+                        supported_buffer_sizes: vec![64, 128, 256, 512, 1024],
+                    },
+                ));
+            }
+        }
+        outputs_list.sort_by_key(|(is_def, _)| std::cmp::Reverse(*is_def));
+        out.extend(outputs_list.into_iter().map(|(_, d)| d));
+
+        out
+    }
+}
+
 pub struct DesktopAudioHost {
     stream_active: bool,
     local_ipc_only: bool,
+    enumerator: Arc<dyn AudioDeviceEnumerator>,
 }
 
 impl Default for DesktopAudioHost {
@@ -493,51 +786,54 @@ impl DesktopAudioHost {
         Self {
             stream_active: false,
             local_ipc_only: true,
+            enumerator: Arc::new(CpalAudioEnumerator::new()),
         }
     }
 
-    /// Enumeração genérica compatível com Spec 012
-    pub fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
-        vec![
-            DesktopAudioDevice {
-                id: "default_dev".to_string(),
-                name: "Studio Low-Latency Audio Device".to_string(),
-                backend: AudioBackendType::Alsa,
-                is_input: false,
-                supported_sample_rates: vec![44100, 48000, 88200, 96000],
-                supported_buffer_sizes: vec![32, 64, 128, 256, 512],
-            },
-        ]
+    pub fn with_enumerator(enumerator: Arc<dyn AudioDeviceEnumerator>) -> Self {
+        Self {
+            stream_active: false,
+            local_ipc_only: true,
+            enumerator,
+        }
     }
 
-    /// Enumeração de dispositivos físicos de captura (Microfone/Line-In P2/P3) e reprodução (Spec 013, CA-2)
-    pub fn enumerate_physical_devices(&self) -> Vec<DesktopAudioDevice> {
-        let backend = if cfg!(target_os = "windows") {
-            AudioBackendType::Wasapi
-        } else if cfg!(target_os = "macos") {
-            AudioBackendType::CoreAudio
-        } else {
-            AudioBackendType::Alsa
-        };
+    /// Enumera dispositivos reais do enumerador injetado (Spec 036 CA-1 & CA-9).
+    pub fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
+        self.enumerator.enumerate_devices()
+    }
 
-        vec![
-            DesktopAudioDevice {
-                id: "physical_input_p2_linein".to_string(),
-                name: "Realtek High Definition Audio (Line-In / Mic P2/P3)".to_string(),
-                backend,
-                is_input: true,
-                supported_sample_rates: vec![44100, 48000, 96000],
-                supported_buffer_sizes: vec![64, 128, 256],
-            },
-            DesktopAudioDevice {
-                id: "physical_output_p2_phones".to_string(),
-                name: "Realtek Audio Output (Speakers / Headphones P2/P3)".to_string(),
-                backend,
-                is_input: false,
-                supported_sample_rates: vec![44100, 48000, 96000],
-                supported_buffer_sizes: vec![64, 128, 256],
-            },
-        ]
+    /// Alias compatível sem lista inventada (Spec 036 CA-1).
+    pub fn enumerate_physical_devices(&self) -> Vec<DesktopAudioDevice> {
+        self.enumerate_devices()
+    }
+
+    /// Informa suporte real do host para modos de áudio (Spec 036 CA-7).
+    pub fn has_mode_support(&self, mode: AudioMode) -> bool {
+        matches!(
+            mode,
+            AudioMode::Auto | AudioMode::WasapiShared | AudioMode::WasapiSharedLowLatency
+        )
+    }
+
+    pub fn validate_requested_mode(&self, mode_str: &str) -> Result<AudioMode, String> {
+        let mode = match mode_str.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => AudioMode::Auto,
+            "wasapi" | "wasapi_shared" => AudioMode::WasapiShared,
+            "wasapi_shared_low_latency" => AudioMode::WasapiSharedLowLatency,
+            "wasapi_exclusive" => AudioMode::WasapiExclusive,
+            "asio" | "asio_native" => AudioMode::Asio,
+            other => {
+                return Err(format!("mode_unavailable: modo desconhecido '{}'", other));
+            }
+        };
+        if !self.has_mode_support(mode) {
+            return Err(format!(
+                "mode_unavailable: modo '{}' não implementado neste host (em implementação — Spec 036)",
+                mode_str
+            ));
+        }
+        Ok(mode)
     }
 
     pub fn start_stream(
@@ -571,19 +867,230 @@ impl DesktopAudioHost {
         AudioDriverError::DeviceDisconnected
     }
 
+    /// Processa entrada F32 em qualquer quantidade de frames com seleção linear de canal (Spec 034 CA-5 & Spec 036 CA-6).
+    pub fn process_input_callback_f32(
+        data: &[f32],
+        in_channels: usize,
+        mono_buf: &mut [f32],
+        duplex: &RealtimeDuplexEngine,
+        telemetry: &TelemetryBuffer,
+    ) {
+        let ch = in_channels.max(1);
+        let total_frames = data.len() / ch;
+        let chunk_cap = mono_buf.len().max(1);
+        let input_channel = duplex.input_channel();
+        let mut offset = 0usize;
+        let mut peak = 0.0f32;
+        while offset < total_frames {
+            let frames = (total_frames - offset).min(chunk_cap);
+            let start = offset * ch;
+            let end = (offset + frames) * ch;
+            input_channel.convert_interleaved(&data[start..end], ch, &mut mono_buf[..frames]);
+            for &s in &mono_buf[..frames] {
+                peak = peak.max(s.abs());
+            }
+            duplex.push_captured_samples(&mono_buf[..frames]);
+            offset += frames;
+        }
+        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+        telemetry.update_input_peak(peak_db);
+    }
+
+    /// Processa entrada I16 em qualquer quantidade de frames com seleção linear de canal (Spec 034 CA-5 & Spec 036 CA-6).
+    pub fn process_input_callback_i16(
+        data: &[i16],
+        in_channels: usize,
+        mono_buf: &mut [f32],
+        duplex: &RealtimeDuplexEngine,
+        telemetry: &TelemetryBuffer,
+    ) {
+        let ch = in_channels.max(1);
+        let total_frames = data.len() / ch;
+        let chunk_cap = mono_buf.len().max(1);
+        let input_channel = duplex.input_channel();
+        let mut offset = 0usize;
+        let mut peak = 0.0f32;
+        while offset < total_frames {
+            let frames = (total_frames - offset).min(chunk_cap);
+            let start = offset * ch;
+            let end = (offset + frames) * ch;
+            input_channel.convert_interleaved_i16(&data[start..end], ch, &mut mono_buf[..frames]);
+            for &s in &mono_buf[..frames] {
+                peak = peak.max(s.abs());
+            }
+            duplex.push_captured_samples(&mono_buf[..frames]);
+            offset += frames;
+        }
+        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+        telemetry.update_input_peak(peak_db);
+    }
+
+    /// Processa saída F32 em fatias de `mono_in.len()` sem truncar callbacks > 4096 frames e sem silêncio por contenção (Spec 034, CA-5 & CA-6).
+    pub fn process_output_callback_f32(
+        data: &mut [f32],
+        out_channels: usize,
+        out_sample_rate: f32,
+        mono_in: &mut [f32],
+        mono_out: &mut [f32],
+        duplex: &RealtimeDuplexEngine,
+        dsp_chain: &Mutex<RealtimeDspChain>,
+        telemetry: &TelemetryBuffer,
+        observed_period: Option<&AtomicU32>,
+    ) {
+        let ch = out_channels.max(1);
+        let total_frames = data.len() / ch;
+        if total_frames == 0 {
+            return;
+        }
+        if let Some(obs) = observed_period {
+            let tf = total_frames as u32;
+            if obs.load(Ordering::Relaxed) != tf {
+                obs.store(tf, Ordering::Relaxed);
+                duplex.set_target_period(total_frames);
+            }
+        }
+
+        let chunk_cap = mono_in.len().min(mono_out.len()).max(1);
+        let mut offset = 0usize;
+        let mut peak = 0.0f32;
+        let mut gate_telemetry: Option<(GateState, f32)> = None;
+        let t0 = std::time::Instant::now();
+
+        while offset < total_frames {
+            let frames = (total_frames - offset).min(chunk_cap);
+            duplex.pop_samples_for_processing(&mut mono_in[..frames]);
+            if let Ok(mut dsp) = dsp_chain.try_lock() {
+                dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
+                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
+            } else {
+                // Contenção não silencia áudio: encaminha o sinal de entrada em bypass sem zeros (Spec 034, CA-6)
+                telemetry.record_dsp_contention_silence();
+                mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+            }
+            for f in 0..frames {
+                let s = mono_out[f];
+                peak = peak.max(s.abs());
+                let base = (offset + f) * ch;
+                for c in 0..ch {
+                    data[base + c] = s;
+                }
+            }
+            telemetry.push_waveform(&mono_out[..frames]);
+            offset += frames;
+        }
+
+        let elapsed_s = t0.elapsed().as_secs_f32();
+        let budget_s = (total_frames as f32 / out_sample_rate.max(1.0)).max(1e-6);
+        let cpu_pct = (elapsed_s / budget_s) * 100.0;
+        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+        telemetry.update_peaks(telemetry.input_peak_db(), peak_db, cpu_pct);
+        if let Some((gs, ggr)) = gate_telemetry {
+            telemetry.update_gate_telemetry(gs, ggr);
+        }
+    }
+
+    /// Processa saída I16 em fatias de `mono_in.len()` sem truncamento e sem silêncio por contenção (Spec 034, CA-5 & CA-6).
+    pub fn process_output_callback_i16(
+        data: &mut [i16],
+        out_channels: usize,
+        out_sample_rate: f32,
+        mono_in: &mut [f32],
+        mono_out: &mut [f32],
+        duplex: &RealtimeDuplexEngine,
+        dsp_chain: &Mutex<RealtimeDspChain>,
+        telemetry: &TelemetryBuffer,
+        observed_period: Option<&AtomicU32>,
+    ) {
+        let ch = out_channels.max(1);
+        let total_frames = data.len() / ch;
+        if total_frames == 0 {
+            return;
+        }
+        if let Some(obs) = observed_period {
+            let tf = total_frames as u32;
+            if obs.load(Ordering::Relaxed) != tf {
+                obs.store(tf, Ordering::Relaxed);
+                duplex.set_target_period(total_frames);
+            }
+        }
+
+        let chunk_cap = mono_in.len().min(mono_out.len()).max(1);
+        let mut offset = 0usize;
+        let mut peak = 0.0f32;
+        let mut gate_telemetry: Option<(GateState, f32)> = None;
+        let t0 = std::time::Instant::now();
+
+        while offset < total_frames {
+            let frames = (total_frames - offset).min(chunk_cap);
+            duplex.pop_samples_for_processing(&mut mono_in[..frames]);
+            if let Ok(mut dsp) = dsp_chain.try_lock() {
+                dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
+                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
+            } else {
+                telemetry.record_dsp_contention_silence();
+                mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+            }
+            for f in 0..frames {
+                let s = mono_out[f];
+                peak = peak.max(s.abs());
+                let s_i16 = (s * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                let base = (offset + f) * ch;
+                for c in 0..ch {
+                    data[base + c] = s_i16;
+                }
+            }
+            telemetry.push_waveform(&mono_out[..frames]);
+            offset += frames;
+        }
+
+        let elapsed_s = t0.elapsed().as_secs_f32();
+        let budget_s = (total_frames as f32 / out_sample_rate.max(1.0)).max(1e-6);
+        let cpu_pct = (elapsed_s / budget_s) * 100.0;
+        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+        telemetry.update_peaks(telemetry.input_peak_db(), peak_db, cpu_pct);
+        if let Some((gs, ggr)) = gate_telemetry {
+            telemetry.update_gate_telemetry(gs, ggr);
+        }
+    }
+
     /// Inicia streaming duplex real-time com hardware nativo WASAPI via CPAL
     pub fn start_realtime_wasapi_duplex(
         duplex: Arc<RealtimeDuplexEngine>,
         dsp_chain: Arc<Mutex<RealtimeDspChain>>,
         telemetry: Arc<TelemetryBuffer>,
     ) -> Result<RealtimeDuplexAudioStreams, AudioDriverError> {
+        Self::start_realtime_wasapi_duplex_with_config(duplex, dsp_chain, telemetry, None, None, None, None)
+    }
+
+    /// Inicia streaming duplex real-time com dispositivos/taxa/buffer explícitos (Spec 034, CA-3, CA-4, CA-9).
+    pub fn start_realtime_wasapi_duplex_with_config(
+        duplex: Arc<RealtimeDuplexEngine>,
+        dsp_chain: Arc<Mutex<RealtimeDspChain>>,
+        telemetry: Arc<TelemetryBuffer>,
+        requested_input_device: Option<&str>,
+        requested_output_device: Option<&str>,
+        requested_sample_rate: Option<u32>,
+        requested_buffer_size: Option<u32>,
+    ) -> Result<RealtimeDuplexAudioStreams, AudioDriverError> {
         let host = cpal::default_host();
-        let in_device = host
-            .default_input_device()
-            .ok_or_else(|| AudioDriverError::InitFailed("Nenhum dispositivo de entrada de áudio encontrado".to_string()))?;
-        let out_device = host
-            .default_output_device()
-            .ok_or_else(|| AudioDriverError::InitFailed("Nenhum dispositivo de saída de áudio encontrado".to_string()))?;
+        let in_device = if let Some(req) = requested_input_device {
+            host.input_devices()
+                .map_err(|e| AudioDriverError::InitFailed(format!("Falha ao enumerar entradas: {}", e)))?
+                .find(|d| d.description().map(|desc| desc.name() == req).unwrap_or(false))
+                .ok_or_else(|| AudioDriverError::InitFailed(format!("Dispositivo de entrada não encontrado: {}", req)))?
+        } else {
+            host.default_input_device()
+                .ok_or_else(|| AudioDriverError::InitFailed("Nenhum dispositivo de entrada de áudio encontrado".to_string()))?
+        };
+        let out_device = if let Some(req) = requested_output_device {
+            host.output_devices()
+                .map_err(|e| AudioDriverError::InitFailed(format!("Falha ao enumerar saídas: {}", e)))?
+                .find(|d| d.description().map(|desc| desc.name() == req).unwrap_or(false))
+                .ok_or_else(|| AudioDriverError::InitFailed(format!("Dispositivo de saída não encontrado: {}", req)))?
+        } else {
+            host.default_output_device()
+                .ok_or_else(|| AudioDriverError::InitFailed("Nenhum dispositivo de saída de áudio encontrado".to_string()))?
+        };
 
         let in_config = in_device
             .default_input_config()
@@ -592,119 +1099,95 @@ impl DesktopAudioHost {
             .default_output_config()
             .map_err(|e| AudioDriverError::InitFailed(format!("Falha na config de saída: {}", e)))?;
 
+        let target_period = requested_buffer_size.unwrap_or(128).max(32);
         let in_channels = in_config.channels() as usize;
         let out_channels = out_config.channels() as usize;
 
-        // Configura buffer de 128 frames (Spec 028, CA-3: ~2.6 ms) com fallback gracioso se não suportado
         let mut in_stream_config: cpal::StreamConfig = in_config.clone().into();
-        in_stream_config.buffer_size = cpal::BufferSize::Fixed(128);
+        if let Some(sr) = requested_sample_rate {
+            in_stream_config.sample_rate = sr;
+        }
+        in_stream_config.buffer_size = cpal::BufferSize::Fixed(target_period);
 
         let mut out_stream_config: cpal::StreamConfig = out_config.clone().into();
-        out_stream_config.buffer_size = cpal::BufferSize::Fixed(128);
+        if let Some(sr) = requested_sample_rate {
+            out_stream_config.sample_rate = sr;
+        }
+        out_stream_config.buffer_size = cpal::BufferSize::Fixed(target_period);
+
+        let observed_in_period = Arc::new(AtomicU32::new(target_period));
+        let observed_out_period = Arc::new(AtomicU32::new(target_period));
 
         let duplex_in = duplex.clone();
         let tele_in = telemetry.clone();
-
-        // 1. Stream de Entrada de Áudio (Captura da Guitarra P2/P3)
-        // Pré-aloca buffer de trabalho fora da closure para 0 alocações de heap no callback
         let mut mono_buf = vec![0.0f32; 4096];
-        let in_stream = match in_config.sample_format() {
+        let (in_stream, in_opened_fixed) = match in_config.sample_format() {
             cpal::SampleFormat::F32 => {
                 let build_res = in_device.build_input_stream(
-                    in_stream_config,
+                    in_stream_config.clone(),
                     move |data: &[f32], _| {
-                        let num_frames = data.len() / in_channels;
-                        let frames = num_frames.min(mono_buf.len());
-                        let mut peak = 0.0f32;
-                        for f in 0..frames {
-                            let s = if in_channels >= 2 {
-                                let l = data[f * in_channels];
-                                let r = data[f * in_channels + 1];
-                                if l.abs() > r.abs() { l } else { r }
-                            } else {
-                                data[f]
-                            };
-                            peak = peak.max(s.abs());
-                            mono_buf[f] = s;
-                        }
-                        duplex_in.push_captured_samples(&mono_buf[..frames]);
-                        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                        tele_in.update_input_peak(peak_db);
+                        Self::process_input_callback_f32(data, in_channels, &mut mono_buf, &duplex_in, &tele_in);
                     },
-                    |_err| {
-                        // Sem eprintln! na thread de áudio em tempo real (Spec 028, CA-6)
-                    },
+                    |_err| {},
                     None,
                 );
                 match build_res {
-                    Ok(s) => s,
-                    Err(_) => {
+                    Ok(s) => (s, true),
+                    Err(_) if requested_sample_rate.is_none() && requested_buffer_size.is_none() => {
+                        let mut mono_buf_fb = vec![0.0f32; 4096];
+                        let duplex_fb = duplex.clone();
+                        let tele_fb = telemetry.clone();
+                        let s = in_device.build_input_stream(
+                            in_config.clone().into(),
+                            move |data: &[f32], _| {
+                                Self::process_input_callback_f32(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
+                            },
+                            |_| {},
+                            None,
+                        ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?;
+                        (s, false)
+                    }
+                    Err(e) => return Err(AudioDriverError::InitFailed(format!("Configuração de entrada recusada: {}", e))),
+                }
+            }
+            cpal::SampleFormat::I16 => {
+                let s = in_device.build_input_stream(
+                    in_stream_config.clone(),
+                    move |data: &[i16], _| {
+                        Self::process_input_callback_i16(data, in_channels, &mut mono_buf, &duplex_in, &tele_in);
+                    },
+                    |_err| {},
+                    None,
+                ).or_else(|e| {
+                    if requested_sample_rate.is_none() && requested_buffer_size.is_none() {
                         let mut mono_buf_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
                         let tele_fb = telemetry.clone();
                         in_device.build_input_stream(
-                            in_config.into(),
-                            move |data: &[f32], _| {
-                                let num_frames = data.len() / in_channels;
-                                let frames = num_frames.min(mono_buf_fb.len());
-                                let mut peak = 0.0f32;
-                                for f in 0..frames {
-                                    let s = if in_channels >= 2 {
-                                        let l = data[f * in_channels];
-                                        let r = data[f * in_channels + 1];
-                                        if l.abs() > r.abs() { l } else { r }
-                                    } else {
-                                        data[f]
-                                    };
-                                    peak = peak.max(s.abs());
-                                    mono_buf_fb[f] = s;
-                                }
-                                duplex_fb.push_captured_samples(&mono_buf_fb[..frames]);
-                                let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                                tele_fb.update_input_peak(peak_db);
+                            in_config.clone().into(),
+                            move |data: &[i16], _| {
+                                Self::process_input_callback_i16(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
                             },
                             |_| {},
                             None,
-                        ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?
+                        ).map_err(|e2| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e2)))
+                    } else {
+                        Err(AudioDriverError::InitFailed(format!("Configuração de entrada I16 recusada: {}", e)))
                     }
-                }
-            }
-            cpal::SampleFormat::I16 => {
-                let mut mono_buf_i16 = vec![0.0f32; 4096];
-                in_device.build_input_stream(
-                    in_config.into(),
-                    move |data: &[i16], _| {
-                        let num_frames = data.len() / in_channels;
-                        let frames = num_frames.min(mono_buf_i16.len());
-                        let mut peak = 0.0f32;
-                        for f in 0..frames {
-                            let s = if in_channels >= 2 {
-                                let l = data[f * in_channels] as f32 / 32768.0;
-                                let r = data[f * in_channels + 1] as f32 / 32768.0;
-                                if l.abs() > r.abs() { l } else { r }
-                            } else {
-                                data[f] as f32 / 32768.0
-                            };
-                            peak = peak.max(s.abs());
-                            mono_buf_i16[f] = s;
-                        }
-                        duplex_in.push_captured_samples(&mono_buf_i16[..frames]);
-                        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                        tele_in.update_input_peak(peak_db);
-                    },
-                    |_err| {
-                        // Sem eprintln! na thread de áudio
-                    },
-                    None,
-                ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?
+                })?;
+                (s, requested_buffer_size.is_some())
             }
             _ => return Err(AudioDriverError::InitFailed("Formato de amostra de entrada não suportado".to_string())),
         };
 
-        // 2. Stream de Saída de Áudio (Processamento AmpForge DSP + Alto-Falantes / Fones)
-        let out_sample_rate = out_config.sample_rate() as f32;
+        let effective_out_sr = out_stream_config.sample_rate;
+        let out_sample_rate_f = effective_out_sr as f32;
+        if let Ok(mut dsp) = dsp_chain.lock() {
+            dsp.prepare(out_sample_rate_f, (target_period as usize).max(4096));
+        }
 
-        let out_stream = match out_config.sample_format() {
+        let obs_out_c = observed_out_period.clone();
+        let (out_stream, out_opened_fixed) = match out_config.sample_format() {
             cpal::SampleFormat::F32 => {
                 let mut mono_in_f32 = vec![0.0f32; 4096];
                 let mut mono_out_f32 = vec![0.0f32; 4096];
@@ -713,97 +1196,53 @@ impl DesktopAudioHost {
                 let tele_f32 = telemetry.clone();
 
                 let build_res = out_device.build_output_stream(
-                    out_stream_config,
+                    out_stream_config.clone(),
                     move |data: &mut [f32], _| {
-                        let num_frames = data.len() / out_channels;
-                        let frames = num_frames.min(mono_in_f32.len());
-
-                        duplex_f32.pop_samples_for_processing(&mut mono_in_f32[..frames]);
-
-                        let mut gate_telemetry: Option<(GateState, f32)> = None;
-                        let t0 = std::time::Instant::now();
-                        if let Ok(mut dsp) = dsp_chain_f32.try_lock() {
-                            dsp.drain_param_queue();
-                            dsp.process(&mono_in_f32[..frames], &mut mono_out_f32[..frames]);
-                            gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
-                        } else {
-                            mono_out_f32[..frames].fill(0.0);
-                        }
-                        let elapsed_s = t0.elapsed().as_secs_f32();
-                        let budget_s = (frames as f32 / out_sample_rate).max(1e-6);
-                        let cpu_pct = (elapsed_s / budget_s) * 100.0;
-
-                        let mut peak = 0.0f32;
-                        for f in 0..frames {
-                            let s = mono_out_f32[f];
-                            peak = peak.max(s.abs());
-                            for ch in 0..out_channels {
-                                data[f * out_channels + ch] = s;
-                            }
-                        }
-
-                        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                        tele_f32.update_peaks(tele_f32.input_peak_db(), peak_db, cpu_pct);
-                        if let Some((gs, ggr)) = gate_telemetry {
-                            tele_f32.update_gate_telemetry(gs, ggr);
-                        }
-                        tele_f32.push_waveform(&mono_out_f32[..frames]);
+                        Self::process_output_callback_f32(
+                            data,
+                            out_channels,
+                            out_sample_rate_f,
+                            &mut mono_in_f32,
+                            &mut mono_out_f32,
+                            &duplex_f32,
+                            &dsp_chain_f32,
+                            &tele_f32,
+                            Some(&obs_out_c),
+                        );
                     },
-                    |_err| {
-                        // Sem eprintln! na thread de áudio
-                    },
+                    |_err| {},
                     None,
                 );
                 match build_res {
-                    Ok(s) => s,
-                    Err(_) => {
+                    Ok(s) => (s, true),
+                    Err(_) if requested_sample_rate.is_none() && requested_buffer_size.is_none() => {
                         let mut mono_in_fb = vec![0.0f32; 4096];
                         let mut mono_out_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
                         let dsp_chain_fb = dsp_chain.clone();
                         let tele_fb = telemetry.clone();
-
-                        out_device.build_output_stream(
-                            out_config.into(),
+                        let obs_fb = observed_out_period.clone();
+                        let s = out_device.build_output_stream(
+                            out_config.clone().into(),
                             move |data: &mut [f32], _| {
-                                let num_frames = data.len() / out_channels;
-                                let frames = num_frames.min(mono_in_fb.len());
-
-                                duplex_fb.pop_samples_for_processing(&mut mono_in_fb[..frames]);
-
-                                let mut gate_telemetry: Option<(GateState, f32)> = None;
-                                let t0 = std::time::Instant::now();
-                                if let Ok(mut dsp) = dsp_chain_fb.try_lock() {
-                                    dsp.drain_param_queue();
-                                    dsp.process(&mono_in_fb[..frames], &mut mono_out_fb[..frames]);
-                                    gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
-                                } else {
-                                    mono_out_fb[..frames].fill(0.0);
-                                }
-                                let elapsed_s = t0.elapsed().as_secs_f32();
-                                let budget_s = (frames as f32 / out_sample_rate).max(1e-6);
-                                let cpu_pct = (elapsed_s / budget_s) * 100.0;
-
-                                let mut peak = 0.0f32;
-                                for f in 0..frames {
-                                    let s = mono_out_fb[f];
-                                    peak = peak.max(s.abs());
-                                    for ch in 0..out_channels {
-                                        data[f * out_channels + ch] = s;
-                                    }
-                                }
-
-                                let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                                tele_fb.update_peaks(tele_fb.input_peak_db(), peak_db, cpu_pct);
-                                if let Some((gs, ggr)) = gate_telemetry {
-                                    tele_fb.update_gate_telemetry(gs, ggr);
-                                }
-                                tele_fb.push_waveform(&mono_out_fb[..frames]);
+                                Self::process_output_callback_f32(
+                                    data,
+                                    out_channels,
+                                    out_sample_rate_f,
+                                    &mut mono_in_fb,
+                                    &mut mono_out_fb,
+                                    &duplex_fb,
+                                    &dsp_chain_fb,
+                                    &tele_fb,
+                                    Some(&obs_fb),
+                                );
                             },
                             |_| {},
                             None,
-                        ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?
+                        ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?;
+                        (s, false)
                     }
+                    Err(e) => return Err(AudioDriverError::InitFailed(format!("Configuração de saída recusada: {}", e))),
                 }
             }
             cpal::SampleFormat::I16 => {
@@ -812,84 +1251,114 @@ impl DesktopAudioHost {
                 let duplex_i16 = duplex.clone();
                 let dsp_chain_i16 = dsp_chain.clone();
                 let tele_i16 = telemetry.clone();
+                let obs_i16 = observed_out_period.clone();
 
-                out_device.build_output_stream(
-                    out_config.into(),
+                let build_res = out_device.build_output_stream(
+                    out_stream_config.clone(),
                     move |data: &mut [i16], _| {
-                        let num_frames = data.len() / out_channels;
-                        let frames = num_frames.min(mono_in_i16.len());
-
-                        duplex_i16.pop_samples_for_processing(&mut mono_in_i16[..frames]);
-
-                        let mut gate_telemetry: Option<(GateState, f32)> = None;
-                        let t0 = std::time::Instant::now();
-                        if let Ok(mut dsp) = dsp_chain_i16.try_lock() {
-                            dsp.drain_param_queue();
-                            dsp.process(&mono_in_i16[..frames], &mut mono_out_i16[..frames]);
-                            gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
-                        } else {
-                            mono_out_i16[..frames].fill(0.0);
-                        }
-                        let elapsed_s = t0.elapsed().as_secs_f32();
-                        let budget_s = (frames as f32 / out_sample_rate).max(1e-6);
-                        let cpu_pct = (elapsed_s / budget_s) * 100.0;
-
-                        let mut peak = 0.0f32;
-                        for f in 0..frames {
-                            let s = mono_out_i16[f];
-                            peak = peak.max(s.abs());
-                            let s_i16 = (s * 32767.0).clamp(-32768.0, 32767.0) as i16;
-                            for ch in 0..out_channels {
-                                data[f * out_channels + ch] = s_i16;
-                            }
-                        }
-
-                        let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
-                        tele_i16.update_peaks(tele_i16.input_peak_db(), peak_db, cpu_pct);
-                        if let Some((gs, ggr)) = gate_telemetry {
-                            tele_i16.update_gate_telemetry(gs, ggr);
-                        }
-                        tele_i16.push_waveform(&mono_out_i16[..frames]);
+                        Self::process_output_callback_i16(
+                            data,
+                            out_channels,
+                            out_sample_rate_f,
+                            &mut mono_in_i16,
+                            &mut mono_out_i16,
+                            &duplex_i16,
+                            &dsp_chain_i16,
+                            &tele_i16,
+                            Some(&obs_i16),
+                        );
                     },
                     |_err| {},
                     None,
-                ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?
+                );
+                match build_res {
+                    Ok(s) => (s, true),
+                    Err(_) if requested_sample_rate.is_none() && requested_buffer_size.is_none() => {
+                        let mut mono_in_fb = vec![0.0f32; 4096];
+                        let mut mono_out_fb = vec![0.0f32; 4096];
+                        let duplex_fb = duplex.clone();
+                        let dsp_chain_fb = dsp_chain.clone();
+                        let tele_fb = telemetry.clone();
+                        let obs_fb = observed_out_period.clone();
+                        let s = out_device.build_output_stream(
+                            out_config.clone().into(),
+                            move |data: &mut [i16], _| {
+                                Self::process_output_callback_i16(
+                                    data,
+                                    out_channels,
+                                    out_sample_rate_f,
+                                    &mut mono_in_fb,
+                                    &mut mono_out_fb,
+                                    &duplex_fb,
+                                    &dsp_chain_fb,
+                                    &tele_fb,
+                                    Some(&obs_fb),
+                                );
+                            },
+                            |_| {},
+                            None,
+                        ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?;
+                        (s, false)
+                    }
+                    Err(e) => return Err(AudioDriverError::InitFailed(format!("Configuração de saída I16 recusada: {}", e))),
+                }
             }
             _ => return Err(AudioDriverError::InitFailed("Formato de amostra de saída não suportado".to_string())),
         };
 
+        let in_period_frames = if in_opened_fixed {
+            target_period
+        } else {
+            observed_in_period.load(Ordering::Relaxed)
+        };
+        let out_period_frames = if out_opened_fixed {
+            target_period
+        } else {
+            observed_out_period.load(Ordering::Relaxed)
+        };
+        duplex.set_target_period(out_period_frames as usize);
+
         in_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de entrada: {}", e)))?;
         out_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de saída: {}", e)))?;
 
-        let in_sr = in_config.sample_rate();
-        let out_sr = out_config.sample_rate();
-        let period_frames = 128u32;
-        let in_lat_ms = (period_frames as f32 / in_sr as f32) * 1000.0;
-        let out_lat_ms = (period_frames as f32 / out_sr as f32) * 1000.0;
-        let duplex_ms = (period_frames as f32 / out_sr as f32) * 1000.0;
-        let algo_lat_samples = 16u32;
-        let algo_lat_ms = (algo_lat_samples as f32 / out_sr as f32) * 1000.0;
-        let roundtrip_ms = in_lat_ms + out_lat_ms + duplex_ms + algo_lat_ms;
+        let in_sr = in_stream_config.sample_rate;
+        let out_sr = effective_out_sr;
+        let in_lat_ms = (in_period_frames as f32 / in_sr as f32) * 1000.0;
+        let out_lat_ms = (out_period_frames as f32 / out_sr as f32) * 1000.0;
+        let algo_lat_samples = dsp_chain
+            .try_lock()
+            .map(|d| d.algorithmic_latency_samples())
+            .unwrap_or(16);
 
         let status_telemetry = AudioStatusTelemetry {
             backend: "wasapi".to_string(),
-            mode: "wasapi_shared_low_latency".to_string(),
-            fallback_reason: None,
-            raw_processing: true,
+            mode: if out_opened_fixed && out_period_frames <= 128 {
+                "wasapi_shared_low_latency"
+            } else {
+                "wasapi_shared"
+            }
+            .to_string(),
+            fallback_reason: if out_opened_fixed {
+                None
+            } else {
+                Some("Stream aberto com período padrão do dispositivo".to_string())
+            },
+            raw_processing: false,
             sample_rate: out_sr,
-            input_period_frames: period_frames,
-            output_period_frames: period_frames,
-            input_device: in_device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Realtek Microphone".to_string()),
-            output_device: out_device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Realtek Audio Output".to_string()),
+            input_period_frames: in_period_frames,
+            output_period_frames: out_period_frames,
+            input_device: in_device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Default Input".to_string()),
+            output_device: out_device.description().map(|d| d.name().to_string()).unwrap_or_else(|_| "Default Output".to_string()),
             driver_input_latency_ms: in_lat_ms,
             driver_output_latency_ms: out_lat_ms,
             cpu_avg_pct: 0.0,
             cpu_peak_pct: 0.0,
-            underruns: 0,
-            overruns: 0,
+            underruns: duplex.underruns(),
+            overruns: duplex.overruns(),
             panics: 0,
             adc_clips: 0,
-            measured_roundtrip_ms: Some(roundtrip_ms),
+            measured_roundtrip_ms: None,
+            estimated_roundtrip_ms: in_lat_ms + out_lat_ms + (algo_lat_samples as f32 / out_sr.max(1) as f32) * 1000.0,
             algorithmic_latency_samples: algo_lat_samples,
         };
 
@@ -907,7 +1376,214 @@ pub struct RealtimeDuplexAudioStreams {
     pub telemetry: AudioStatusTelemetry,
 }
 
-/// Comandos de parâmetros atômicos para a fila SPSC lock-free (Spec 028, CA-1)
+/// Origem do sinal de entrada selecionada sem alocação de String no callback RT (Spec 037, CA-1)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputSource {
+    Device,
+    TestRiff,
+    DiFile,
+}
+
+impl InputSource {
+    pub fn from_str_name(s: &str) -> Self {
+        match s {
+            "test_riff" => Self::TestRiff,
+            "di_file" => Self::DiFile,
+            _ => Self::Device,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Device => "device",
+            Self::TestRiff => "test_riff",
+            Self::DiFile => "di_file",
+        }
+    }
+}
+
+/// Modo de divisão paralela sem alocação de String no callback RT (Spec 037, CA-1)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainSplitMode {
+    Ab,
+    Crossover,
+}
+
+impl ChainSplitMode {
+    pub fn from_str_name(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("crossover") {
+            Self::Crossover
+        } else {
+            Self::Ab
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ab => "ab",
+            Self::Crossover => "crossover",
+        }
+    }
+}
+
+/// Recursos pré-processados na thread de serviço transferidos por propriedade sem lock/alloc ao callback RT (Spec 037, CA-3/CA-4)
+pub enum PreparedDspResource {
+    CabinetIr { slot: u8, ir: ImpulseResponse },
+    DiSamples(Vec<f32>),
+}
+
+/// Recursos aposentados pelo callback RT cuja desalocação é delegada ao reaper thread (Spec 037, CA-3)
+pub enum RetiredDspResource {
+    CabinetIr(ImpulseResponse),
+    DiSamples(Vec<f32>),
+}
+
+/// Fila SPSC lock-free de transferência de recursos pesados entre controle e thread de áudio (Spec 037, CA-3/CA-4)
+pub struct LockFreeResourceQueue {
+    inner: Arc<SpscOwnedQueue<PreparedDspResource, 16>>,
+}
+
+impl LockFreeResourceQueue {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(SpscOwnedQueue::new()),
+        }
+    }
+
+    pub fn push(&self, item: PreparedDspResource) -> Result<(), PreparedDspResource> {
+        self.inner.push(item)
+    }
+
+    #[inline]
+    pub fn pop(&self) -> Option<PreparedDspResource> {
+        self.inner.pop()
+    }
+}
+
+impl Clone for LockFreeResourceQueue {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl Default for LockFreeResourceQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Coletor em background que libera `ImpulseResponse` / `Vec<f32>` aposentados fora do callback RT (Spec 037, CA-3)
+struct RetiredReaper {
+    queue: Arc<SpscOwnedQueue<RetiredDspResource, 16>>,
+    reclaimed_count: Arc<AtomicU64>,
+    shutdown: Arc<AtomicBool>,
+    worker_handle: Option<JoinHandle<()>>,
+    worker_thread: thread::Thread,
+}
+
+impl RetiredReaper {
+    fn noop() -> Self {
+        Self {
+            queue: Arc::new(SpscOwnedQueue::new()),
+            reclaimed_count: Arc::new(AtomicU64::new(0)),
+            shutdown: Arc::new(AtomicBool::new(true)),
+            worker_handle: None,
+            worker_thread: thread::current(),
+        }
+    }
+
+    fn new() -> Self {
+        let queue = Arc::new(SpscOwnedQueue::new());
+        let reclaimed_count = Arc::new(AtomicU64::new(0));
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let q_w = queue.clone();
+        let c_w = reclaimed_count.clone();
+        let s_w = shutdown.clone();
+
+        let worker_handle = thread::Builder::new()
+            .name("sonix-rt-reaper".to_string())
+            .spawn(move || {
+                loop {
+                    let mut drained = false;
+                    while let Some(item) = q_w.pop() {
+                        drop(item);
+                        c_w.fetch_add(1, Ordering::Relaxed);
+                        drained = true;
+                    }
+                    if s_w.load(Ordering::Acquire) {
+                        while let Some(item) = q_w.pop() {
+                            drop(item);
+                            c_w.fetch_add(1, Ordering::Relaxed);
+                        }
+                        break;
+                    }
+                    if !drained {
+                        thread::park();
+                    }
+                }
+            })
+            .expect("Falha ao criar thread sonix-rt-reaper");
+        let worker_thread = worker_handle.thread().clone();
+
+        Self {
+            queue,
+            reclaimed_count,
+            shutdown,
+            worker_handle: Some(worker_handle),
+            worker_thread,
+        }
+    }
+
+    #[inline]
+    fn retire_ir(&self, ir: ImpulseResponse) -> bool {
+        match self.queue.push(RetiredDspResource::CabinetIr(ir)) {
+            Ok(()) => {
+                self.worker_thread.unpark();
+                true
+            }
+            Err(rejected) => {
+                std::mem::forget(rejected);
+                false
+            }
+        }
+    }
+
+    #[inline]
+    fn retire_di(&self, di: Vec<f32>) -> bool {
+        if di.is_empty() && di.capacity() == 0 {
+            return true;
+        }
+        match self.queue.push(RetiredDspResource::DiSamples(di)) {
+            Ok(()) => {
+                self.worker_thread.unpark();
+                true
+            }
+            Err(rejected) => {
+                std::mem::forget(rejected);
+                false
+            }
+        }
+    }
+
+    fn reclaimed_count(&self) -> u64 {
+        self.reclaimed_count.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for RetiredReaper {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.worker_thread.unpark();
+        if let Some(h) = self.worker_handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+/// Comandos de parâmetros atômicos para a fila SPSC lock-free (Spec 028, CA-1 & Spec 034, CA-1)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DspParamUpdate {
     AmpGain(f32),
@@ -932,6 +1608,10 @@ pub enum DspParamUpdate {
     AmpVibratoSpeed(f32),
     AmpVibratoDepth(f32),
     AmpImpedanceOhms(u8),
+    AmpPreampTube(PreampTube),
+    AmpPowerTube(PowerTube),
+    AmpRectifier(RectifierType),
+    AmpToneStack(ToneStackTopology),
     EngineOversampling(usize),
     InputBoost(f32),
     GateThreshold(f32),
@@ -961,15 +1641,18 @@ pub enum DspParamUpdate {
     CabResonanceHz(f32),
     CabHicutKhz(f32),
     CabIrEnabled(bool),
+    CabMic1Model(MicModel),
     CabMic1Position(f32),
     CabMic1DistanceCm(f32),
     CabMic1LevelDb(f32),
     CabMic1Enabled(bool),
+    CabMic2Model(MicModel),
     CabMic2Position(f32),
     CabMic2DistanceCm(f32),
     CabMic2LevelDb(f32),
     CabMic2Enabled(bool),
     SplitEnabled(bool),
+    SplitMode(ChainSplitMode),
     SplitRatio(f32),
     SplitCrossoverHz(f32),
     MergeRow1LevelDb(f32),
@@ -982,6 +1665,7 @@ pub enum DspParamUpdate {
     Comp2MakeupGainDb(f32),
     Eq1Enabled(bool),
     Mod2Enabled(bool),
+    Mod2Model(ModModel),
     Mod2RateHz(f32),
     Mod2Depth(f32),
     Mod2Mix(f32),
@@ -991,7 +1675,14 @@ pub enum DspParamUpdate {
     Dly1Mix(f32),
     Rev1Enabled(bool),
     Rev1DecayS(f32),
+    Rev1PredelayMs(f32),
+    Rev1Damping(f32),
     Rev1Mix(f32),
+    Rev1Spillover(bool),
+    Amp2Enabled(bool),
+    Amp2Model(AmpModelId),
+    Cab2Enabled(bool),
+    Cab2Speaker(SpeakerCabModel),
     TunerEnabled(bool),
     TunerOutputMode(TunerOutputMode),
     // Spec 032 / 033: Controles adicionais em fila SPSC lock-free
@@ -1018,8 +1709,16 @@ pub enum DspParamUpdate {
     Cab1Mic1PhaseInvert(bool),
     Cab1Mic2PhaseInvert(bool),
     TunerRefHz(f32),
+    Pitch1Enabled(bool),
+    Pitch1Model(PitchModel),
+    Pitch1Semitones(f32),
+    Pitch1Key(PitchKey),
+    Pitch1Scale(ScaleType),
+    Pitch1Mix(f32),
     LooperPosition(LooperPosition),
     LooperAction(LooperActionCmd),
+    BeginPresetCrossfade,
+    TriggerPresetCrossfade,
 }
 
 /// Comandos discretos de transporte para o Looper (Spec 033)
@@ -1034,23 +1733,52 @@ pub enum LooperActionCmd {
     Clear,
 }
 
-/// Fila SPSC Lock-Free de Comandos de Parâmetros (Zero Locks, Zero Allocations) (Spec 028, CA-1)
+/// Fila SPSC Lock-Free de Comandos de Parâmetros (Zero Locks no consumidor RT, Zero Allocations) (Spec 028, CA-1 & Spec 034, CA-2)
 pub struct LockFreeParamQueue {
     inner: Arc<ampforge_dsp::queue::SpscBuffer<DspParamUpdate, 2048>>,
+    producer_lock: Arc<Mutex<()>>,
 }
 
 impl LockFreeParamQueue {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(ampforge_dsp::queue::SpscBuffer::new()),
+            producer_lock: Arc::new(Mutex::new(())),
         }
     }
 
     #[inline]
     pub fn push(&self, cmd: DspParamUpdate) -> Result<(), DspParamUpdate> {
+        let _guard = self.producer_lock.lock().unwrap_or_else(|e| e.into_inner());
         self.inner.push(cmd)
     }
 
+    pub fn push_batch(&self, cmds: &[DspParamUpdate]) -> Result<(), ()> {
+        let _guard = self.producer_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if self.inner.remaining_capacity() < cmds.len() {
+            return Err(());
+        }
+        for &cmd in cmds {
+            if self.inner.push(cmd).is_err() {
+                return Err(());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn remaining_capacity(&self) -> usize {
+        self.inner.remaining_capacity()
+    }
+
+    /// Consumidor exclusivo na thread de áudio: 100% lock-free e wait-free.
     #[inline]
     pub fn pop(&self) -> Option<DspParamUpdate> {
         self.inner.pop()
@@ -1061,6 +1789,7 @@ impl Clone for LockFreeParamQueue {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            producer_lock: Arc::clone(&self.producer_lock),
         }
     }
 }
@@ -1071,10 +1800,13 @@ impl Default for LockFreeParamQueue {
     }
 }
 
-/// Motor Duplex em Tempo Real com Ring Buffer Lock-Free SPSC (Spec 013, CA-3 & Spec 028, CA-1, CA-2)
+/// Motor Duplex em Tempo Real com Ring Buffer Lock-Free SPSC (Spec 013 CA-3, Spec 028 CA-1/CA-2 & Spec 036 CA-5/CA-6)
 pub struct RealtimeDuplexEngine {
     ring: LockFreeSpscRingBuffer,
     target_period: AtomicUsize,
+    underruns: AtomicU64,
+    overruns: AtomicU64,
+    input_channel: AtomicU8,
 }
 
 impl RealtimeDuplexEngine {
@@ -1082,6 +1814,9 @@ impl RealtimeDuplexEngine {
         Self {
             ring: LockFreeSpscRingBuffer::new(capacity),
             target_period: AtomicUsize::new(128),
+            underruns: AtomicU64::new(0),
+            overruns: AtomicU64::new(0),
+            input_channel: AtomicU8::new(InputChannel::Left.to_u8()),
         }
     }
 
@@ -1090,11 +1825,30 @@ impl RealtimeDuplexEngine {
         let engine = Self {
             ring: LockFreeSpscRingBuffer::new(capacity),
             target_period: AtomicUsize::new(tp),
+            underruns: AtomicU64::new(0),
+            overruns: AtomicU64::new(0),
+            input_channel: AtomicU8::new(InputChannel::Left.to_u8()),
         };
         // Pré-carrega o buffer com exatamente 1 período de silêncio para iniciar equilibrado em regime estacionário
         let warmup = vec![0.0f32; tp];
         engine.ring.push_slice(&warmup);
         engine
+    }
+
+    pub fn set_input_channel(&self, channel: InputChannel) {
+        self.input_channel.store(channel.to_u8(), Ordering::Relaxed);
+    }
+
+    pub fn input_channel(&self) -> InputChannel {
+        InputChannel::from_u8(self.input_channel.load(Ordering::Relaxed))
+    }
+
+    pub fn underruns(&self) -> u64 {
+        self.underruns.load(Ordering::Relaxed)
+    }
+
+    pub fn overruns(&self) -> u64 {
+        self.overruns.load(Ordering::Relaxed)
     }
 
     pub fn is_lock_free(&self) -> bool {
@@ -1130,6 +1884,7 @@ impl RealtimeDuplexEngine {
         // imediatamente para o alvo de 1 período (nunca acumulando >= 2400 amostras / 50ms).
         let max_threshold = target * 2;
         if occupied > max_threshold {
+            self.overruns.fetch_add(1, Ordering::Relaxed);
             let to_drop = occupied.saturating_sub(target);
             let mut discard = [0.0f32; 128];
             let mut remaining = to_drop;
@@ -1140,6 +1895,14 @@ impl RealtimeDuplexEngine {
             }
         }
 
+        let popped = self.ring.pop_slice(buf);
+        if popped < buf.len() {
+            self.underruns.fetch_add(1, Ordering::Relaxed);
+        }
+        popped
+    }
+
+    pub fn pop_samples_raw(&self, buf: &mut [f32]) -> usize {
         self.ring.pop_slice(buf)
     }
 }
@@ -1239,6 +2002,9 @@ impl CleanInputRing {
 /// Cadeia DSP Ativa em Tempo Real: Filtro DC + Boost + Noise Gate + White-Box Amp + Cab IR (Spec 013, CA-4 & Spec 014)
 pub struct RealtimeDspChain {
     sample_rate: f32,
+    max_block: usize,
+    shared_sample_rate_bits: Arc<AtomicU32>,
+    shared_algo_latency_samples: Arc<AtomicU32>,
     gate: NoiseGateProcessor,
     gate_enabled: bool,
     drive: DriveProcessor,
@@ -1262,7 +2028,7 @@ pub struct RealtimeDspChain {
     fade_step: f32,
     // Spec 019: Clipping no conversor e seleção de fonte de sinal
     adc_clips: Arc<AtomicU64>,
-    input_source: String,
+    input_source: InputSource,
     test_riff_buffer: Vec<f32>,
     test_riff_pos: usize,
     di_buffer: Vec<f32>,
@@ -1271,7 +2037,7 @@ pub struct RealtimeDspChain {
     // Spec 024: Efeitos e Caminho Paralelo do Grid ao Vivo
     split: SplitNode,
     split_enabled: bool,
-    split_mode: String,
+    split_mode: ChainSplitMode,
     split_crossover_hz: f32,
     comp_2: CompressorProcessor,
     comp_2_enabled: bool,
@@ -1290,6 +2056,8 @@ pub struct RealtimeDspChain {
     dly_1_enabled: bool,
     rev_1: ReverbProcessor,
     rev_1_enabled: bool,
+    pitch_1: PitchProcessor,
+    pitch_1_enabled: bool,
 
     // Buffers intermediários pré-alocados para processamento em tempo real zero-alloc
     temp_split_a_buf: Vec<f32>,
@@ -1304,31 +2072,51 @@ pub struct RealtimeDspChain {
     temp_merge_r_buf: Vec<f32>,
     temp_delay_buf: Vec<f32>,
     temp_reverb_buf: Vec<f32>,
+    temp_pitch_buf: Vec<f32>,
     looper: LooperProcessor,
     looper_position: LooperPosition,
     temp_looper_buf: Vec<f32>,
 
-    // Spec 025: Crossfade de preset sem estalos (20 ms)
+    // Spec 025 / 045: Crossfade real de preset/cena sem estalos e sem buraco (20 ms)
     preset_fade: f32,
     preset_fade_step: f32,
     preset_crossfading: bool,
+    shadow: Option<Box<RealtimeDspChain>>,
+    shadow_out_buf: Vec<f32>,
+    pending_shadow_sync: [DspParamUpdate; 256],
+    pending_shadow_len: usize,
 
     // Spec 026 / 029: Afinador ao vivo e captura limpa SPSC lock-free/zero-alloc
     tuner: TunerProcessor,
     tuner_enabled: bool,
     tuner_output_mode: TunerOutputMode,
-    tuner_latest_result: TunerPitchResult,
+    tuner_note_bytes: [u8; 8],
+    tuner_note_len: u8,
+    tuner_cents: f32,
+    tuner_freq_hz: f32,
     clean_input_ring: Arc<CleanInputRing>,
+    scope_output_ring: Arc<CleanInputRing>,
     tuner_start_pos: u64,
     tuner_scratch_read: Vec<f32>,
     tuner_mute_gain: f32,
 
-    // Spec 028: Fila SPSC Lock-Free de Parâmetros
+    // Spec 028 / 037: Filas SPSC Lock-Free de parâmetros, recursos pesados e coleta off-RT
     param_queue: Arc<LockFreeParamQueue>,
+    resource_queue: Arc<LockFreeResourceQueue>,
+    retired_reaper: RetiredReaper,
+    cpu_monitor: ampforge_dsp::cpu::CpuMonitor,
 }
 
 impl RealtimeDspChain {
     pub fn new(sample_rate: f32) -> Self {
+        let shadow = Some(Box::new(Self::new_inner(sample_rate, false)));
+        let mut chain = Self::new_inner(sample_rate, true);
+        chain.shadow = shadow;
+        chain.shadow_out_buf = vec![0.0; 2048];
+        chain
+    }
+
+    fn new_inner(sample_rate: f32, with_runtime_resources: bool) -> Self {
         let mut gate = NoiseGateProcessor::new(NoiseGateMode::IntelligentNaturalGate);
         gate.set_sample_rate(sample_rate);
         gate.set_threshold_db(-65.0);
@@ -1350,8 +2138,12 @@ impl RealtimeDspChain {
         let mut cab = VirtualCabProcessor::new();
         cab.set_sample_rate(sample_rate);
 
-        // One-pole smoother com constante de tempo de 10ms (Spec 014, CA-8: >=63% em <=20ms e <63% em <5ms)
-        let smoother = ampforge_dsp::smoother::OnePoleSmoother::new(sample_rate as f64, 0.010, 8.0);
+        let mut pitch_1 = PitchProcessor::new(PitchModel::PedalWhammy);
+        pitch_1.prepare(sample_rate);
+        pitch_1.set_bypassed(true);
+
+        // One-pole smoother com constante de tempo de 7ms (Spec 014, CA-8 / Spec 044 CA-4: >=63% no áudio em <=20ms e <63% em <5ms)
+        let smoother = ampforge_dsp::smoother::OnePoleSmoother::new(sample_rate as f64, 0.007, 8.0);
 
         // 10ms fade step
         let fade_len_samples = (sample_rate * 0.010).max(1.0);
@@ -1403,10 +2195,15 @@ impl RealtimeDspChain {
         tuner.set_sample_rate(sample_rate);
 
         let mut looper = LooperProcessor::new();
-        looper.set_sample_rate(sample_rate);
+        looper.prepare(sample_rate, 60);
+
+        let initial_latency = amp.algorithmic_latency_samples();
 
         Self {
             sample_rate,
+            max_block: 2048,
+            shared_sample_rate_bits: Arc::new(AtomicU32::new(sample_rate.max(1.0).to_bits())),
+            shared_algo_latency_samples: Arc::new(AtomicU32::new(initial_latency)),
             gate,
             gate_enabled: true,
             drive,
@@ -1428,15 +2225,19 @@ impl RealtimeDspChain {
             cab_target_fade: 1.0,
             fade_step,
             adc_clips: Arc::new(AtomicU64::new(0)),
-            input_source: "device".to_string(),
-            test_riff_buffer: crate::calibration::generate_karplus_strong_riff(sample_rate, 12345),
+            input_source: InputSource::Device,
+            test_riff_buffer: if with_runtime_resources {
+                crate::calibration::generate_karplus_strong_riff(sample_rate, 12345)
+            } else {
+                Vec::new()
+            },
             test_riff_pos: 0,
             di_buffer: Vec::new(),
             di_pos: 0,
 
             split,
             split_enabled: false,
-            split_mode: "ab".to_string(),
+            split_mode: ChainSplitMode::Ab,
             split_crossover_hz: 500.0,
             comp_2,
             comp_2_enabled: false,
@@ -1455,6 +2256,8 @@ impl RealtimeDspChain {
             dly_1_enabled: false,
             rev_1,
             rev_1_enabled: false,
+            pitch_1,
+            pitch_1_enabled: false,
 
             temp_split_a_buf: vec![0.0; 2048],
             temp_split_b_buf: vec![0.0; 2048],
@@ -1468,6 +2271,7 @@ impl RealtimeDspChain {
             temp_merge_r_buf: vec![0.0; 2048],
             temp_delay_buf: vec![0.0; 2048],
             temp_reverb_buf: vec![0.0; 2048],
+            temp_pitch_buf: vec![0.0; 2048],
             looper,
             looper_position: LooperPosition::PostChain,
             temp_looper_buf: vec![0.0; 2048],
@@ -1475,26 +2279,52 @@ impl RealtimeDspChain {
             preset_fade: 1.0,
             preset_fade_step,
             preset_crossfading: false,
+            shadow: None,
+            shadow_out_buf: Vec::new(),
+            pending_shadow_sync: [DspParamUpdate::TriggerPresetCrossfade; 256],
+            pending_shadow_len: 0,
 
             tuner,
             tuner_enabled: false,
             tuner_output_mode: TunerOutputMode::Mute,
-            tuner_latest_result: TunerPitchResult {
-                note_name: "---".to_string(),
-                cents_deviation: 0.0,
-                frequency_hz: 0.0,
-            },
+            tuner_note_bytes: *b"---\0\0\0\0\0",
+            tuner_note_len: 3,
+            tuner_cents: 0.0,
+            tuner_freq_hz: 0.0,
             clean_input_ring: Arc::new(CleanInputRing::new(sample_rate)),
+            scope_output_ring: Arc::new(CleanInputRing::new(sample_rate)),
             tuner_start_pos: 0,
-            tuner_scratch_read: vec![0.0; 4096],
+            tuner_scratch_read: if with_runtime_resources { vec![0.0; 4096] } else { Vec::new() },
             tuner_mute_gain: 1.0,
 
             param_queue: Arc::new(LockFreeParamQueue::new()),
+            resource_queue: Arc::new(LockFreeResourceQueue::new()),
+            retired_reaper: if with_runtime_resources {
+                RetiredReaper::new()
+            } else {
+                RetiredReaper::noop()
+            },
+            cpu_monitor: ampforge_dsp::cpu::CpuMonitor::new(
+                ampforge_dsp::config::SampleRate::Rate48000,
+                ampforge_dsp::config::BufferSize::Size128,
+            ),
         }
     }
 
     pub fn adc_clips(&self) -> u64 {
         self.adc_clips.load(Ordering::Relaxed)
+    }
+
+    pub fn adc_clips_handle(&self) -> Arc<AtomicU64> {
+        self.adc_clips.clone()
+    }
+
+    pub fn shared_sample_rate_bits(&self) -> Arc<AtomicU32> {
+        self.shared_sample_rate_bits.clone()
+    }
+
+    pub fn shared_algo_latency_samples(&self) -> Arc<AtomicU32> {
+        self.shared_algo_latency_samples.clone()
     }
 
     pub fn param_queue(&self) -> Arc<LockFreeParamQueue> {
@@ -1503,6 +2333,22 @@ impl RealtimeDspChain {
 
     pub fn set_param_queue(&mut self, pq: Arc<LockFreeParamQueue>) {
         self.param_queue = pq;
+    }
+
+    pub fn resource_queue(&self) -> Arc<LockFreeResourceQueue> {
+        self.resource_queue.clone()
+    }
+
+    pub fn retired_drop_count(&self) -> u64 {
+        self.retired_reaper.reclaimed_count()
+    }
+
+    pub fn looper(&self) -> &LooperProcessor {
+        &self.looper
+    }
+
+    pub fn looper_mut(&mut self) -> &mut LooperProcessor {
+        &mut self.looper
     }
 
     pub fn push_param_update(&self, update: DspParamUpdate) -> Result<(), DspParamUpdate> {
@@ -1518,7 +2364,69 @@ impl RealtimeDspChain {
         count
     }
 
+    pub fn drain_resource_queue(&mut self) -> usize {
+        let mut count = 0;
+        while let Some(res) = self.resource_queue.pop() {
+            match res {
+                PreparedDspResource::CabinetIr { slot, ir } => {
+                    if let Some(ref mut shadow) = self.shadow {
+                        let shadow_cab = if slot == 1 {
+                            &mut shadow.cab_2
+                        } else {
+                            &mut shadow.cab
+                        };
+                        if let Some(old) = shadow_cab.take_retired_ir() {
+                            self.retired_reaper.retire_ir(old);
+                        }
+                        shadow_cab.set_target_ir(ir.clone());
+                        if let Some(old) = shadow_cab.take_retired_ir() {
+                            self.retired_reaper.retire_ir(old);
+                        }
+                    }
+                    let cab_target = if slot == 1 {
+                        &mut self.cab_2
+                    } else {
+                        &mut self.cab
+                    };
+                    if let Some(old) = cab_target.take_retired_ir() {
+                        self.retired_reaper.retire_ir(old);
+                    }
+                    cab_target.set_target_ir(ir);
+                    if let Some(old) = cab_target.take_retired_ir() {
+                        self.retired_reaper.retire_ir(old);
+                    }
+                }
+                PreparedDspResource::DiSamples(samples) => {
+                    let old = std::mem::replace(&mut self.di_buffer, samples);
+                    self.di_pos = 0;
+                    self.retired_reaper.retire_di(old);
+                }
+            }
+            count += 1;
+        }
+        count
+    }
+
     pub fn apply_param_update(&mut self, update: DspParamUpdate) {
+        if matches!(
+            update,
+            DspParamUpdate::BeginPresetCrossfade | DspParamUpdate::TriggerPresetCrossfade
+        ) {
+            self.begin_preset_crossfade();
+            return;
+        }
+        self.apply_param_update_inner(update);
+        if self.preset_crossfading {
+            if self.pending_shadow_len < self.pending_shadow_sync.len() {
+                self.pending_shadow_sync[self.pending_shadow_len] = update;
+                self.pending_shadow_len += 1;
+            }
+        } else if let Some(ref mut shadow) = self.shadow {
+            shadow.apply_param_update_inner(update);
+        }
+    }
+
+    fn apply_param_update_inner(&mut self, update: DspParamUpdate) {
         match update {
             DspParamUpdate::AmpGain(v) => self.set_amp_gain(v),
             DspParamUpdate::AmpOverdrive(v) => self.set_amp_overdrive(v),
@@ -1530,7 +2438,11 @@ impl RealtimeDspChain {
             DspParamUpdate::AmpMaster(v) => self.set_amp_master(v),
             DspParamUpdate::AmpVolume2(v) => self.set_amp_volume_2(v),
             DspParamUpdate::AmpCut(v) => self.set_amp_cut(v),
-            DspParamUpdate::AmpModel(m) => self.amp.set_target_model(m),
+            DspParamUpdate::AmpModel(m) => {
+                self.amp.set_target_model(m);
+                self.shared_algo_latency_samples
+                    .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
+            }
             DspParamUpdate::AmpBright(b) => self.set_amp_bright(b),
             DspParamUpdate::AmpPower(b) => self.set_amp_power(b),
             DspParamUpdate::AmpStandby(b) => self.set_amp_standby(b),
@@ -1542,7 +2454,15 @@ impl RealtimeDspChain {
             DspParamUpdate::AmpVibratoSpeed(v) => self.set_amp_vibrato_speed(v),
             DspParamUpdate::AmpVibratoDepth(v) => self.set_amp_vibrato_depth(v),
             DspParamUpdate::AmpImpedanceOhms(o) => self.amp.set_secondary_impedance_ohms(o),
-            DspParamUpdate::EngineOversampling(f) => self.amp.set_oversampling_factor(f),
+            DspParamUpdate::AmpPreampTube(t) => self.amp.set_preamp_tube_type(t),
+            DspParamUpdate::AmpPowerTube(t) => self.amp.set_power_tube_type(t),
+            DspParamUpdate::AmpRectifier(r) => self.amp.set_rectifier_type(r),
+            DspParamUpdate::AmpToneStack(ts) => self.amp.set_tonestack_topology(ts),
+            DspParamUpdate::EngineOversampling(f) => {
+                self.amp.set_oversampling_factor(f);
+                self.shared_algo_latency_samples
+                    .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
+            }
             DspParamUpdate::InputBoost(v) => self.set_input_boost(v),
             DspParamUpdate::GateThreshold(v) => self.set_gate_threshold_db(v),
             DspParamUpdate::GateEnabled(b) => self.set_gate_enabled(b),
@@ -1562,12 +2482,11 @@ impl RealtimeDspChain {
             DspParamUpdate::AmpEnabled(b) => self.set_amp_enabled(b),
             DspParamUpdate::CabEnabled(b) => self.set_cab_enabled(b),
             DspParamUpdate::InputSource(src) => {
-                let s = match src {
-                    1 => "test_riff",
-                    2 => "di_file",
-                    _ => "device",
+                self.input_source = match src {
+                    1 => InputSource::TestRiff,
+                    2 => InputSource::DiFile,
+                    _ => InputSource::Device,
                 };
-                self.set_input_source(s);
             }
             DspParamUpdate::AmpBiasMa(v) => self.set_amp_bias_ma(v),
             DspParamUpdate::AmpSag(v) => self.set_amp_sag(v),
@@ -1578,17 +2497,26 @@ impl RealtimeDspChain {
             DspParamUpdate::CabResonanceHz(v) => self.set_cab_resonance_hz(v),
             DspParamUpdate::CabHicutKhz(v) => self.set_cab_hicut_khz(v),
             DspParamUpdate::CabIrEnabled(b) => self.set_cab_ir_enabled(b),
+            DspParamUpdate::CabMic1Model(m) => self.cab.mic_slot_mut(0).model = m,
             DspParamUpdate::CabMic1Position(v) => self.set_cab_mic1_position(v),
             DspParamUpdate::CabMic1DistanceCm(v) => self.set_cab_mic1_distance_cm(v),
             DspParamUpdate::CabMic1LevelDb(v) => self.set_cab_mic1_level_db(v),
             DspParamUpdate::CabMic1Enabled(b) => self.set_cab_mic1_enabled(b),
+            DspParamUpdate::CabMic2Model(m) => self.cab.mic_slot_mut(1).model = m,
             DspParamUpdate::CabMic2Position(v) => self.set_cab_mic2_position(v),
             DspParamUpdate::CabMic2DistanceCm(v) => self.set_cab_mic2_distance_cm(v),
             DspParamUpdate::CabMic2LevelDb(v) => self.set_cab_mic2_level_db(v),
             DspParamUpdate::CabMic2Enabled(b) => self.set_cab_mic2_enabled(b),
             DspParamUpdate::SplitEnabled(b) => self.set_split_enabled(b),
+            DspParamUpdate::SplitMode(m) => {
+                self.split_mode = m;
+                self.apply_split_config();
+            }
             DspParamUpdate::SplitRatio(r) => self.split = SplitNode::new(SplitMode::BalanceAb { ratio: r }),
-            DspParamUpdate::SplitCrossoverHz(hz) => self.set_split_mode("crossover", hz),
+            DspParamUpdate::SplitCrossoverHz(hz) => {
+                self.split_crossover_hz = hz.clamp(100.0, 2000.0);
+                self.apply_split_config();
+            }
             DspParamUpdate::MergeRow1LevelDb(db) => {
                 let inv = self.merge_row_1_phase_invert;
                 self.set_merge_config(db, inv);
@@ -1605,6 +2533,7 @@ impl RealtimeDspChain {
             DspParamUpdate::Comp2MakeupGainDb(gain) => self.set_comp_2_output(gain),
             DspParamUpdate::Eq1Enabled(b) => self.set_eq_1_enabled(b),
             DspParamUpdate::Mod2Enabled(b) => self.set_mod_2_enabled(b),
+            DspParamUpdate::Mod2Model(m) => self.set_mod_2_model(m),
             DspParamUpdate::Mod2RateHz(rate) => self.mod_2.set_rate_hz(rate),
             DspParamUpdate::Mod2Depth(depth) => self.mod_2.set_depth(depth),
             DspParamUpdate::Mod2Mix(mix) => self.mod_2.set_mix_pct(mix),
@@ -1614,7 +2543,14 @@ impl RealtimeDspChain {
             DspParamUpdate::Dly1Mix(mix) => self.dly_1.set_mix_pct(mix),
             DspParamUpdate::Rev1Enabled(b) => self.set_rev_1_enabled(b),
             DspParamUpdate::Rev1DecayS(decay) => self.rev_1.set_decay_time_s(decay),
+            DspParamUpdate::Rev1PredelayMs(pd) => self.rev_1.set_predelay_ms(pd),
+            DspParamUpdate::Rev1Damping(damp) => self.rev_1.set_damping(damp),
             DspParamUpdate::Rev1Mix(mix) => self.rev_1.set_mix_pct(mix),
+            DspParamUpdate::Rev1Spillover(b) => self.rev_1.set_spillover_enabled(b),
+            DspParamUpdate::Amp2Enabled(b) => self.amp_2_enabled = b,
+            DspParamUpdate::Amp2Model(m) => self.amp_2.set_target_model(m),
+            DspParamUpdate::Cab2Enabled(b) => self.cab_2_enabled = b,
+            DspParamUpdate::Cab2Speaker(spk) => self.cab_2.set_speaker_model(spk),
             DspParamUpdate::TunerEnabled(b) => self.set_tuner_enabled(b),
             DspParamUpdate::TunerOutputMode(m) => self.set_tuner_output_mode(m),
             DspParamUpdate::DriveBias(b) => self.set_drive_bias(b),
@@ -1649,7 +2585,10 @@ impl RealtimeDspChain {
             DspParamUpdate::Dly1Bass(v) => self.dly_1.set_tone_bass(v),
             DspParamUpdate::Dly1Treble(v) => self.dly_1.set_tone_treble(v),
             DspParamUpdate::Dly1Spillover(b) => self.dly_1.set_spillover_enabled(b),
-            DspParamUpdate::Cab1Speaker(spk) => self.cab.set_speaker_model(spk),
+            DspParamUpdate::Cab1Speaker(spk) => {
+                self.cab.set_speaker_model(spk);
+                self.amp.set_speaker_resonance_hz(self.cab.resonance_hz());
+            }
             DspParamUpdate::Cab1Mic1AngleDeg(deg) => self.set_cab_mic_angle_deg(0, deg),
             DspParamUpdate::Cab1Mic2AngleDeg(deg) => self.set_cab_mic_angle_deg(1, deg),
             DspParamUpdate::Cab1Mic1PhaseInvert(inv) => self.cab.mic_slot_mut(0).phase_invert = inv,
@@ -1660,12 +2599,82 @@ impl RealtimeDspChain {
                 self.looper.set_position(pos);
             }
             DspParamUpdate::LooperAction(cmd) => self.apply_looper_action_cmd(cmd),
+            DspParamUpdate::Pitch1Enabled(b) => {
+                self.pitch_1_enabled = b;
+                self.pitch_1.set_bypassed(!b);
+                self.shared_algo_latency_samples
+                    .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
+            }
+            DspParamUpdate::Pitch1Model(m) => self.pitch_1.set_model(m),
+            DspParamUpdate::Pitch1Semitones(st) => self.pitch_1.set_semitones(st),
+            DspParamUpdate::Pitch1Key(k) => self.pitch_1.set_key(k),
+            DspParamUpdate::Pitch1Scale(s) => self.pitch_1.set_scale(s),
+            DspParamUpdate::Pitch1Mix(mix) => {
+                self.pitch_1.set_mix_pct(mix);
+                self.shared_algo_latency_samples
+                    .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
+            }
+            DspParamUpdate::BeginPresetCrossfade | DspParamUpdate::TriggerPresetCrossfade => {}
         }
     }
 
-    pub fn trigger_preset_crossfade(&mut self) {
+    fn swap_dsp_state(&mut self, other: &mut Self) {
+        std::mem::swap(&mut self.gate, &mut other.gate);
+        std::mem::swap(&mut self.gate_enabled, &mut other.gate_enabled);
+        std::mem::swap(&mut self.drive, &mut other.drive);
+        std::mem::swap(&mut self.drive_enabled, &mut other.drive_enabled);
+        std::mem::swap(&mut self.amp, &mut other.amp);
+        std::mem::swap(&mut self.amp_enabled, &mut other.amp_enabled);
+        std::mem::swap(&mut self.cab, &mut other.cab);
+        std::mem::swap(&mut self.cab_enabled, &mut other.cab_enabled);
+        std::mem::swap(&mut self.input_boost, &mut other.input_boost);
+        std::mem::swap(&mut self.gain_smoother, &mut other.gain_smoother);
+        std::mem::swap(&mut self.cab_fade, &mut other.cab_fade);
+        std::mem::swap(&mut self.cab_target_fade, &mut other.cab_target_fade);
+        std::mem::swap(&mut self.split, &mut other.split);
+        std::mem::swap(&mut self.split_enabled, &mut other.split_enabled);
+        std::mem::swap(&mut self.split_mode, &mut other.split_mode);
+        std::mem::swap(&mut self.split_crossover_hz, &mut other.split_crossover_hz);
+        std::mem::swap(&mut self.comp_2, &mut other.comp_2);
+        std::mem::swap(&mut self.comp_2_enabled, &mut other.comp_2_enabled);
+        std::mem::swap(&mut self.amp_2, &mut other.amp_2);
+        std::mem::swap(&mut self.amp_2_enabled, &mut other.amp_2_enabled);
+        std::mem::swap(&mut self.cab_2, &mut other.cab_2);
+        std::mem::swap(&mut self.cab_2_enabled, &mut other.cab_2_enabled);
+        std::mem::swap(&mut self.mod_2, &mut other.mod_2);
+        std::mem::swap(&mut self.mod_2_enabled, &mut other.mod_2_enabled);
+        std::mem::swap(&mut self.eq_1, &mut other.eq_1);
+        std::mem::swap(&mut self.eq_1_enabled, &mut other.eq_1_enabled);
+        std::mem::swap(&mut self.merge, &mut other.merge);
+        std::mem::swap(&mut self.merge_row_1_level_db, &mut other.merge_row_1_level_db);
+        std::mem::swap(&mut self.merge_row_1_phase_invert, &mut other.merge_row_1_phase_invert);
+        std::mem::swap(&mut self.dly_1, &mut other.dly_1);
+        std::mem::swap(&mut self.dly_1_enabled, &mut other.dly_1_enabled);
+        std::mem::swap(&mut self.rev_1, &mut other.rev_1);
+        std::mem::swap(&mut self.rev_1_enabled, &mut other.rev_1_enabled);
+        std::mem::swap(&mut self.pitch_1, &mut other.pitch_1);
+        std::mem::swap(&mut self.pitch_1_enabled, &mut other.pitch_1_enabled);
+        std::mem::swap(&mut self.looper, &mut other.looper);
+        std::mem::swap(&mut self.looper_position, &mut other.looper_position);
+    }
+
+    pub fn begin_preset_crossfade(&mut self) {
+        if let Some(mut shadow) = self.shadow.take() {
+            if !self.preset_crossfading {
+                for i in 0..self.pending_shadow_len {
+                    shadow.apply_param_update_inner(self.pending_shadow_sync[i]);
+                }
+                self.pending_shadow_len = 0;
+                self.swap_dsp_state(&mut shadow);
+            }
+            self.shadow = Some(shadow);
+        }
         self.preset_crossfading = true;
         self.preset_fade = 0.0;
+    }
+
+    pub fn trigger_preset_crossfade(&mut self) {
+        self.begin_preset_crossfade();
     }
 
     pub fn is_preset_crossfading(&self) -> bool {
@@ -1676,17 +2685,24 @@ impl RealtimeDspChain {
         self.clean_input_ring.clone()
     }
 
+    pub fn scope_output_ring(&self) -> Arc<CleanInputRing> {
+        self.scope_output_ring.clone()
+    }
+
+    pub fn current_b_plus_v(&self) -> f32 {
+        self.amp.current_b_plus_v()
+    }
+
     pub fn set_tuner_enabled(&mut self, enabled: bool) {
         self.tuner_enabled = enabled;
         self.tuner.set_active(enabled);
         if enabled {
             self.tuner_start_pos = self.clean_input_ring.total_written();
         } else {
-            self.tuner_latest_result = TunerPitchResult {
-                note_name: "---".to_string(),
-                cents_deviation: 0.0,
-                frequency_hz: 0.0,
-            };
+            self.tuner_note_bytes = *b"---\0\0\0\0\0";
+            self.tuner_note_len = 3;
+            self.tuner_cents = 0.0;
+            self.tuner_freq_hz = 0.0;
         }
     }
 
@@ -1706,22 +2722,36 @@ impl RealtimeDspChain {
                 .read_latest_since(self.tuner_start_pos, &mut self.tuner_scratch_read);
             if n >= 1024 {
                 let res = self.tuner.detect_pitch(&self.tuner_scratch_read[..n]);
-                self.tuner_latest_result = res;
+                let raw = res.note_name.as_bytes();
+                let copy_len = raw.len().min(8);
+                self.tuner_note_bytes = [0u8; 8];
+                self.tuner_note_bytes[..copy_len].copy_from_slice(&raw[..copy_len]);
+                self.tuner_note_len = copy_len as u8;
+                self.tuner_cents = res.cents_deviation;
+                self.tuner_freq_hz = res.frequency_hz;
             }
         }
     }
 
     pub fn tuner_latest_result(&mut self) -> TunerPitchResult {
         self.update_tuner_pitch();
-        self.tuner_latest_result.clone()
+        let len = (self.tuner_note_len as usize).min(self.tuner_note_bytes.len());
+        let note_name = std::str::from_utf8(&self.tuner_note_bytes[..len])
+            .unwrap_or("---")
+            .to_string();
+        TunerPitchResult {
+            note_name,
+            cents_deviation: self.tuner_cents,
+            frequency_hz: self.tuner_freq_hz,
+        }
     }
 
     pub fn input_source(&self) -> &str {
-        &self.input_source
+        self.input_source.as_str()
     }
 
     pub fn set_input_source(&mut self, source: &str) {
-        self.input_source = source.to_string();
+        self.input_source = InputSource::from_str_name(source);
     }
 
     pub fn load_di_wav(&mut self, samples: Vec<f32>) {
@@ -1735,6 +2765,8 @@ impl RealtimeDspChain {
 
     pub fn prepare(&mut self, sample_rate: f32, max_block: usize) {
         self.sample_rate = sample_rate;
+        self.shared_sample_rate_bits
+            .store(sample_rate.max(1.0).to_bits(), Ordering::Relaxed);
         self.gate.set_sample_rate(sample_rate);
         self.drive.set_sample_rate(sample_rate);
         self.amp.set_sample_rate(sample_rate);
@@ -1747,42 +2779,66 @@ impl RealtimeDspChain {
         self.eq_1.set_sample_rate(sample_rate);
         self.dly_1.set_sample_rate(sample_rate);
         self.rev_1.set_sample_rate(sample_rate);
+        self.pitch_1.prepare(sample_rate);
         self.tuner.set_sample_rate(sample_rate);
-        self.looper.set_sample_rate(sample_rate);
+        self.looper.prepare(sample_rate, 60);
         self.clean_input_ring.set_sample_rate(sample_rate);
+        self.scope_output_ring.set_sample_rate(sample_rate);
 
         self.gain_smoother = ampforge_dsp::smoother::OnePoleSmoother::new(
             sample_rate as f64,
-            0.010,
+            0.007,
             self.gain_smoother.current_value(),
         );
+        self.cpu_monitor
+            .update_raw_hz(sample_rate as f64, max_block.max(1));
         let fade_len_samples = (sample_rate * 0.010).max(1.0);
         self.fade_step = 1.0 / fade_len_samples;
+        let preset_fade_len_samples = (sample_rate * 0.020).max(1.0);
+        self.preset_fade_step = 1.0 / preset_fade_len_samples;
+        self.shared_algo_latency_samples
+            .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
 
-        if self.temp_boost_buf.len() < max_block {
-            self.temp_boost_buf.resize(max_block, 0.0);
-            self.temp_source_buf.resize(max_block, 0.0);
-            self.temp_gate_buf.resize(max_block, 0.0);
-            self.temp_drive_buf.resize(max_block, 0.0);
-            self.temp_amp_buf.resize(max_block, 0.0);
-            self.temp_split_a_buf.resize(max_block, 0.0);
-            self.temp_split_b_buf.resize(max_block, 0.0);
-            self.temp_cab_buf.resize(max_block, 0.0);
-            self.temp_comp_buf.resize(max_block, 0.0);
-            self.temp_amp2_buf.resize(max_block, 0.0);
-            self.temp_cab2_buf.resize(max_block, 0.0);
-            self.temp_mod_buf.resize(max_block, 0.0);
-            self.temp_eq_buf.resize(max_block, 0.0);
-            self.temp_merge_l_buf.resize(max_block, 0.0);
-            self.temp_merge_r_buf.resize(max_block, 0.0);
-            self.temp_delay_buf.resize(max_block, 0.0);
-            self.temp_reverb_buf.resize(max_block, 0.0);
-            self.temp_looper_buf.resize(max_block, 0.0);
+        let target_block = max_block.max(2048);
+        if self.temp_boost_buf.len() < target_block {
+            self.temp_boost_buf.resize(target_block, 0.0);
+            self.temp_source_buf.resize(target_block, 0.0);
+            self.temp_gate_buf.resize(target_block, 0.0);
+            self.temp_drive_buf.resize(target_block, 0.0);
+            self.temp_amp_buf.resize(target_block, 0.0);
+            self.temp_split_a_buf.resize(target_block, 0.0);
+            self.temp_split_b_buf.resize(target_block, 0.0);
+            self.temp_cab_buf.resize(target_block, 0.0);
+            self.temp_comp_buf.resize(target_block, 0.0);
+            self.temp_amp2_buf.resize(target_block, 0.0);
+            self.temp_cab2_buf.resize(target_block, 0.0);
+            self.temp_mod_buf.resize(target_block, 0.0);
+            self.temp_eq_buf.resize(target_block, 0.0);
+            self.temp_merge_l_buf.resize(target_block, 0.0);
+            self.temp_merge_r_buf.resize(target_block, 0.0);
+            self.temp_delay_buf.resize(target_block, 0.0);
+            self.temp_reverb_buf.resize(target_block, 0.0);
+            self.temp_looper_buf.resize(target_block, 0.0);
         }
+        if self.shadow_out_buf.len() < target_block {
+            self.shadow_out_buf.resize(target_block, 0.0);
+        }
+        if let Some(ref mut shadow) = self.shadow {
+            shadow.prepare(sample_rate, max_block);
+        }
+        self.max_block = self.temp_boost_buf.len().max(1);
     }
 
     pub fn current_effective_gain(&self) -> f32 {
         self.gain_smoother.current_value() as f32
+    }
+
+    pub fn cpu_monitor(&self) -> &ampforge_dsp::cpu::CpuMonitor {
+        &self.cpu_monitor
+    }
+
+    pub fn cpu_usage_pct(&self) -> f32 {
+        self.cpu_monitor.cpu_usage_pct()
     }
 
     pub fn inject_nan_state_for_test(&mut self) {
@@ -1867,7 +2923,6 @@ impl RealtimeDspChain {
     pub fn set_amp_gain(&mut self, gain: f32) {
         if !gain.is_finite() { return; }
         self.gain_smoother.set_target(gain as f64);
-        self.amp.panel_mut().set_input_gain(gain);
     }
 
     pub fn set_amp_overdrive(&mut self, od: f32) {
@@ -2070,7 +3125,7 @@ impl RealtimeDspChain {
     }
 
     pub fn algorithmic_latency_samples(&self) -> u32 {
-        self.amp.algorithmic_latency_samples()
+        self.amp.algorithmic_latency_samples() + self.pitch_1.algorithmic_latency_samples() as u32
     }
 
     pub fn set_amp_enabled(&mut self, enabled: bool) {
@@ -2137,6 +3192,7 @@ impl RealtimeDspChain {
 
     pub fn set_cab_resonance_hz(&mut self, hz: f32) {
         self.cab.set_resonance_hz(hz);
+        self.amp.set_speaker_resonance_hz(self.cab.resonance_hz());
     }
 
     pub fn set_cab_hicut_khz(&mut self, khz: f32) {
@@ -2224,14 +3280,18 @@ impl RealtimeDspChain {
         self.split_enabled = enabled;
     }
 
-    pub fn set_split_mode(&mut self, mode: &str, crossover_hz: f32) {
-        self.split_mode = mode.to_string();
-        self.split_crossover_hz = crossover_hz.clamp(100.0, 2000.0);
-        if mode == "crossover" {
+    fn apply_split_config(&mut self) {
+        if self.split_mode == ChainSplitMode::Crossover {
             self.split.set_mode(SplitMode::Crossover { freq_hz: self.split_crossover_hz });
         } else {
             self.split.set_mode(SplitMode::BalanceAb { ratio: 0.5 });
         }
+    }
+
+    pub fn set_split_mode(&mut self, mode: &str, crossover_hz: f32) {
+        self.split_mode = ChainSplitMode::from_str_name(mode);
+        self.split_crossover_hz = crossover_hz.clamp(100.0, 2000.0);
+        self.apply_split_config();
     }
 
     pub fn set_merge_config(&mut self, level_db: f32, phase_invert: bool) {
@@ -2314,6 +3374,10 @@ impl RealtimeDspChain {
 
     pub fn set_mod_2_enabled(&mut self, enabled: bool) {
         self.mod_2_enabled = enabled;
+    }
+
+    pub fn set_mod_2_model(&mut self, model: ModModel) {
+        self.mod_2.set_model(model);
     }
 
     pub fn set_mod_2_rate_hz(&mut self, rate: f32) {
@@ -2469,29 +3533,31 @@ impl RealtimeDspChain {
         &mut self.cab_2
     }
 
-    /// Processa bloco de áudio da guitarra passando pelo Grafo Completo do Grid (Spec 024)
+    /// Processa bloco de áudio da guitarra passando pelo Grafo Completo do Grid (Spec 024 & Spec 037 Zero-Alloc)
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        let rt_start = std::time::Instant::now();
         self.drain_param_queue();
+        self.drain_resource_queue();
+
+        let total = input.len().min(output.len());
+        let chunk_max = self.max_block.max(1);
+        let mut offset = 0usize;
+        while offset < total {
+            let n = (total - offset).min(chunk_max);
+            self.process_chunk(&input[offset..offset + n], &mut output[offset..offset + n]);
+            offset += n;
+        }
+
+        if total > 0 {
+            let elapsed_micros = (rt_start.elapsed().as_micros().max(1)).min(u64::MAX as u128) as u64;
+            self.cpu_monitor.record_execution_time_micros(elapsed_micros);
+        }
+    }
+
+    fn process_chunk(&mut self, input: &[f32], output: &mut [f32]) {
         let len = input.len();
-        if self.temp_boost_buf.len() < len {
-            self.temp_boost_buf.resize(len, 0.0);
-            self.temp_source_buf.resize(len, 0.0);
-            self.temp_gate_buf.resize(len, 0.0);
-            self.temp_drive_buf.resize(len, 0.0);
-            self.temp_amp_buf.resize(len, 0.0);
-            self.temp_split_a_buf.resize(len, 0.0);
-            self.temp_split_b_buf.resize(len, 0.0);
-            self.temp_cab_buf.resize(len, 0.0);
-            self.temp_comp_buf.resize(len, 0.0);
-            self.temp_amp2_buf.resize(len, 0.0);
-            self.temp_cab2_buf.resize(len, 0.0);
-            self.temp_mod_buf.resize(len, 0.0);
-            self.temp_eq_buf.resize(len, 0.0);
-            self.temp_merge_l_buf.resize(len, 0.0);
-            self.temp_merge_r_buf.resize(len, 0.0);
-            self.temp_delay_buf.resize(len, 0.0);
-            self.temp_reverb_buf.resize(len, 0.0);
-            self.temp_looper_buf.resize(len, 0.0);
+        if len == 0 {
+            return;
         }
 
         // 0. Contabiliza clipping no conversor de entrada (|x| >= 0.999) (Spec 019, CA-4)
@@ -2503,13 +3569,13 @@ impl RealtimeDspChain {
 
         // Seleção de fonte de entrada (Spec 019, CA-5): device, test_riff ou di_file
         let source_slice = &mut self.temp_source_buf[..len];
-        if self.input_source == "test_riff" && !self.test_riff_buffer.is_empty() {
+        if self.input_source == InputSource::TestRiff && !self.test_riff_buffer.is_empty() {
             let riff_len = self.test_riff_buffer.len();
             for s in source_slice.iter_mut() {
                 *s = self.test_riff_buffer[self.test_riff_pos];
                 self.test_riff_pos = (self.test_riff_pos + 1) % riff_len;
             }
-        } else if self.input_source == "di_file" && !self.di_buffer.is_empty() {
+        } else if self.input_source == InputSource::DiFile && !self.di_buffer.is_empty() {
             let di_len = self.di_buffer.len();
             for s in source_slice.iter_mut() {
                 *s = self.di_buffer[self.di_pos];
@@ -2519,13 +3585,10 @@ impl RealtimeDspChain {
             source_slice.copy_from_slice(input);
         }
 
-        // 1. Atualiza suavizador de ganho no bloco (Spec 014, CA-8)
-        for _ in 0..len {
-            self.gain_smoother.next_sample();
-        }
+        // 1. Entrada pós-boost pronta para processamento (suavização ocorre na aplicação real do amp)
+        // (Spec 044 CA-4: sem loop morto prévio de gain_smoother)
 
-        // 2. DC Blocker de 1 polo (~10 Hz) e boost de entrada
-        let boost_slice = &mut self.temp_boost_buf[..len];
+        // 2. DC Blocker de 1 polo (~10 Hz) e captura limpa (sem boost ainda, pois input_boost faz parte do preset)
         let r = 0.995f32;
         let mut ring_pos = self.clean_input_ring.total_written_relaxed();
         for i in 0..len {
@@ -2533,7 +3596,7 @@ impl RealtimeDspChain {
             let y = x - self.dc_x1 + r * self.dc_y1;
             self.dc_x1 = x;
             self.dc_y1 = y;
-            boost_slice[i] = y * self.input_boost;
+            source_slice[i] = y;
 
             // Spec 026 / 029: Copia sinal limpo no ring SPSC lock-free (0 alocações, 0 locks)
             self.clean_input_ring.push_sample_at(ring_pos, y);
@@ -2541,26 +3604,141 @@ impl RealtimeDspChain {
         }
         self.clean_input_ring.commit_write_pos(ring_pos);
 
+        if self.preset_crossfading {
+            if let Some(mut shadow) = self.shadow.take() {
+                let clean = &self.temp_source_buf[..len];
+                let shadow_out = &mut self.shadow_out_buf[..len];
+                shadow.process_dsp_core(clean, shadow_out);
+                self.shadow = Some(shadow);
+            }
+        }
+
+        // Processa cadeia ativa diretamente para `output[..len]`
+        self.process_dsp_core_from_source(len, &mut output[..len]);
+
+        // Retira IRs aposentadas de self e shadow
+        if let Some(old_ir) = self.cab.take_retired_ir() {
+            self.retired_reaper.retire_ir(old_ir);
+        }
+        if let Some(old_ir) = self.cab_2.take_retired_ir() {
+            self.retired_reaper.retire_ir(old_ir);
+        }
+
+        // 9. Crossfade real de preset/cena (20 ms equal-power) + Limitador de Saída Segura + defesa NaN/Inf
+        let mut has_non_finite = false;
+        for (i, s) in output[..len].iter_mut().enumerate() {
+            let mut val = *s;
+            if self.preset_crossfading {
+                let old_val = self.shadow_out_buf[i];
+                let angle = 0.5 * std::f32::consts::PI * self.preset_fade.clamp(0.0, 1.0);
+                let w_old = angle.cos();
+                let w_new = angle.sin();
+                val = if old_val.is_finite() && val.is_finite() {
+                    old_val * w_old + val * w_new
+                } else if val.is_finite() {
+                    val * w_new
+                } else {
+                    0.0
+                };
+                self.preset_fade += self.preset_fade_step;
+                if self.preset_fade >= 1.0 {
+                    self.preset_fade = 1.0;
+                    self.preset_crossfading = false;
+                }
+            }
+            if !val.is_finite() {
+                *s = 0.0;
+                has_non_finite = true;
+            } else {
+                *s = val.clamp(-1.0, 1.0);
+            }
+        }
+
+        if !self.preset_crossfading && self.pending_shadow_len > 0 {
+            if let Some(mut shadow) = self.shadow.take() {
+                for i in 0..self.pending_shadow_len {
+                    shadow.apply_param_update_inner(self.pending_shadow_sync[i]);
+                }
+                self.pending_shadow_len = 0;
+                self.shadow = Some(shadow);
+            }
+        }
+
+        // Spec 026: Rampa de silenciamento do afinador de 5 ms (CA-4)
+        if self.tuner_enabled && self.tuner_output_mode == TunerOutputMode::Mute {
+            let ramp_step = 1.0 / (0.005 * self.sample_rate);
+            for s in output[..len].iter_mut() {
+                self.tuner_mute_gain = (self.tuner_mute_gain - ramp_step).max(0.0);
+                *s *= self.tuner_mute_gain;
+            }
+        } else if self.tuner_mute_gain < 1.0 {
+            let ramp_step = 1.0 / (0.005 * self.sample_rate);
+            for s in output[..len].iter_mut() {
+                self.tuner_mute_gain = (self.tuner_mute_gain + ramp_step).min(1.0);
+                *s *= self.tuner_mute_gain;
+            }
+        }
+
+        if has_non_finite {
+            self.dc_x1 = 0.0;
+            self.dc_y1 = 0.0;
+            self.cab_fade = self.cab_target_fade;
+        }
+    }
+
+    fn process_dsp_core_from_source(&mut self, len: usize, output: &mut [f32]) {
+        let boost_slice = &mut self.temp_boost_buf[..len];
+        for i in 0..len {
+            boost_slice[i] = self.temp_source_buf[i] * self.input_boost;
+        }
+        self.process_dsp_core_inner(len, output);
+    }
+
+    fn process_dsp_core(&mut self, clean_input: &[f32], output: &mut [f32]) {
+        let len = clean_input.len().min(output.len());
+        if len == 0 {
+            return;
+        }
+        self.temp_source_buf[..len].copy_from_slice(&clean_input[..len]);
+        let boost_slice = &mut self.temp_boost_buf[..len];
+        for i in 0..len {
+            boost_slice[i] = clean_input[i] * self.input_boost;
+        }
+        self.process_dsp_core_inner(len, output);
+    }
+
+    fn process_dsp_core_inner(&mut self, len: usize, output: &mut [f32]) {
+        let di_slice = &self.temp_source_buf[..len];
+        let boost_slice = &self.temp_boost_buf[..len];
         let gate_slice = &mut self.temp_gate_buf[..len];
         let drive_slice = &mut self.temp_drive_buf[..len];
 
-        // 3. Noise Gate (elimina zumbido/hum de entrada P2 se habilitado)
+        // 3. Noise Gate (Natural usa DI limpo; Classic usa entrada do bloco)
         if self.gate_enabled {
-            self.gate.process(boost_slice, None, gate_slice);
+            self.gate.process(boost_slice, Some(di_slice), gate_slice);
         } else {
             gate_slice.copy_from_slice(boost_slice);
         }
 
-        // 3.1 Looper PreChain (antes de Drive/Amp quando looper.position == pre)
+        // 3.1 Looper PreChain
         let pre_looper_slice = &mut self.temp_looper_buf[..len];
-        let drive_in_slice: &[f32] = if self.looper_position == LooperPosition::PreChain {
+        let pitch_in_slice: &[f32] = if self.looper_position == LooperPosition::PreChain {
             self.looper.process(gate_slice, pre_looper_slice);
             pre_looper_slice
         } else {
             gate_slice
         };
 
-        // 3.2 Drive Processor (Spec 016, CA-6 & Spec 032)
+        // 3.15 Pitch Processor (Whammy / Drop Capo / Harmonizer / Micro Detune)
+        let pitch_slice = &mut self.temp_pitch_buf[..len];
+        let drive_in_slice: &[f32] = if self.pitch_1_enabled {
+            self.pitch_1.process(pitch_in_slice, pitch_slice);
+            pitch_slice
+        } else {
+            pitch_in_slice
+        };
+
+        // 3.2 Drive Processor
         let amp_in_slice = if self.drive_enabled {
             self.drive.process(drive_in_slice, drive_slice);
             drive_slice
@@ -2568,7 +3746,7 @@ impl RealtimeDspChain {
             drive_in_slice
         };
 
-        // 4. Split Node (Spec 024, CA-2)
+        // 4. Split Node
         let split_a_slice = &mut self.temp_split_a_buf[..len];
         let split_b_slice = &mut self.temp_split_b_buf[..len];
         if self.split_enabled {
@@ -2581,8 +3759,22 @@ impl RealtimeDspChain {
         // 5. Linha 0: Amp 1 -> Cab 1 -> EQ 1
         let amp_slice = &mut self.temp_amp_buf[..len];
         if self.amp_enabled {
-            self.amp.process(split_a_slice, amp_slice);
+            let mut sub_off = 0usize;
+            while sub_off < len {
+                let sub_end = (sub_off + 16).min(len);
+                let mut g = self.gain_smoother.current_value();
+                for _ in sub_off..sub_end {
+                    g = self.gain_smoother.next_sample();
+                }
+                self.amp.panel_mut().set_input_gain(g as f32);
+                self.amp
+                    .process(&split_a_slice[sub_off..sub_end], &mut amp_slice[sub_off..sub_end]);
+                sub_off = sub_end;
+            }
         } else {
+            for _ in 0..len {
+                self.gain_smoother.next_sample();
+            }
             amp_slice.copy_from_slice(split_a_slice);
         }
 
@@ -2610,7 +3802,7 @@ impl RealtimeDspChain {
             eq_slice.copy_from_slice(cab_slice);
         }
 
-        // 6. Linha 1 (se split ativo): Comp 2 -> Amp 2 -> Cab 2 -> Mod 2
+        // 6. Linha 1: Comp 2 -> Amp 2 -> Cab 2 -> Mod 2
         let row_1_out = if self.split_enabled {
             let comp_slice = &mut self.temp_comp_buf[..len];
             if self.comp_2_enabled {
@@ -2644,8 +3836,7 @@ impl RealtimeDspChain {
             &mut self.temp_mod_buf[..len]
         };
 
-        // 7. Merge (Coluna 6, antes de Delay e Reverb)
-        // Se split estiver desligado mas comp_2 estiver ativo, o 1176LN atua em linha na Row 0.
+        // 7. Merge
         let merge_slice = &mut self.temp_merge_l_buf[..len];
         if self.split_enabled {
             let merge_r_slice = &mut self.temp_merge_r_buf[..len];
@@ -2665,59 +3856,25 @@ impl RealtimeDspChain {
         let reverb_slice = &mut self.temp_reverb_buf[..len];
         self.rev_1.process(delay_slice, reverb_slice);
 
-        let post_slice: &[f32] = if self.looper_position == LooperPosition::PostChain {
+        if self.looper_position == LooperPosition::PostChain {
             let post_looper_slice = &mut self.temp_looper_buf[..len];
             self.looper.process(reverb_slice, post_looper_slice);
-            post_looper_slice
+            output[..len].copy_from_slice(post_looper_slice);
         } else {
-            reverb_slice
-        };
-
-        // 9. Limitador de Saída Segura (<= 0 dBFS / 1.0) e defesa contra NaN/Inf (Spec 015 & Spec 016, CA-9)
-        let mut has_non_finite = false;
-        for (i, s) in output[..len].iter_mut().enumerate() {
-            let mut val = post_slice[i];
-            if !val.is_finite() {
-                *s = 0.0;
-                has_non_finite = true;
-            } else {
-                if self.preset_crossfading {
-                    let ramp = 0.5 * (1.0 - (std::f32::consts::PI * self.preset_fade).cos());
-                    val *= ramp;
-                    self.preset_fade += self.preset_fade_step;
-                    if self.preset_fade >= 1.0 {
-                        self.preset_fade = 1.0;
-                        self.preset_crossfading = false;
-                    }
-                }
-                *s = val.clamp(-1.0, 1.0);
-            }
+            output[..len].copy_from_slice(reverb_slice);
         }
 
-        // Spec 026: Rampa de silenciamento do afinador de 5 ms (CA-4)
-        if self.tuner_enabled && self.tuner_output_mode == TunerOutputMode::Mute {
-            let ramp_step = 1.0 / (0.005 * self.sample_rate);
-            for s in output[..len].iter_mut() {
-                self.tuner_mute_gain = (self.tuner_mute_gain - ramp_step).max(0.0);
-                *s *= self.tuner_mute_gain;
-            }
-        } else if self.tuner_mute_gain < 1.0 {
-            let ramp_step = 1.0 / (0.005 * self.sample_rate);
-            for s in output[..len].iter_mut() {
-                self.tuner_mute_gain = (self.tuner_mute_gain + ramp_step).min(1.0);
-                *s *= self.tuner_mute_gain;
-            }
+        // Spec 047 CA-2: Captura lock-free e zero-alloc da saída do motor para o CRT Waveform
+        let mut out_pos = self.scope_output_ring.total_written_relaxed();
+        for &s in &output[..len] {
+            self.scope_output_ring.push_sample_at(out_pos, s);
+            out_pos = out_pos.wrapping_add(1);
         }
-
-        if has_non_finite {
-            self.dc_x1 = 0.0;
-            self.dc_y1 = 0.0;
-            self.cab_fade = self.cab_target_fade;
-        }
+        self.scope_output_ring.commit_write_pos(out_pos);
     }
 }
 
-/// Snapshot de Telemetria para UI / VU / Osciloscópio CRT (Spec 013, CA-6)
+/// Snapshot de Telemetria para UI / VU / Osciloscópio CRT (Spec 013, CA-6 & Spec 037, CA-5/8)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TelemetrySnapshot {
     pub input_peak_db: f32,
@@ -2725,31 +3882,46 @@ pub struct TelemetrySnapshot {
     pub cpu_usage_pct: f32,
     pub gate_state: String,
     pub gate_gr_db: f32,
+    pub b_plus_v: f32,
     pub waveform: Vec<f32>,
+    pub waveform_seq: u64,
+    pub dsp_contention_silence_blocks: u64,
 }
 
-/// Buffer atômico circular para telemetria sem bloqueio da thread de áudio (Spec 013, CA-6)
+/// Buffer atômico circular para telemetria sem bloqueio nem alocação da thread de áudio (Spec 013, CA-6 & Spec 037, CA-5)
 pub struct TelemetryBuffer {
     input_peak_bits: AtomicU32,
     output_peak_bits: AtomicU32,
     cpu_pct_bits: AtomicU32,
     gate_state_code: AtomicU8,
     gate_gr_db_bits: AtomicU32,
-    waveform_buffer: Mutex<Vec<f32>>,
+    b_plus_v_bits: AtomicU32,
+    waveform_ring: Box<[AtomicU32]>,
+    waveform_write_seq: AtomicU64,
     waveform_capacity: usize,
+    dsp_contention_silence_blocks: AtomicU64,
 }
 
 impl TelemetryBuffer {
     pub fn new(waveform_capacity: usize) -> Self {
+        let cap = waveform_capacity.max(1);
+        let ring: Vec<AtomicU32> = (0..cap).map(|_| AtomicU32::new(0.0f32.to_bits())).collect();
         Self {
             input_peak_bits: AtomicU32::new((-120.0f32).to_bits()),
             output_peak_bits: AtomicU32::new((-120.0f32).to_bits()),
             cpu_pct_bits: AtomicU32::new((0.0f32).to_bits()),
             gate_state_code: AtomicU8::new(0),
             gate_gr_db_bits: AtomicU32::new((0.0f32).to_bits()),
-            waveform_buffer: Mutex::new(vec![0.0; waveform_capacity]),
-            waveform_capacity,
+            b_plus_v_bits: AtomicU32::new((280.0f32).to_bits()),
+            waveform_ring: ring.into_boxed_slice(),
+            waveform_write_seq: AtomicU64::new(0),
+            waveform_capacity: cap,
+            dsp_contention_silence_blocks: AtomicU64::new(0),
         }
+    }
+
+    pub fn update_b_plus_v(&self, b_plus_v: f32) {
+        self.b_plus_v_bits.store(b_plus_v.to_bits(), Ordering::Relaxed);
     }
 
     pub fn update_peaks(&self, in_db: f32, out_db: f32, cpu_pct: f32) {
@@ -2788,14 +3960,36 @@ impl TelemetryBuffer {
         f32::from_bits(self.cpu_pct_bits.load(Ordering::Relaxed))
     }
 
+    pub fn record_dsp_contention_silence(&self) {
+        self.dsp_contention_silence_blocks.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn dsp_contention_silence_blocks(&self) -> u64 {
+        self.dsp_contention_silence_blocks.load(Ordering::Relaxed)
+    }
+
+    pub fn waveform_seq(&self) -> u64 {
+        self.waveform_write_seq.load(Ordering::Acquire)
+    }
+
+    /// Escrita 100% lock-free / wait-free no ring buffer de osciloscópio CRT (Spec 037, CA-5)
     pub fn push_waveform(&self, samples: &[f32]) {
-        if let Ok(mut buf) = self.waveform_buffer.try_lock() {
-            let n = samples.len().min(self.waveform_capacity);
-            let shift = buf.len().saturating_sub(n);
-            buf.copy_within(n.., 0);
-            let start = shift;
-            buf[start..start + n].copy_from_slice(&samples[..n]);
+        if samples.is_empty() {
+            return;
         }
+        let cap = self.waveform_capacity;
+        let tail_samples = if samples.len() > cap {
+            &samples[samples.len() - cap..]
+        } else {
+            samples
+        };
+        let mut seq = self.waveform_write_seq.load(Ordering::Relaxed);
+        for &s in tail_samples {
+            let idx = (seq as usize) % cap;
+            self.waveform_ring[idx].store(s.to_bits(), Ordering::Relaxed);
+            seq = seq.wrapping_add(1);
+        }
+        self.waveform_write_seq.store(seq, Ordering::Release);
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
@@ -2809,11 +4003,19 @@ impl TelemetryBuffer {
         }
         .to_string();
         let gate_gr_db = f32::from_bits(self.gate_gr_db_bits.load(Ordering::Relaxed));
-        let waveform = self
-            .waveform_buffer
-            .lock()
-            .map(|buf| buf.clone())
-            .unwrap_or_else(|_| vec![0.0; self.waveform_capacity]);
+        let b_plus_v = f32::from_bits(self.b_plus_v_bits.load(Ordering::Relaxed));
+        let cap = self.waveform_capacity;
+        let seq = self.waveform_write_seq.load(Ordering::Acquire);
+        let mut waveform = Vec::with_capacity(cap);
+        let start = seq.saturating_sub(cap as u64);
+        let valid = (seq - start) as usize;
+        for _ in 0..(cap - valid) {
+            waveform.push(0.0);
+        }
+        for offset in 0..valid {
+            let idx = ((start + offset as u64) as usize) % cap;
+            waveform.push(f32::from_bits(self.waveform_ring[idx].load(Ordering::Relaxed)));
+        }
 
         TelemetrySnapshot {
             input_peak_db,
@@ -2821,7 +4023,10 @@ impl TelemetryBuffer {
             cpu_usage_pct,
             gate_state,
             gate_gr_db,
+            b_plus_v,
             waveform,
+            waveform_seq: seq,
+            dsp_contention_silence_blocks: self.dsp_contention_silence_blocks.load(Ordering::Relaxed),
         }
     }
 }

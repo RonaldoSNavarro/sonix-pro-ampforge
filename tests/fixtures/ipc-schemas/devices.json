@@ -1,0 +1,20 @@
+{
+  "devices": [
+    {
+      "backend": "wasapi",
+      "id": "fixture_in_1",
+      "is_input": true,
+      "is_output": false,
+      "name": "Focusrite USB",
+      "supported_buffer_sizes": [
+        64,
+        128,
+        256
+      ],
+      "supported_sample_rates": [
+        44100,
+        48000
+      ]
+    }
+  ]
+}

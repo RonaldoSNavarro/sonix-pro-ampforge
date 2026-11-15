@@ -307,9 +307,15 @@ impl NoiseGateProcessor {
             }
 
             // 4. Rampa suave de ganho de saída
-            let target_gain = match self.state {
-                GateState::Open | GateState::Hold => 1.0,
-                GateState::Closed => range_lin,
+            let target_gain = match (self.mode, self.state) {
+                (_, GateState::Open | GateState::Hold) => 1.0,
+                (NoiseGateMode::ClassicExpanderGate, GateState::Closed) => {
+                    let env_db = 20.0 * self.envelope.max(1e-6).log10();
+                    let under_db = (self.threshold_db - env_db).max(0.0);
+                    let gain_db = (-(under_db * (self.ratio - 1.0))).clamp(self.range_db, 0.0);
+                    10.0f32.powf(gain_db / 20.0)
+                }
+                (NoiseGateMode::IntelligentNaturalGate, GateState::Closed) => range_lin,
             };
 
             if target_gain > self.current_gain {
@@ -353,6 +359,8 @@ pub struct CompressorProcessor {
     parallel_mix_pct: f32,
     sample_rate: f32,
     envelope: f32,
+    opt_slow_env: f32,
+    vca_rms_sq: f32,
     gain_reduction_db: f32,
 }
 
@@ -373,6 +381,8 @@ impl CompressorProcessor {
             parallel_mix_pct: 100.0,
             sample_rate: 48000.0,
             envelope: 0.0,
+            opt_slow_env: 0.0,
+            vca_rms_sq: 0.0,
             gain_reduction_db: 0.0,
         }
     }
@@ -440,49 +450,102 @@ impl CompressorProcessor {
         let wet_ratio = self.parallel_mix_pct / 100.0;
         let dry_ratio = 1.0 - wet_ratio;
 
+        let (topo_att_scale, topo_rel_scale, knee_db) = match self.topology {
+            CompressorTopology::StudioFet1176 => (0.45, 0.70, 0.0f32),
+            CompressorTopology::PedalRossDyna => (2.4, 2.2, 5.0),
+            CompressorTopology::OpticalLa2a => (3.5, 1.4, 6.0),
+            CompressorTopology::VcaMasterBus => (1.1, 1.0, 3.0),
+        };
+
         let att_ms = if self.all_buttons_in {
             (self.attack_ms * 0.5).max(0.01)
         } else {
-            self.attack_ms
+            (self.attack_ms * topo_att_scale).max(0.01)
         };
         let rel_ms = if self.all_buttons_in {
             (self.release_ms * 0.45).max(10.0)
         } else {
-            self.release_ms
+            (self.release_ms * topo_rel_scale).max(5.0)
         };
         let att_coeff = (-1.0 / (self.sample_rate * (att_ms * 0.001))).exp();
         let rel_coeff = (-1.0 / (self.sample_rate * (rel_ms * 0.001))).exp();
+        let slow_rel_coeff = (-1.0 / (self.sample_rate * 0.800)).exp();
+        let rms_coeff = (-1.0 / (self.sample_rate * 0.010)).exp();
 
         for i in 0..input.len() {
-            let abs_x = input[i].abs();
-            if abs_x > self.envelope {
-                self.envelope = (1.0 - att_coeff) * abs_x + att_coeff * self.envelope;
-            } else {
-                self.envelope = (1.0 - rel_coeff) * abs_x + rel_coeff * self.envelope;
-            }
+            let x = if input[i].is_finite() { input[i] } else { 0.0 };
+            let abs_x = x.abs();
 
-            let gain = if self.envelope <= threshold_lin {
-                1.0
-            } else {
-                let overshoot_db = 20.0 * (self.envelope / threshold_lin).log10();
-                let gr_db = -overshoot_db * (1.0 - 1.0 / eff_ratio);
-                10.0f32.powf(gr_db / 20.0)
+            // Topology-specific detector & envelope
+            let det = match self.topology {
+                CompressorTopology::StudioFet1176 | CompressorTopology::PedalRossDyna => {
+                    if abs_x > self.envelope {
+                        self.envelope = (1.0 - att_coeff) * abs_x + att_coeff * self.envelope;
+                    } else {
+                        self.envelope = (1.0 - rel_coeff) * abs_x + rel_coeff * self.envelope;
+                    }
+                    self.envelope
+                }
+                CompressorTopology::OpticalLa2a => {
+                    // Program-dependent T4 optical dual-stage release
+                    if abs_x > self.envelope {
+                        self.envelope = (1.0 - att_coeff) * abs_x + att_coeff * self.envelope;
+                    } else {
+                        self.envelope = (1.0 - rel_coeff) * abs_x + rel_coeff * self.envelope;
+                    }
+                    if self.envelope > self.opt_slow_env {
+                        self.opt_slow_env = 0.05 * self.envelope + 0.95 * self.opt_slow_env;
+                    } else {
+                        self.opt_slow_env =
+                            (1.0 - slow_rel_coeff) * self.envelope + slow_rel_coeff * self.opt_slow_env;
+                    }
+                    0.55 * self.envelope + 0.45 * self.opt_slow_env
+                }
+                CompressorTopology::VcaMasterBus => {
+                    // True-RMS power detector
+                    self.vca_rms_sq = (1.0 - rms_coeff) * (x * x) + rms_coeff * self.vca_rms_sq;
+                    let rms_est = self.vca_rms_sq.max(0.0).sqrt();
+                    if rms_est > self.envelope {
+                        self.envelope = (1.0 - att_coeff) * rms_est + att_coeff * self.envelope;
+                    } else {
+                        self.envelope = (1.0 - rel_coeff) * rms_est + rel_coeff * self.envelope;
+                    }
+                    self.envelope
+                }
             };
 
-            self.gain_reduction_db = 20.0 * gain.log10();
+            let gain = if det <= 1e-9 {
+                1.0
+            } else {
+                let det_db = 20.0 * det.log10();
+                let thresh_db = 20.0 * threshold_lin.max(1e-9).log10();
+                let overshoot_db = det_db - thresh_db;
+                if knee_db > 0.0 && overshoot_db > -knee_db * 0.5 && overshoot_db < knee_db * 0.5 {
+                    let k = overshoot_db + knee_db * 0.5;
+                    let gr_db = -(1.0 - 1.0 / eff_ratio) * (k * k) / (2.0 * knee_db);
+                    10.0f32.powf(gr_db / 20.0)
+                } else if overshoot_db > 0.0 {
+                    let gr_db = -overshoot_db * (1.0 - 1.0 / eff_ratio);
+                    10.0f32.powf(gr_db / 20.0)
+                } else {
+                    1.0
+                }
+            };
 
-            let compressed = input[i] * gain;
-            let fet_shaped = if self.all_buttons_in {
-                // "British Mode / All Buttons In": bias do FET empurrado para saturação assimétrica pronunciada
-                let driven = compressed * 7.5;
-                let asym = driven + 0.65 * driven * driven - 0.20 * driven * driven * driven;
-                asym.tanh() / 6.5
+            self.gain_reduction_db = 20.0 * gain.max(1e-6).log10();
+
+            let compressed = x * gain;
+            let shaped = if self.all_buttons_in {
+                // "British Mode / All Buttons In": saturação FET estritamente monotônica sem inversão ou DC
+                (compressed * 8.5).tanh() / 6.5
+            } else if self.topology == CompressorTopology::PedalRossDyna {
+                (compressed * 1.15).tanh() / 1.15
             } else {
                 compressed
             };
 
-            let wet = fet_shaped * makeup_lin;
-            let dry = input[i];
+            let wet = shaped * makeup_lin;
+            let dry = x;
             output[i] = dry * dry_ratio + wet * wet_ratio;
         }
     }

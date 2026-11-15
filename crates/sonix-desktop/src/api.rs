@@ -2,17 +2,21 @@
 //! Camada pura de roteamento e despacho de comandos/telemetria da API (independente de HTTP).
 //! Compartilhada entre comandos Tauri (IPC nativo) e o servidor HTTP de desenvolvimento (`dev-http`).
 
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ampforge_dsp::cab::SpeakerCabModel;
+use ampforge_dsp::cab::{MicModel, SpeakerCabModel};
 use ampforge_dsp::fx::drive::DriveModel;
 use ampforge_dsp::fx::eq::EqMode;
 use ampforge_dsp::looper::LooperPosition;
+use ampforge_dsp::modshop::{PowerTube, PreampTube, RectifierType, ToneStackTopology};
 use ampforge_dsp::tuner::{TunerPitchResult, TunerProcessor};
 
 use crate::audio::{
-    AudioStatusTelemetry, CleanInputRing, DspParamUpdate, LockFreeParamQueue, LooperActionCmd,
-    RealtimeDspChain, TelemetryBuffer,
+    AudioDeviceEnumerator, AudioMode, AudioStatusTelemetry, ChainSplitMode, CleanInputRing,
+    CpalAudioEnumerator, DesktopAudioHost, DspParamUpdate, LockFreeParamQueue,
+    LockFreeResourceQueue, LooperActionCmd, PreparedDspResource, RealtimeDspChain,
+    RealtimeDuplexEngine, TelemetryBuffer,
 };
 use crate::calibration::{calibrate_input, CalibrationStore};
 
@@ -43,11 +47,76 @@ fn default_gate_key_hpf() -> f32 { 80.0 }
 fn default_gate_key_lpf() -> f32 { 6000.0 }
 fn default_drive_model() -> String { "ts808".to_string() }
 fn default_eq_mode() -> String { "eight_band".to_string() }
-fn default_dly_mode() -> String { "4".to_string() }
+fn default_dly_mode() -> String { "1".to_string() }
+fn default_mod_2_model() -> String { "AnalogBbdChorus".to_string() }
+
+fn parse_mod_model(s: &str) -> Option<ampforge_dsp::fx::modulation::ModModel> {
+    use ampforge_dsp::fx::modulation::ModModel;
+    match s {
+        "AnalogBbdChorus" | "bbd_chorus" => Some(ModModel::AnalogBbdChorus),
+        "StereoTriChorus" | "tri_chorus" => Some(ModModel::StereoTriChorus),
+        "ThroughZeroFlanger" | "tz_flanger" => Some(ModModel::ThroughZeroFlanger),
+        "Orange90Phaser" | "phaser_90" => Some(ModModel::Orange90Phaser),
+        "OpticalBiasTremolo" | "optical_tremolo" => Some(ModModel::OpticalBiasTremolo),
+        "PhotocellUnivibe" | "univibe" => Some(ModModel::PhotocellUnivibe),
+        "RotarySpeaker" | "rotary" => Some(ModModel::RotarySpeaker),
+        _ => None,
+    }
+}
 fn default_zero_str() -> String { "0".to_string() }
 fn default_a4_hz() -> f32 { 440.0 }
 fn default_looper_pos() -> String { "post".to_string() }
 fn default_looper_action() -> String { "stop".to_string() }
+fn default_hundred() -> f32 { 100.0 }
+fn default_pitch_model() -> String { "whammy".to_string() }
+fn default_pitch_key() -> String { "C".to_string() }
+fn default_pitch_scale() -> String { "major".to_string() }
+
+fn parse_pitch_model(s: &str) -> Option<ampforge_dsp::fx::pitch::PitchModel> {
+    use ampforge_dsp::fx::pitch::PitchModel;
+    match s {
+        "PedalWhammy" | "whammy" => Some(PitchModel::PedalWhammy),
+        "PolyphonicDropCapo" | "drop_capo" => Some(PitchModel::PolyphonicDropCapo),
+        "IntelligentDualHarmonizer" | "harmonizer" => Some(PitchModel::IntelligentDualHarmonizer),
+        "MicroPitchDetune" | "micro_detune" => Some(PitchModel::MicroPitchDetune),
+        _ => None,
+    }
+}
+
+fn parse_pitch_key(s: &str) -> Option<ampforge_dsp::fx::pitch::PitchKey> {
+    use ampforge_dsp::fx::pitch::PitchKey;
+    match s {
+        "C" => Some(PitchKey::C),
+        "C#" | "Db" | "CSharp" => Some(PitchKey::CSharp),
+        "D" => Some(PitchKey::D),
+        "D#" | "Eb" | "DSharp" => Some(PitchKey::DSharp),
+        "E" => Some(PitchKey::E),
+        "F" => Some(PitchKey::F),
+        "F#" | "Gb" | "FSharp" => Some(PitchKey::FSharp),
+        "G" => Some(PitchKey::G),
+        "G#" | "Ab" | "GSharp" => Some(PitchKey::GSharp),
+        "A" => Some(PitchKey::A),
+        "A#" | "Bb" | "ASharp" => Some(PitchKey::ASharp),
+        "B" => Some(PitchKey::B),
+        _ => None,
+    }
+}
+
+fn parse_pitch_scale(s: &str) -> Option<ampforge_dsp::fx::pitch::ScaleType> {
+    use ampforge_dsp::fx::pitch::ScaleType;
+    match s {
+        "major" | "Major" => Some(ScaleType::Major),
+        "natural_minor" | "NaturalMinor" => Some(ScaleType::NaturalMinor),
+        "harmonic_minor" | "HarmonicMinor" => Some(ScaleType::HarmonicMinor),
+        "melodic_minor" | "MelodicMinor" => Some(ScaleType::MelodicMinor),
+        "dorian" | "Dorian" => Some(ScaleType::Dorian),
+        "phrygian" | "Phrygian" => Some(ScaleType::Phrygian),
+        "lydian" | "Lydian" => Some(ScaleType::Lydian),
+        "mixolydian" | "Mixolydian" => Some(ScaleType::Mixolydian),
+        "locrian" | "Locrian" => Some(ScaleType::Locrian),
+        _ => None,
+    }
+}
 
 /// Estado persistente e observável da cadeia e interface (tabela única de parâmetros da Spec 014).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -231,12 +300,26 @@ pub struct AppState {
     pub eq_1_bands_db: [f32; 10],
     #[serde(default, rename = "mod_2.enabled")]
     pub mod_2_enabled: bool,
+    #[serde(default = "default_mod_2_model", rename = "mod_2.model")]
+    pub mod_2_model: String,
     #[serde(default = "default_one", rename = "mod_2.rate_hz")]
     pub mod_2_rate_hz: f32,
     #[serde(default = "default_five", rename = "mod_2.depth")]
     pub mod_2_depth: f32,
     #[serde(default = "default_fifty", rename = "mod_2.mix")]
     pub mod_2_mix: f32,
+    #[serde(default, rename = "pitch_1.enabled")]
+    pub pitch_1_enabled: bool,
+    #[serde(default = "default_pitch_model", rename = "pitch_1.model")]
+    pub pitch_1_model: String,
+    #[serde(default, rename = "pitch_1.semitones")]
+    pub pitch_1_semitones: f32,
+    #[serde(default = "default_pitch_key", rename = "pitch_1.key")]
+    pub pitch_1_key: String,
+    #[serde(default = "default_pitch_scale", rename = "pitch_1.scale")]
+    pub pitch_1_scale: String,
+    #[serde(default = "default_hundred", rename = "pitch_1.mix")]
+    pub pitch_1_mix: f32,
     #[serde(default, rename = "dly_1.enabled")]
     pub dly_1_enabled: bool,
     #[serde(default = "default_dly_mode", rename = "dly_1.mode")]
@@ -293,6 +376,36 @@ pub struct AppState {
     pub looper_position: String,
     #[serde(default = "default_looper_action", rename = "looper.action")]
     pub looper_action: String,
+    #[serde(default = "default_scenes")]
+    pub scenes: Vec<sonix_core::persistence::SceneDto>,
+    #[serde(default = "default_grid")]
+    pub grid: sonix_core::persistence::GridDto,
+    #[serde(default)]
+    pub channels: std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+    >,
+}
+
+fn default_scenes() -> Vec<sonix_core::persistence::SceneDto> {
+    ["A", "B", "C", "D", "E", "F", "G", "H"]
+        .iter()
+        .enumerate()
+        .map(|(index, label)| sonix_core::persistence::SceneDto {
+            index,
+            id: format!("scene_{}", index),
+            name: format!("Scene {}", label),
+            color: "#ffc400".to_string(),
+        })
+        .collect()
+}
+
+fn default_grid() -> sonix_core::persistence::GridDto {
+    sonix_core::persistence::GridDto {
+        rows: 4,
+        cols: 12,
+        blocks: Vec::new(),
+    }
 }
 
 /// Retorna os valores nominais de chassi para cada modelo de amplificador.
@@ -428,11 +541,18 @@ impl Default for AppState {
             eq_1_volume_db: 0.0,
             eq_1_bands_db: [0.0; 10],
             mod_2_enabled: false,
+            mod_2_model: default_mod_2_model(),
             mod_2_rate_hz: 1.0,
             mod_2_depth: 5.0,
             mod_2_mix: 50.0,
+            pitch_1_enabled: false,
+            pitch_1_model: default_pitch_model(),
+            pitch_1_semitones: 0.0,
+            pitch_1_key: default_pitch_key(),
+            pitch_1_scale: default_pitch_scale(),
+            pitch_1_mix: 100.0,
             dly_1_enabled: false,
-            dly_1_mode: "4".to_string(),
+            dly_1_mode: "1".to_string(),
             dly_1_heads: "1".to_string(),
             dly_1_repeat_rate: 5.0,
             dly_1_intensity: 5.0,
@@ -459,6 +579,9 @@ impl Default for AppState {
             tuner_ref_hz: 440.0,
             looper_position: "post".to_string(),
             looper_action: "stop".to_string(),
+            scenes: default_scenes(),
+            grid: default_grid(),
+            channels: std::collections::HashMap::new(),
         }
     }
 }
@@ -492,10 +615,17 @@ pub struct ApiContext {
     pub telemetry: Arc<TelemetryBuffer>,
     pub dsp_chain: Option<Arc<Mutex<RealtimeDspChain>>>,
     pub param_queue: Option<Arc<LockFreeParamQueue>>,
+    pub resource_queue: Option<Arc<LockFreeResourceQueue>>,
+    pub shared_adc_clips: Option<Arc<AtomicU64>>,
+    pub shared_sample_rate_bits: Option<Arc<AtomicU32>>,
+    pub shared_algo_latency_samples: Option<Arc<AtomicU32>>,
     pub clean_input_ring: Option<Arc<CleanInputRing>>,
+    pub scope_output_ring: Option<Arc<CleanInputRing>>,
     pub calibration_store: Option<CalibrationStore>,
     pub active_device_id: Option<String>,
     pub calibration_session: Arc<Mutex<CalibrationSession>>,
+    pub device_enumerator: Arc<dyn AudioDeviceEnumerator>,
+    pub duplex_engine: Option<Arc<RealtimeDuplexEngine>>,
 }
 
 impl ApiContext {
@@ -508,24 +638,44 @@ impl ApiContext {
         device_id: Option<&str>,
         calibration_store: Option<CalibrationStore>,
     ) -> Self {
-        if let (Some(ref d), Some(ref pq)) = (&dsp_chain, &param_queue) {
+        let mut resource_queue = None;
+        let mut shared_adc_clips = None;
+        let mut shared_sample_rate_bits = None;
+        let mut shared_algo_latency_samples = None;
+        let mut clean_input_ring = None;
+        let mut scope_output_ring = None;
+
+        if let Some(ref d) = dsp_chain {
             if let Ok(mut chain) = d.lock() {
-                chain.set_param_queue(pq.clone());
+                if let Some(ref pq) = param_queue {
+                    chain.set_param_queue(pq.clone());
+                }
+                resource_queue = Some(chain.resource_queue());
+                shared_adc_clips = Some(chain.adc_clips_handle());
+                shared_sample_rate_bits = Some(chain.shared_sample_rate_bits());
+                shared_algo_latency_samples = Some(chain.shared_algo_latency_samples());
+                clean_input_ring = Some(chain.clean_input_ring());
+                scope_output_ring = Some(chain.scope_output_ring());
             }
         }
-        let clean_input_ring = dsp_chain
-            .as_ref()
-            .and_then(|d| d.lock().ok().map(|chain| chain.clean_input_ring()));
+
         Self {
             audio_telemetry,
             app_state,
             telemetry,
             dsp_chain,
             param_queue,
+            resource_queue,
+            shared_adc_clips,
+            shared_sample_rate_bits,
+            shared_algo_latency_samples,
             clean_input_ring,
+            scope_output_ring,
             calibration_store,
             active_device_id: device_id.map(|s| s.to_string()),
             calibration_session: Arc::new(Mutex::new(CalibrationSession::default())),
+            device_enumerator: Arc::new(CpalAudioEnumerator::new()),
+            duplex_engine: None,
         }
     }
 }
@@ -542,45 +692,154 @@ pub fn dispatch(
 
     match path {
         "/api/status" => {
-            let json = r#"{"status":"online","engine":"AmpForge RealTime","version":"1.0.0","backend":"WASAPI"}"#;
-            (200, "application/json", json.as_bytes().to_vec())
+            let backend = ctx
+                .audio_telemetry
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|t| t.backend.clone()))
+                .unwrap_or_else(|| "wasapi".to_string());
+            let body = serde_json::json!({
+                "status": "online",
+                "engine": "AmpForge RealTime",
+                "version": "1.0.0",
+                "backend": backend
+            });
+            (200, "application/json", serde_json::to_vec(&body).unwrap())
         }
         "/api/audio/status" => {
-            let (clips, algo_lat) = if let Some(ref dsp_ref) = ctx.dsp_chain {
-                dsp_ref
-                    .try_lock()
-                    .map(|d| (d.adc_clips(), d.algorithmic_latency_samples()))
-                    .unwrap_or((0, 16))
-            } else {
-                (0, 16)
-            };
-            let json = if let Ok(mut guard) = ctx.audio_telemetry.lock() {
+            let clips = ctx
+                .shared_adc_clips
+                .as_ref()
+                .map(|c| c.load(Ordering::Relaxed))
+                .unwrap_or(0);
+            let algo_lat = ctx
+                .shared_algo_latency_samples
+                .as_ref()
+                .map(|a| a.load(Ordering::Relaxed))
+                .unwrap_or(16);
+            let contention_silences = ctx.telemetry.dsp_contention_silence_blocks();
+            let live_underruns = ctx.duplex_engine.as_ref().map(|d| d.underruns());
+            let live_overruns = ctx.duplex_engine.as_ref().map(|d| d.overruns());
+            let host = DesktopAudioHost::new();
+            let caps = serde_json::json!({
+                "wasapi_shared": host.has_mode_support(AudioMode::WasapiShared),
+                "wasapi_shared_low_latency": host.has_mode_support(AudioMode::WasapiSharedLowLatency),
+                "wasapi_exclusive": host.has_mode_support(AudioMode::WasapiExclusive),
+                "asio": host.has_mode_support(AudioMode::Asio),
+            });
+
+            let mut val = if let Ok(mut guard) = ctx.audio_telemetry.lock() {
                 if let Some(ref mut t) = *guard {
                     t.adc_clips = clips;
                     t.algorithmic_latency_samples = algo_lat;
-                    serde_json::to_string(t).unwrap_or_else(|_| "{}".to_string())
+                    if let Some(u) = live_underruns {
+                        t.underruns = u;
+                    }
+                    if let Some(o) = live_overruns {
+                        t.overruns = o;
+                    }
+                    if t.estimated_roundtrip_ms <= 0.0 {
+                        let algo_ms = (algo_lat as f32 / t.sample_rate.max(1) as f32) * 1000.0;
+                        t.estimated_roundtrip_ms =
+                            t.driver_input_latency_ms + t.driver_output_latency_ms + algo_ms;
+                    }
+                    let mut v = serde_json::to_value(&*t).unwrap_or_else(|_| serde_json::json!({}));
+                    if let Some(obj) = v.as_object_mut() {
+                        for key in [
+                            "cpu_avg_pct",
+                            "cpu_peak_pct",
+                            "driver_input_latency_ms",
+                            "driver_output_latency_ms",
+                            "estimated_roundtrip_ms",
+                        ] {
+                            if let Some(num) = obj.get(key).and_then(|x| x.as_f64()) {
+                                let rounded = (num * 1000.0).round() / 1000.0;
+                                obj.insert(key.to_string(), serde_json::json!(rounded));
+                            }
+                        }
+                    }
+                    v
                 } else {
-                    format!(
-                        r#"{{"backend":"wasapi","mode":"wasapi_shared","raw_processing":false,"sample_rate":48000,"input_period_frames":128,"output_period_frames":128,"input_device":"Default","output_device":"Default","driver_input_latency_ms":2.5,"driver_output_latency_ms":2.5,"cpu_avg_pct":5.0,"cpu_peak_pct":8.0,"underruns":0,"overruns":0,"panics":0,"adc_clips":{},"measured_roundtrip_ms":null,"algorithmic_latency_samples":{}}}"#,
-                        clips, algo_lat
-                    )
+                    let fallback_sr = ctx
+                        .shared_sample_rate_bits
+                        .as_ref()
+                        .map(|b| f32::from_bits(b.load(Ordering::Relaxed)).round() as u32)
+                        .filter(|&sr| sr > 0)
+                        .unwrap_or(48000);
+                    let period = 128u32;
+                    let driver_ms = (period as f32 / fallback_sr as f32) * 1000.0;
+                    let algo_ms = (algo_lat as f32 / fallback_sr as f32) * 1000.0;
+                    serde_json::json!({
+                        "backend": "wasapi",
+                        "mode": "wasapi_shared",
+                        "raw_processing": false,
+                        "sample_rate": fallback_sr,
+                        "input_period_frames": period,
+                        "output_period_frames": period,
+                        "input_device": "",
+                        "output_device": "",
+                        "driver_input_latency_ms": driver_ms,
+                        "driver_output_latency_ms": driver_ms,
+                        "cpu_avg_pct": 0.0,
+                        "cpu_peak_pct": 0.0,
+                        "underruns": live_underruns.unwrap_or(0),
+                        "overruns": live_overruns.unwrap_or(0),
+                        "panics": 0,
+                        "adc_clips": clips,
+                        "measured_roundtrip_ms": serde_json::Value::Null,
+                        "estimated_roundtrip_ms": driver_ms * 2.0 + algo_ms,
+                        "algorithmic_latency_samples": algo_lat,
+                    })
                 }
             } else {
-                format!(
-                    r#"{{"adc_clips":{},"algorithmic_latency_samples":{}}}"#,
-                    clips, algo_lat
-                )
+                serde_json::json!({
+                    "adc_clips": clips,
+                    "underruns": live_underruns.unwrap_or(0),
+                    "overruns": live_overruns.unwrap_or(0),
+                    "algorithmic_latency_samples": algo_lat,
+                    "measured_roundtrip_ms": serde_json::Value::Null,
+                })
             };
-            (200, "application/json", json.into_bytes())
+
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert(
+                    "dsp_contention_silence_blocks".to_string(),
+                    serde_json::json!(contention_silences),
+                );
+                obj.insert("mode_capabilities".to_string(), caps);
+            }
+            (200, "application/json", serde_json::to_vec(&val).unwrap())
         }
         "/api/telemetry" => {
-            let snap = ctx.telemetry.snapshot();
+            let mut snap = ctx.telemetry.snapshot();
+            if let Some(ref dsp_ref) = ctx.dsp_chain {
+                if let Ok(chain) = dsp_ref.try_lock() {
+                    snap.b_plus_v = chain.current_b_plus_v();
+                }
+            } else if let Ok(st) = ctx.app_state.lock() {
+                snap.b_plus_v = st.preamp_plate_v;
+            }
             let json = serde_json::to_string(&snap).unwrap_or_else(|_| "{}".to_string());
             (200, "application/json", json.into_bytes())
         }
         "/api/devices" => {
-            let json = r#"[{"id":"p2_mic","name":"Realtek Microphone (P2/P3 3.5mm)","input":true},{"id":"p2_out","name":"Realtek Audio Output (P2/P3)","input":false}]"#;
-            (200, "application/json", json.as_bytes().to_vec())
+            let devices = ctx.device_enumerator.enumerate_devices();
+            let mapped: Vec<serde_json::Value> = devices
+                .into_iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "id": d.id,
+                        "name": d.name,
+                        "backend": format!("{:?}", d.backend).to_ascii_lowercase(),
+                        "is_input": d.is_input,
+                        "is_output": !d.is_input,
+                        "supported_sample_rates": d.supported_sample_rates,
+                        "supported_buffer_sizes": d.supported_buffer_sizes,
+                    })
+                })
+                .collect();
+            let resp = serde_json::json!({ "devices": mapped });
+            (200, "application/json", serde_json::to_vec(&resp).unwrap())
         }
         "/api/state" => {
             if method == "GET" {
@@ -665,32 +924,99 @@ pub fn dispatch(
         }
         "/api/graph" => {
             if method == "GET" {
-                let (split_en, comp_en, eq_en, mod_en, dly_en, rev_en, amp2_en, cab2_en) =
-                    if let Ok(st) = ctx.app_state.lock() {
-                        (
-                            st.split_enabled,
-                            st.comp_2_enabled,
-                            st.eq_1_enabled,
-                            st.mod_2_enabled,
-                            st.dly_1_enabled,
-                            st.rev_1_enabled,
-                            st.amp_2_enabled,
-                            st.cab_2_enabled,
-                        )
-                    } else {
-                        (false, false, false, false, false, false, false, false)
-                    };
+                let (
+                    gate_en,
+                    drive_en,
+                    drive_model,
+                    amp_en,
+                    amp_model,
+                    cab_en,
+                    cab_speaker,
+                    split_en,
+                    comp_en,
+                    eq_en,
+                    mod_en,
+                    dly_en,
+                    rev_en,
+                    amp2_en,
+                    amp2_model,
+                    cab2_en,
+                    cab2_speaker,
+                ) = if let Ok(st) = ctx.app_state.lock() {
+                    (
+                        st.gate_enabled,
+                        st.drive_enabled,
+                        st.drive_model.clone(),
+                        st.amp_enabled,
+                        st.amp_model.clone(),
+                        st.cab_enabled,
+                        st.cab_speaker.clone(),
+                        st.split_enabled,
+                        st.comp_2_enabled,
+                        st.eq_1_enabled,
+                        st.mod_2_enabled,
+                        st.dly_1_enabled,
+                        st.rev_1_enabled,
+                        st.amp_2_enabled,
+                        st.amp_2_model.clone(),
+                        st.cab_2_enabled,
+                        st.cab_2_speaker.clone(),
+                    )
+                } else {
+                    (
+                        true,
+                        true,
+                        "screamer_808".to_string(),
+                        true,
+                        "jcm800_2203".to_string(),
+                        true,
+                        "greenback_4x12".to_string(),
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        "twin_ab763".to_string(),
+                        false,
+                        "alnico_blue_2x12".to_string(),
+                    )
+                };
+
+                let amp_display_name = |m: &str| match m {
+                    "jcm800_2203" => "Brit 800 2203",
+                    "plexi_1959" => "Plexi 1959",
+                    "twin_ab763" => "US Twin Clean",
+                    "dual_rect" => "Dual Rectifier",
+                    "ac30_tb" => "AC30 Top Boost",
+                    _ => "Brit 800 2203",
+                };
+                let drive_display_name = |m: &str| match m {
+                    "screamer_808" => "Screamer 808",
+                    "rat_dist" | "rat" => "RAT Distortion",
+                    "sd1_overdrive" | "sd1" => "SD-1 Overdrive",
+                    "klon_centaur" | "klon" => "Klon Centaur",
+                    _ => "Screamer 808",
+                };
+                let cab_display_name = |s: &str| match s {
+                    "greenback_4x12" | "greenback_4x12_closed" => "4x12 Greenback",
+                    "v30_4x12" | "v30_4x12_closed" => "4x12 V30",
+                    "alnico_blue_2x12" | "alnico_blue_2x12_open" => "2x12 Alnico",
+                    "twin_2x12_open" | "twin_2x12" | "jensen_c12n_2x12_open" => "2x12 Jensen",
+                    _ => "4x12 Greenback",
+                };
 
                 let graph = serde_json::json!({
                     "rows": [
                         {
                             "index": 0,
                             "blocks": [
-                                {"id": "gate", "col": 0, "name": "Natural Gate", "enabled": true},
-                                {"id": "drive", "col": 1, "name": "Screamer 808", "enabled": true},
+                                {"id": "gate", "col": 0, "name": "Natural Gate", "enabled": gate_en},
+                                {"id": "drive", "col": 1, "name": drive_display_name(&drive_model), "enabled": drive_en},
                                 {"id": "split", "col": 2, "name": "A/B Crossover", "enabled": split_en},
-                                {"id": "amp_1", "col": 3, "name": "Brit 800 2203", "enabled": true},
-                                {"id": "cab_1", "col": 4, "name": "4x12 Greenback", "enabled": true},
+                                {"id": "amp_1", "col": 3, "name": amp_display_name(&amp_model), "enabled": amp_en},
+                                {"id": "cab_1", "col": 4, "name": cab_display_name(&cab_speaker), "enabled": cab_en},
                                 {"id": "eq_1", "col": 5, "name": "8-Band Studio", "enabled": eq_en},
                                 {"id": "merge", "col": 6, "name": "Mixer Merge", "enabled": true},
                                 {"id": "dly_1", "col": 7, "name": "Tape Echo 201", "enabled": dly_en},
@@ -701,8 +1027,8 @@ pub fn dispatch(
                             "index": 1,
                             "blocks": [
                                 {"id": "comp_2", "col": 2, "name": "FET 1176 Comp", "enabled": comp_en},
-                                {"id": "amp_2", "col": 3, "name": "US Twin Clean", "enabled": amp2_en},
-                                {"id": "cab_2", "col": 4, "name": "2x12 Alnico", "enabled": cab2_en},
+                                {"id": "amp_2", "col": 3, "name": amp_display_name(&amp2_model), "enabled": amp2_en},
+                                {"id": "cab_2", "col": 4, "name": cab_display_name(&cab2_speaker), "enabled": cab2_en},
                                 {"id": "mod_2", "col": 5, "name": "Tri-Chorus", "enabled": mod_en}
                             ]
                         }
@@ -730,33 +1056,59 @@ pub fn dispatch(
                     })
                     .unwrap_or("transfer");
 
-                let (asym, plate_v) = if let Ok(st) = ctx.app_state.lock() {
-                    (st.triode_asym, st.preamp_plate_v)
-                } else {
-                    (0.20, 250.0)
+                let (amp_model_str, preamp_tube_str, asym, plate_v, ts_str, bass, middle, treble, cab_speaker_str) =
+                    if let Ok(st) = ctx.app_state.lock() {
+                        (
+                            st.amp_model.clone(),
+                            st.preamp_tube.clone(),
+                            st.triode_asym,
+                            st.preamp_plate_v,
+                            st.tonestack.clone(),
+                            st.amp_bass,
+                            st.amp_middle,
+                            st.amp_treble,
+                            st.cab_speaker.clone(),
+                        )
+                    } else {
+                        (
+                            "jcm800_2203".to_string(),
+                            "12ax7".to_string(),
+                            0.20,
+                            280.0,
+                            "model".to_string(),
+                            5.0,
+                            5.0,
+                            5.0,
+                            "v30_4x12".to_string(),
+                        )
+                    };
+
+                let amp_id = match amp_model_str.as_str() {
+                    "plexi_1959" => ampforge_dsp::amp::AmpModelId::BritPlexi1959,
+                    "jcm800_2203" => ampforge_dsp::amp::AmpModelId::BritJcm800_2203,
+                    "twin_ab763" | "twin_blackface_65" => ampforge_dsp::amp::AmpModelId::UsTwinBlackface65,
+                    "dual_rect" | "dual_recto_rev_f" => ampforge_dsp::amp::AmpModelId::CaliDualRectoRevF,
+                    "ac30_tb" | "ac30_top_boost" => ampforge_dsp::amp::AmpModelId::UkAc30TopBoost,
+                    _ => ampforge_dsp::amp::AmpModelId::BritJcm800_2203,
                 };
 
                 match mode {
                     "transfer" => {
+                        let tube = parse_preamp_tube(&preamp_tube_str);
                         let n = 65;
                         let mut pts = Vec::with_capacity(n);
-                        let v1_headroom = (plate_v as f64 / 250.0).max(0.1);
                         for i in 0..n {
                             let x = -2.0 + (4.0 * i as f64 / (n - 1) as f64);
-                            let pre_in_raw = x / v1_headroom;
-                            let pre_in = if asym as f64 > 1e-4 {
-                                if pre_in_raw >= 0.0 {
-                                    pre_in_raw * (1.0 + 0.5 * asym as f64)
-                                } else {
-                                    pre_in_raw * (1.0 - 0.5 * asym as f64)
-                                }
-                            } else {
-                                pre_in_raw
-                            };
-                            let y = (pre_in / (1.0 + pre_in.abs())) * v1_headroom;
+                            let y = ampforge_dsp::amp::static_preamp_transfer(
+                                x,
+                                amp_id,
+                                tube,
+                                asym as f64,
+                                plate_v as f64,
+                            );
                             pts.push(serde_json::json!({
-                                "x": (x * 10000.0).round() / 10000.0,
-                                "y": (y * 10000.0).round() / 10000.0
+                                "x": x,
+                                "y": y
                             }));
                         }
                         let resp = serde_json::json!({ "transfer": pts });
@@ -764,30 +1116,79 @@ pub fn dispatch(
                     }
                     "waveform" => {
                         let n = 128;
-                        let mut di = Vec::with_capacity(n);
-                        let mut sat = Vec::with_capacity(n);
-                        for i in 0..n {
-                            let t = i as f64 / n as f64;
-                            let s = (2.0 * std::f64::consts::PI * t).sin();
-                            di.push(s);
-                            sat.push((s * 1.5).tanh());
+                        let mut di = vec![0.0f32; n];
+                        let mut out_wf = vec![0.0f32; n];
+                        let mut has_signal = false;
+                        if let Some(ref ring) = ctx.clean_input_ring {
+                            let read = ring.read_latest_since(0, &mut di);
+                            if read > 0 {
+                                has_signal = true;
+                            }
                         }
+                        if let Some(ref ring) = ctx.scope_output_ring {
+                            let read = ring.read_latest_since(0, &mut out_wf);
+                            if read > 0 {
+                                has_signal = true;
+                            }
+                        }
+                        let di_json: Vec<f64> = di.iter().map(|&v| v as f64).collect();
+                        let out_json: Vec<f64> = out_wf.iter().map(|&v| v as f64).collect();
                         let resp = serde_json::json!({
+                            "no_signal": !has_signal,
                             "waveform": {
-                                "di": di,
-                                "output": sat
+                                "di": di_json,
+                                "output": out_json
                             }
                         });
                         (200, "application/json", serde_json::to_vec(&resp).unwrap())
                     }
                     "tonestack" => {
+                        let parsed_ts = parse_tonestack(&ts_str);
+                        let topo = if parsed_ts != ToneStackTopology::Model {
+                            parsed_ts
+                        } else {
+                            match amp_id {
+                                ampforge_dsp::amp::AmpModelId::BritPlexi1959
+                                | ampforge_dsp::amp::AmpModelId::BritJcm800_2203 => {
+                                    ToneStackTopology::MarshallCathodeFollower
+                                }
+                                ampforge_dsp::amp::AmpModelId::UsTwinBlackface65 => {
+                                    ToneStackTopology::FenderTmbMidScoop
+                                }
+                                ampforge_dsp::amp::AmpModelId::UkAc30TopBoost => {
+                                    ToneStackTopology::VoxTopBoost
+                                }
+                                ampforge_dsp::amp::AmpModelId::CaliDualRectoRevF => {
+                                    ToneStackTopology::MesaMarkPreGain
+                                }
+                            }
+                        };
+                        let cab_model = match cab_speaker_str.as_str() {
+                            "greenback_4x12" => SpeakerCabModel::Greenback4x12Closed,
+                            "v30_4x12" => SpeakerCabModel::V304x12Closed,
+                            "alnico_blue_2x12" => SpeakerCabModel::AlnicoBlue2x12Open,
+                            "twin_2x12" => SpeakerCabModel::Twin2x12Open,
+                            _ => SpeakerCabModel::V304x12Closed,
+                        };
+                        let imp_curve = cab_model.default_impedance_curve();
+                        let f0 = imp_curve.low_resonance_hz as f64;
+                        let q = imp_curve.resonance_q as f64;
+                        let res_gain_db = imp_curve.low_resonance_gain_db as f64;
+                        let ind_db = imp_curve.high_inductance_rise_db as f64;
+
                         let n = 50;
                         let mut ts = Vec::with_capacity(n);
                         let mut z_curve = Vec::with_capacity(n);
                         for i in 0..n {
                             let f = 20.0 * (1000.0f64).powf(i as f64 / (n - 1) as f64);
-                            let db = -6.0 * (-((f - 650.0) / 400.0).powi(2)).exp();
-                            let z = 8.0 + 32.0 / (1.0 + ((f - 98.0) / 15.0).powi(2)) + (f / 2000.0);
+                            let db = ampforge_dsp::tonestack::analog_tonestack_magnitude_db(
+                                topo, bass, middle, treble, f,
+                            );
+                            let detune = q * (f / f0 - f0 / f);
+                            let res_shape = 1.0 / (1.0 + detune * detune);
+                            let ind_shape = (f / 20000.0).clamp(0.0, 1.0);
+                            let z_db = res_gain_db * res_shape + ind_db * ind_shape;
+                            let z = 8.0 * 10.0f64.powf(z_db / 20.0);
                             ts.push(serde_json::json!({"f": f, "db": db}));
                             z_curve.push(serde_json::json!({"f": f, "z": z}));
                         }
@@ -828,7 +1229,7 @@ pub fn dispatch(
         }
         "/api/input/di" => {
             if method == "POST" {
-                handle_post_di(body, &ctx.dsp_chain)
+                handle_post_di(body, ctx)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -842,7 +1243,7 @@ pub fn dispatch(
         }
         "/api/cab/ir" => {
             if method == "POST" {
-                handle_post_cab_ir(body, &ctx.app_state, &ctx.dsp_chain)
+                handle_post_cab_ir(body, ctx)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -856,7 +1257,7 @@ pub fn dispatch(
         }
         "/api/presets/load" => {
             if method == "POST" {
-                handle_post_presets_load(body, &ctx.app_state, &ctx.dsp_chain)
+                handle_post_presets_load(body, ctx)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -870,14 +1271,14 @@ pub fn dispatch(
         }
         "/api/presets/import" => {
             if method == "POST" {
-                handle_post_presets_import(body, &ctx.app_state, &ctx.dsp_chain)
+                handle_post_presets_import(body, ctx)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
         }
         "/api/scenes/select" => {
             if method == "POST" {
-                handle_post_scenes_select(body, &ctx.app_state)
+                handle_post_scenes_select(body, ctx)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -943,6 +1344,286 @@ fn parse_mic_angle_deg(v: &serde_json::Value) -> Option<f32> {
         }
     } else {
         None
+    }
+}
+
+fn parse_mic_model(s: &str) -> Option<MicModel> {
+    match s {
+        "sm57" => Some(MicModel::Sm57),
+        "md421" => Some(MicModel::Md421),
+        "m88" => Some(MicModel::M88),
+        "r121" => Some(MicModel::R121),
+        "m160" => Some(MicModel::M160),
+        "u87" => Some(MicModel::U87),
+        "c414" => Some(MicModel::C414),
+        _ => None,
+    }
+}
+
+fn parse_preamp_tube(s: &str) -> PreampTube {
+    match s {
+        "12at7" => PreampTube::At7,
+        "ef86_variant" | "ef86" => PreampTube::Ef86,
+        _ => PreampTube::Ax7A,
+    }
+}
+
+fn parse_power_tube(s: &str) -> PowerTube {
+    match s {
+        "6l6gc" => PowerTube::Tube6L6Gc,
+        "kt88" => PowerTube::Kt88,
+        "el84_variant" | "el84" => PowerTube::El84,
+        _ => PowerTube::El34,
+    }
+}
+
+fn parse_rectifier(s: &str) -> RectifierType {
+    match s {
+        "gz34" => RectifierType::Gz34_5Ar4,
+        "5u4gb" => RectifierType::Dual5U4Gb,
+        _ => RectifierType::SolidStateDiode,
+    }
+}
+
+fn parse_tonestack(s: &str) -> ToneStackTopology {
+    match s {
+        "marshall" => ToneStackTopology::MarshallCathodeFollower,
+        "fender" => ToneStackTopology::FenderTmbMidScoop,
+        "vox" => ToneStackTopology::VoxTopBoost,
+        "baxandall" => ToneStackTopology::PassiveJamesBaxandall,
+        _ => ToneStackTopology::Model,
+    }
+}
+
+/// Traduz um par JSON `(chave, valor)` para comandos Copy lock-free `DspParamUpdate` (Spec 034, CA-1/CA-2).
+fn json_kv_to_dsp_updates(k: &str, v: &serde_json::Value, out: &mut Vec<DspParamUpdate>) {
+    match k {
+        "amp_1.gain" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpGain(num as f32)); },
+        "amp_1.overdrive" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpOverdrive(num as f32)); },
+        "amp_1.bass" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpBass(num as f32)); },
+        "amp_1.middle" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpMiddle(num as f32)); },
+        "amp_1.treble" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpTreble(num as f32)); },
+        "amp_1.presence" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpPresence(num as f32)); },
+        "amp_1.depth" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpDepth(num as f32)); },
+        "amp_1.master" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpMaster(num as f32)); },
+        "amp_1.volume_2" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpVolume2(num as f32)); },
+        "amp_1.cut" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpCut(num as f32)); },
+        "amp_1.reverb" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpReverb(num as f32)); },
+        "amp_1.vibrato_speed" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpVibratoSpeed(num as f32)); },
+        "amp_1.vibrato_depth" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpVibratoDepth(num as f32)); },
+        "amp_1.power" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::AmpPower(b)); },
+        "amp_1.standby" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::AmpStandby(b)); },
+        "amp_1.jumpered" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::AmpJumpered(b)); },
+        "amp_1.spongy" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::AmpSpongy(b)); },
+        "amp_1.bright" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::AmpBright(b)); },
+        "amp_1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::AmpEnabled(b)); },
+        "amp_1.input_jack" => if let Some(s) = v.as_str() {
+            if let Some(j) = ampforge_dsp::amp::AmpInputJack::from_str_name(s) {
+                out.push(DspParamUpdate::AmpInputJack(j));
+            }
+        },
+        "amp_1.channel_mode" => if let Some(s) = v.as_str() {
+            if let Some(m) = ampforge_dsp::amp::AmpChannelMode::from_str_name(s) {
+                out.push(DspParamUpdate::AmpChannelMode(m));
+            }
+        },
+        "amp_1.impedance_ohms" => if let Some(s) = v.as_str() {
+            let ohms = match s { "4" => 4, "8" => 8, _ => 16 };
+            out.push(DspParamUpdate::AmpImpedanceOhms(ohms));
+        },
+        "amp_1.model" => if let Some(s) = v.as_str() {
+            if let Some(m) = ampforge_dsp::amp::find_model_by_name(s) {
+                out.push(DspParamUpdate::AmpModel(m));
+            }
+        },
+        "amp_1.bias_ma" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpBiasMa(num as f32)); },
+        "amp_1.sag" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpSag(num as f32)); },
+        "amp_1.nfb" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpNfb(num as f32)); },
+        "amp_1.xformer_sat" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpXformerSat(num as f32)); },
+        "amp_1.preamp_plate_v" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpPreampPlateV(num as f32)); },
+        "amp_1.triode_asym" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpTriodeAsym(num as f32)); },
+        "amp_1.preamp_tube" => if let Some(s) = v.as_str() { out.push(DspParamUpdate::AmpPreampTube(parse_preamp_tube(s))); },
+        "amp_1.power_tube" => if let Some(s) = v.as_str() { out.push(DspParamUpdate::AmpPowerTube(parse_power_tube(s))); },
+        "amp_1.rectifier" => if let Some(s) = v.as_str() { out.push(DspParamUpdate::AmpRectifier(parse_rectifier(s))); },
+        "amp_1.tonestack" => if let Some(s) = v.as_str() { out.push(DspParamUpdate::AmpToneStack(parse_tonestack(s))); },
+        "engine.oversampling" => if let Some(s) = v.as_str() {
+            let factor = match s { "2x" => 2, "4x" => 4, _ => 8 };
+            out.push(DspParamUpdate::EngineOversampling(factor));
+        },
+        "input.boost" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::InputBoost(num as f32)); },
+        "input.source" => if let Some(s) = v.as_str() {
+            let code = match s { "test_riff" => 1, "di_file" => 2, _ => 0 };
+            out.push(DspParamUpdate::InputSource(code));
+        },
+        "drive.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::DriveEnabled(b)); },
+        "drive.model" => if let Some(s) = v.as_str() {
+            if let Some(m) = DriveModel::from_str_name(s) {
+                out.push(DspParamUpdate::DriveModel(m));
+            }
+        },
+        "drive.drive" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::DriveGain(num as f32)); },
+        "drive.tone" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::DriveTone(num as f32)); },
+        "drive.level" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::DriveLevel(num as f32)); },
+        "drive.bias" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::DriveBias(num as f32)); },
+        "gate.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::GateEnabled(b)); },
+        "gate.threshold_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateThreshold(num as f32)); },
+        "gate.mode" => if let Some(s) = v.as_str() {
+            let m = if s == "classic" {
+                ampforge_dsp::fx::NoiseGateMode::ClassicExpanderGate
+            } else {
+                ampforge_dsp::fx::NoiseGateMode::IntelligentNaturalGate
+            };
+            out.push(DspParamUpdate::GateMode(m));
+        },
+        "gate.hysteresis_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateHysteresis(num as f32)); },
+        "gate.attack_ms" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateAttack(num as f32)); },
+        "gate.hold_ms" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateHold(num as f32)); },
+        "gate.release_ms" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateRelease(num as f32)); },
+        "gate.range_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateRange(num as f32)); },
+        "gate.key_hpf_hz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateKeyHpf(num as f32)); },
+        "gate.key_lpf_hz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::GateKeyLpf(num as f32)); },
+        "cab_1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::CabEnabled(b)); },
+        "cab_1.speaker" | "cab_1.model" => if let Some(s) = v.as_str() {
+            if let Some(spk) = parse_speaker_model(s) {
+                out.push(DspParamUpdate::Cab1Speaker(spk));
+            }
+        },
+        "cab_1.resonance_hz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabResonanceHz(num as f32)); },
+        "cab_1.hicut_khz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabHicutKhz(num as f32)); },
+        "cab_1.ir_enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::CabIrEnabled(b)); },
+        "cab_1.mic1.model" => if let Some(s) = v.as_str() {
+            if let Some(m) = parse_mic_model(s) { out.push(DspParamUpdate::CabMic1Model(m)); }
+        },
+        "cab_1.mic1.position" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabMic1Position(num as f32)); },
+        "cab_1.mic1.distance_cm" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabMic1DistanceCm(num as f32)); },
+        "cab_1.mic1.level_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabMic1LevelDb(num as f32)); },
+        "cab_1.mic1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::CabMic1Enabled(b)); },
+        "cab_1.mic1.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) { out.push(DspParamUpdate::Cab1Mic1AngleDeg(deg)); },
+        "cab_1.mic1.phase_invert" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Cab1Mic1PhaseInvert(b)); },
+        "cab_1.mic2.model" => if let Some(s) = v.as_str() {
+            if let Some(m) = parse_mic_model(s) { out.push(DspParamUpdate::CabMic2Model(m)); }
+        },
+        "cab_1.mic2.position" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabMic2Position(num as f32)); },
+        "cab_1.mic2.distance_cm" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabMic2DistanceCm(num as f32)); },
+        "cab_1.mic2.level_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::CabMic2LevelDb(num as f32)); },
+        "cab_1.mic2.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::CabMic2Enabled(b)); },
+        "cab_1.mic2.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) { out.push(DspParamUpdate::Cab1Mic2AngleDeg(deg)); },
+        "cab_1.mic2.phase_invert" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Cab1Mic2PhaseInvert(b)); },
+        "split.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::SplitEnabled(b)); },
+        "split.mode" => if let Some(s) = v.as_str() { out.push(DspParamUpdate::SplitMode(ChainSplitMode::from_str_name(s))); },
+        "split.crossover_hz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::SplitCrossoverHz(num as f32)); },
+        "merge.row_1_level_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::MergeRow1LevelDb(num as f32)); },
+        "merge.row_1_phase_invert" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::MergeRow1PhaseInvert(b)); },
+        "comp_2.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Comp2Enabled(b)); },
+        "comp_2.input" => if let Some(num) = v.as_f64() {
+            let pre_gain_db = ((num as f32).clamp(0.0, 10.0) - 5.0) * 4.0;
+            out.push(DspParamUpdate::Comp2ThresholdDb(-20.0 - pre_gain_db));
+        },
+        "comp_2.output" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Comp2Output(num as f32)); },
+        "comp_2.attack" => if let Some(num) = v.as_f64() {
+            let att = (num as f32).clamp(1.0, 7.0);
+            let att_ms = 0.8f32 * (0.02f32 / 0.8f32).powf((att - 1.0) / 6.0);
+            out.push(DspParamUpdate::Comp2AttackMs(att_ms));
+        },
+        "comp_2.release" => if let Some(num) = v.as_f64() {
+            let rel = (num as f32).clamp(1.0, 7.0);
+            let rel_ms = 1100.0f32 * (50.0f32 / 1100.0f32).powf((rel - 1.0) / 6.0);
+            out.push(DspParamUpdate::Comp2ReleaseMs(rel_ms));
+        },
+        "comp_2.ratio" => if let Some(s) = v.as_str() {
+            let r = match s { "8" => 8.0, "12" => 12.0, "20" | "all" => 20.0, _ => 4.0 };
+            out.push(DspParamUpdate::Comp2Ratio(r));
+            out.push(DspParamUpdate::Comp2AllButtons(s == "all"));
+        },
+        "eq_1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Eq1Enabled(b)); },
+        "eq_1.mode" => if let Some(s) = v.as_str() {
+            if let Some(m) = parse_eq_mode(s) { out.push(DspParamUpdate::Eq1Mode(m)); }
+        },
+        "eq_1.gain_db" | "eq_1.input_gain_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Eq1InputGainDb(num as f32)); },
+        "eq_1.volume_db" | "eq_1.output_level_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Eq1OutputLevelDb(num as f32)); },
+        "mod_2.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Mod2Enabled(b)); },
+        "mod_2.model" => if let Some(s) = v.as_str().and_then(parse_mod_model) { out.push(DspParamUpdate::Mod2Model(s)); },
+        "mod_2.rate_hz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Mod2RateHz(num as f32)); },
+        "mod_2.depth" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Mod2Depth(num as f32)); },
+        "mod_2.mix" | "mod_2.mix_pct" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Mod2Mix(num as f32)); },
+        "dly_1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Dly1Enabled(b)); },
+        "dly_1.mode" => {
+            if let Some(m) = v.as_str().and_then(|s| s.parse::<u8>().ok()).or_else(|| v.as_u64().and_then(|n| u8::try_from(n).ok())) {
+                out.push(DspParamUpdate::Dly1Mode(m));
+            }
+        }
+        "dly_1.repeat_rate" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Dly1RepeatRate(num as f32)); },
+        "dly_1.intensity" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Dly1Intensity(num as f32)); },
+        "dly_1.echo_volume" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Dly1EchoVolume(num as f32)); },
+        "dly_1.reverb_volume" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Dly1ReverbVolume(num as f32)); },
+        "dly_1.bass" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Dly1Bass(num as f32)); },
+        "dly_1.treble" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Dly1Treble(num as f32)); },
+        "dly_1.spillover" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Dly1Spillover(b)); },
+        "rev_1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Rev1Enabled(b)); },
+        "rev_1.decay_s" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Rev1DecayS(num as f32)); },
+        "rev_1.predelay_ms" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Rev1PredelayMs(num as f32)); },
+        "rev_1.damping" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Rev1Damping(num as f32)); },
+        "rev_1.mix" | "rev_1.mix_pct" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Rev1Mix(num as f32)); },
+        "rev_1.spillover" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Rev1Spillover(b)); },
+        "amp_2.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Amp2Enabled(b)); },
+        "amp_2.model" => if let Some(s) = v.as_str() {
+            if let Some(m) = ampforge_dsp::amp::find_model_by_name(s) {
+                out.push(DspParamUpdate::Amp2Model(m));
+            }
+        },
+        "cab_2.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Cab2Enabled(b)); },
+        "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() {
+            if let Some(spk) = parse_speaker_model(s) {
+                out.push(DspParamUpdate::Cab2Speaker(spk));
+            }
+        },
+        "tuner.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::TunerEnabled(b)); },
+        "tuner.output" => if let Some(s) = v.as_str() {
+            let m = if s == "bypass" {
+                ampforge_dsp::tuner::TunerOutputMode::Bypass
+            } else {
+                ampforge_dsp::tuner::TunerOutputMode::Mute
+            };
+            out.push(DspParamUpdate::TunerOutputMode(m));
+        },
+        "tuner.ref_hz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::TunerRefHz(num as f32)); },
+        "looper.position" => if let Some(s) = v.as_str() {
+            let pos = if s == "pre" { LooperPosition::PreChain } else { LooperPosition::PostChain };
+            out.push(DspParamUpdate::LooperPosition(pos));
+        },
+        "looper.action" => if let Some(s) = v.as_str() {
+            if let Some(cmd) = parse_looper_action(s) { out.push(DspParamUpdate::LooperAction(cmd)); }
+        },
+        "pitch_1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Pitch1Enabled(b)); },
+        "pitch_1.model" => if let Some(s) = v.as_str() {
+            if let Some(m) = parse_pitch_model(s) { out.push(DspParamUpdate::Pitch1Model(m)); }
+        },
+        "pitch_1.semitones" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Pitch1Semitones(num as f32)); },
+        "pitch_1.key" => if let Some(s) = v.as_str() {
+            if let Some(k) = parse_pitch_key(s) { out.push(DspParamUpdate::Pitch1Key(k)); }
+        },
+        "pitch_1.scale" => if let Some(s) = v.as_str() {
+            if let Some(sc) = parse_pitch_scale(s) { out.push(DspParamUpdate::Pitch1Scale(sc)); }
+        },
+        "pitch_1.mix" | "pitch_1.mix_pct" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Pitch1Mix(num as f32)); },
+        _ if k.starts_with("eq_1.band") => {
+            let rest = &k["eq_1.band".len()..];
+            let mut parts = rest.split('.');
+            if let (Some(num_s), Some(prop), Some(num)) = (parts.next(), parts.next(), v.as_f64()) {
+                if let Ok(n) = num_s.parse::<usize>() {
+                    if (1..=10).contains(&n) {
+                        let idx = n - 1;
+                        match prop {
+                            "freq_hz" => out.push(DspParamUpdate::Eq1BandFreq(idx, num as f32)),
+                            "gain_db" => out.push(DspParamUpdate::Eq1BandGain(idx, num as f32)),
+                            "q" => out.push(DspParamUpdate::Eq1BandQ(idx, num as f32)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1680,6 +2361,72 @@ pub fn handle_post_params(
                             break;
                         }
                     }
+                    "mod_2.model" => {
+                        if v.as_str().and_then(parse_mod_model).is_some() {
+                            applied.push(k.clone());
+                        } else {
+                            validation_error = Some("mod_2.model inválido".to_string());
+                            break;
+                        }
+                    }
+                    "pitch_1.enabled" => {
+                        if v.is_boolean() {
+                            applied.push(k.clone());
+                        } else {
+                            validation_error = Some("pitch_1.enabled deve ser booleano".to_string());
+                            break;
+                        }
+                    }
+                    "pitch_1.model" => {
+                        if v.as_str().and_then(parse_pitch_model).is_some() {
+                            applied.push(k.clone());
+                        } else {
+                            validation_error = Some("pitch_1.model inválido".to_string());
+                            break;
+                        }
+                    }
+                    "pitch_1.semitones" => {
+                        if let Some(num) = v.as_f64() {
+                            if num >= -24.0 && num <= 24.0 {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("pitch_1.semitones fora da faixa -24..24".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("pitch_1.semitones deve ser número".to_string());
+                            break;
+                        }
+                    }
+                    "pitch_1.key" => {
+                        if v.as_str().and_then(parse_pitch_key).is_some() {
+                            applied.push(k.clone());
+                        } else {
+                            validation_error = Some("pitch_1.key inválido".to_string());
+                            break;
+                        }
+                    }
+                    "pitch_1.scale" => {
+                        if v.as_str().and_then(parse_pitch_scale).is_some() {
+                            applied.push(k.clone());
+                        } else {
+                            validation_error = Some("pitch_1.scale inválido".to_string());
+                            break;
+                        }
+                    }
+                    "pitch_1.mix" | "pitch_1.mix_pct" => {
+                        if let Some(num) = v.as_f64() {
+                            if num >= 0.0 && num <= 100.0 {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some(format!("{} fora da faixa 0..100", k));
+                                break;
+                            }
+                        } else {
+                            validation_error = Some(format!("{} deve ser número", k));
+                            break;
+                        }
+                    }
                     "mod_2.rate_hz" => {
                         if let Some(num) = v.as_f64() {
                             if num >= 0.05 && num <= 10.0 {
@@ -2012,6 +2759,31 @@ pub fn handle_post_params(
                 let err_json = format!("{{\"error\":\"{}\"}}", err);
                 (400, "application/json", err_json.into_bytes())
             } else {
+                // Constrói o lote SPSC antes de mutar AppState (Spec 034, CA-1, CA-2, CA-10)
+                let mut updates = Vec::with_capacity(applied.len() + 2);
+                for (k, v) in &map {
+                    if !applied.contains(k) {
+                        continue;
+                    }
+                    json_kv_to_dsp_updates(k.as_str(), v, &mut updates);
+                }
+
+                if let Some(ref pq) = param_queue_clone {
+                    if !updates.is_empty() && pq.push_batch(&updates).is_err() {
+                        return (
+                            503,
+                            "application/json",
+                            br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                        );
+                    }
+                } else if let Some(ref dsp_ref) = dsp_chain_clone {
+                    if let Ok(mut dsp) = dsp_ref.try_lock() {
+                        for u in &updates {
+                            dsp.apply_param_update(*u);
+                        }
+                    }
+                }
+
                 if let Ok(mut st) = app_state_clone.lock() {
                     if let Some(m_val) = map.get("amp_1.model").and_then(|v| v.as_str()) {
                         let nom = nominal_chassis_for_model(m_val);
@@ -2141,6 +2913,7 @@ pub fn handle_post_params(
                                 }
                             }
                             "mod_2.enabled" => st.mod_2_enabled = v.as_bool().unwrap(),
+                            "mod_2.model" => st.mod_2_model = v.as_str().unwrap().to_string(),
                             "mod_2.rate_hz" => st.mod_2_rate_hz = v.as_f64().unwrap() as f32,
                             "mod_2.depth" => st.mod_2_depth = v.as_f64().unwrap() as f32,
                             "mod_2.mix" => st.mod_2_mix = v.as_f64().unwrap() as f32,
@@ -2183,460 +2956,6 @@ pub fn handle_post_params(
                     st.is_modded = st.check_is_modded();
                 }
 
-                if let Some(ref pq) = param_queue_clone {
-                    for (k, v) in &map {
-                        if !applied.contains(k) {
-                            continue;
-                        }
-                        match k.as_str() {
-                            "amp_1.gain" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpGain(num as f32)); },
-                            "amp_1.overdrive" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpOverdrive(num as f32)); },
-                            "amp_1.bass" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpBass(num as f32)); },
-                            "amp_1.middle" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpMiddle(num as f32)); },
-                            "amp_1.treble" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpTreble(num as f32)); },
-                            "amp_1.presence" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpPresence(num as f32)); },
-                            "amp_1.depth" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpDepth(num as f32)); },
-                            "amp_1.master" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpMaster(num as f32)); },
-                            "amp_1.volume_2" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpVolume2(num as f32)); },
-                            "amp_1.cut" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpCut(num as f32)); },
-                            "amp_1.reverb" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpReverb(num as f32)); },
-                            "amp_1.vibrato_speed" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpVibratoSpeed(num as f32)); },
-                            "amp_1.vibrato_depth" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::AmpVibratoDepth(num as f32)); },
-                            "amp_1.power" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::AmpPower(b)); },
-                            "amp_1.standby" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::AmpStandby(b)); },
-                            "amp_1.jumpered" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::AmpJumpered(b)); },
-                            "amp_1.spongy" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::AmpSpongy(b)); },
-                            "amp_1.input_jack" => if let Some(s) = v.as_str() {
-                                if let Some(j) = ampforge_dsp::amp::AmpInputJack::from_str_name(s) {
-                                    let _ = pq.push(DspParamUpdate::AmpInputJack(j));
-                                }
-                            },
-                            "amp_1.channel_mode" => if let Some(s) = v.as_str() {
-                                if let Some(m) = ampforge_dsp::amp::AmpChannelMode::from_str_name(s) {
-                                    let _ = pq.push(DspParamUpdate::AmpChannelMode(m));
-                                }
-                            },
-                            "amp_1.impedance_ohms" => if let Some(s) = v.as_str() {
-                                let ohms = match s { "4" => 4, "8" => 8, _ => 16 };
-                                let _ = pq.push(DspParamUpdate::AmpImpedanceOhms(ohms));
-                            },
-                            "engine.oversampling" => if let Some(s) = v.as_str() {
-                                let factor = match s { "2x" => 2, "4x" => 4, _ => 8 };
-                                let _ = pq.push(DspParamUpdate::EngineOversampling(factor));
-                            },
-                            "drive.drive" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::DriveGain(num as f32)); },
-                            "drive.tone" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::DriveTone(num as f32)); },
-                            "drive.level" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::DriveLevel(num as f32)); },
-                            "drive.bias" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::DriveBias(num as f32)); },
-                            "drive.model" => if let Some(s) = v.as_str() {
-                                if let Some(m) = DriveModel::from_str_name(s) {
-                                    let _ = pq.push(DspParamUpdate::DriveModel(m));
-                                }
-                            },
-                            "drive.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::DriveEnabled(b)); },
-                            "gate.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::GateEnabled(b)); },
-                            "gate.threshold_db" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateThreshold(num as f32)); },
-                            "gate.mode" => {
-                                if let Some(s) = v.as_str() {
-                                    let m = if s == "classic" {
-                                        ampforge_dsp::fx::NoiseGateMode::ClassicExpanderGate
-                                    } else {
-                                        ampforge_dsp::fx::NoiseGateMode::IntelligentNaturalGate
-                                    };
-                                    let _ = pq.push(DspParamUpdate::GateMode(m));
-                                }
-                            }
-                            "gate.hysteresis_db" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateHysteresis(num as f32)); },
-                            "gate.attack_ms" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateAttack(num as f32)); },
-                            "gate.hold_ms" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateHold(num as f32)); },
-                            "gate.release_ms" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateRelease(num as f32)); },
-                            "gate.range_db" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateRange(num as f32)); },
-                            "gate.key_hpf_hz" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateKeyHpf(num as f32)); },
-                            "gate.key_lpf_hz" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::GateKeyLpf(num as f32)); },
-                            "input.boost" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::InputBoost(num as f32)); },
-                            "cab_1.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::CabEnabled(b)); },
-                            "cab_1.speaker" => if let Some(s) = v.as_str() {
-                                if let Some(spk) = parse_speaker_model(s) {
-                                    let _ = pq.push(DspParamUpdate::Cab1Speaker(spk));
-                                }
-                            },
-                            "cab_1.mic1.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) {
-                                let _ = pq.push(DspParamUpdate::Cab1Mic1AngleDeg(deg));
-                            },
-                            "cab_1.mic2.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) {
-                                let _ = pq.push(DspParamUpdate::Cab1Mic2AngleDeg(deg));
-                            },
-                            "cab_1.mic1.phase_invert" => if let Some(b) = v.as_bool() {
-                                let _ = pq.push(DspParamUpdate::Cab1Mic1PhaseInvert(b));
-                            },
-                            "cab_1.mic2.phase_invert" => if let Some(b) = v.as_bool() {
-                                let _ = pq.push(DspParamUpdate::Cab1Mic2PhaseInvert(b));
-                            },
-                            "amp_1.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::AmpEnabled(b)); },
-                            "tuner.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::TunerEnabled(b)); },
-                            "tuner.output" => {
-                                if let Some(s) = v.as_str() {
-                                    let m = if s == "bypass" {
-                                        ampforge_dsp::tuner::TunerOutputMode::Bypass
-                                    } else {
-                                        ampforge_dsp::tuner::TunerOutputMode::Mute
-                                    };
-                                    let _ = pq.push(DspParamUpdate::TunerOutputMode(m));
-                                }
-                            }
-                            "tuner.ref_hz" => if let Some(num) = v.as_f64() {
-                                let _ = pq.push(DspParamUpdate::TunerRefHz(num as f32));
-                            },
-                            "looper.position" => if let Some(s) = v.as_str() {
-                                let pos = if s == "pre" { LooperPosition::PreChain } else { LooperPosition::PostChain };
-                                let _ = pq.push(DspParamUpdate::LooperPosition(pos));
-                            },
-                            "looper.action" => if let Some(s) = v.as_str() {
-                                if let Some(cmd) = parse_looper_action(s) {
-                                    let _ = pq.push(DspParamUpdate::LooperAction(cmd));
-                                }
-                            },
-                            "comp_2.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::Comp2Enabled(b)); },
-                            "comp_2.input" => if let Some(num) = v.as_f64() {
-                                let pre_gain_db = ((num as f32).clamp(0.0, 10.0) - 5.0) * 4.0;
-                                let _ = pq.push(DspParamUpdate::Comp2ThresholdDb(-20.0 - pre_gain_db));
-                            },
-                            "comp_2.output" => if let Some(num) = v.as_f64() {
-                                let _ = pq.push(DspParamUpdate::Comp2Output(num as f32));
-                            },
-                            "comp_2.attack" => if let Some(num) = v.as_f64() {
-                                let att = (num as f32).clamp(1.0, 7.0);
-                                let att_ms = 0.8f32 * (0.02f32 / 0.8f32).powf((att - 1.0) / 6.0);
-                                let _ = pq.push(DspParamUpdate::Comp2AttackMs(att_ms));
-                            },
-                            "comp_2.release" => if let Some(num) = v.as_f64() {
-                                let rel = (num as f32).clamp(1.0, 7.0);
-                                let rel_ms = 1100.0f32 * (50.0f32 / 1100.0f32).powf((rel - 1.0) / 6.0);
-                                let _ = pq.push(DspParamUpdate::Comp2ReleaseMs(rel_ms));
-                            },
-                            "comp_2.ratio" => if let Some(s) = v.as_str() {
-                                let r = match s { "8" => 8.0, "12" => 12.0, "20" | "all" => 20.0, _ => 4.0 };
-                                let _ = pq.push(DspParamUpdate::Comp2Ratio(r));
-                                let _ = pq.push(DspParamUpdate::Comp2AllButtons(s == "all"));
-                            },
-                            "eq_1.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::Eq1Enabled(b)); },
-                            "eq_1.mode" => if let Some(s) = v.as_str() {
-                                if let Some(m) = parse_eq_mode(s) {
-                                    let _ = pq.push(DspParamUpdate::Eq1Mode(m));
-                                }
-                            },
-                            "eq_1.gain_db" | "eq_1.input_gain_db" => if let Some(num) = v.as_f64() {
-                                let _ = pq.push(DspParamUpdate::Eq1InputGainDb(num as f32));
-                            },
-                            "eq_1.volume_db" | "eq_1.output_level_db" => if let Some(num) = v.as_f64() {
-                                let _ = pq.push(DspParamUpdate::Eq1OutputLevelDb(num as f32));
-                            },
-                            k if k.starts_with("eq_1.band") => {
-                                let rest = &k["eq_1.band".len()..];
-                                let mut parts = rest.split('.');
-                                if let (Some(num_s), Some(prop), Some(num)) = (parts.next(), parts.next(), v.as_f64()) {
-                                    if let Ok(n) = num_s.parse::<usize>() {
-                                        if (1..=10).contains(&n) {
-                                            let idx = n - 1;
-                                            match prop {
-                                                "freq_hz" => { let _ = pq.push(DspParamUpdate::Eq1BandFreq(idx, num as f32)); }
-                                                "gain_db" => { let _ = pq.push(DspParamUpdate::Eq1BandGain(idx, num as f32)); }
-                                                "q" => { let _ = pq.push(DspParamUpdate::Eq1BandQ(idx, num as f32)); }
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            "mod_2.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::Mod2Enabled(b)); },
-                            "mod_2.rate_hz" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Mod2RateHz(num as f32)); },
-                            "mod_2.depth" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Mod2Depth(num as f32)); },
-                            "mod_2.mix" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Mod2Mix(num as f32)); },
-                            "dly_1.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::Dly1Enabled(b)); },
-                            "dly_1.mode" => {
-                                if let Some(m) = v.as_str().and_then(|s| s.parse::<u8>().ok()).or_else(|| v.as_u64().and_then(|n| u8::try_from(n).ok())) {
-                                    let _ = pq.push(DspParamUpdate::Dly1Mode(m));
-                                }
-                            }
-                            "dly_1.repeat_rate" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Dly1RepeatRate(num as f32)); },
-                            "dly_1.intensity" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Dly1Intensity(num as f32)); },
-                            "dly_1.echo_volume" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Dly1EchoVolume(num as f32)); },
-                            "dly_1.reverb_volume" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Dly1ReverbVolume(num as f32)); },
-                            "dly_1.bass" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Dly1Bass(num as f32)); },
-                            "dly_1.treble" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Dly1Treble(num as f32)); },
-                            "dly_1.spillover" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::Dly1Spillover(b)); },
-                            "rev_1.enabled" => if let Some(b) = v.as_bool() { let _ = pq.push(DspParamUpdate::Rev1Enabled(b)); },
-                            "rev_1.decay_s" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Rev1DecayS(num as f32)); },
-                            "rev_1.mix" => if let Some(num) = v.as_f64() { let _ = pq.push(DspParamUpdate::Rev1Mix(num as f32)); },
-                            _ => {}
-                        }
-                    }
-                }
-
-                if let Some(ref dsp_ref) = dsp_chain_clone {
-                    let needs_chassis_lock = map.keys().any(|k| {
-                        !matches!(
-                            k.as_str(),
-                            "amp_1.gain"
-                                | "amp_1.overdrive"
-                                | "amp_1.bass"
-                                | "amp_1.middle"
-                                | "amp_1.treble"
-                                | "amp_1.presence"
-                                | "amp_1.depth"
-                                | "amp_1.master"
-                                | "amp_1.volume_2"
-                                | "amp_1.cut"
-                                | "amp_1.reverb"
-                                | "amp_1.vibrato_speed"
-                                | "amp_1.vibrato_depth"
-                                | "amp_1.power"
-                                | "amp_1.standby"
-                                | "amp_1.jumpered"
-                                | "amp_1.spongy"
-                                | "amp_1.input_jack"
-                                | "amp_1.channel_mode"
-                                | "amp_1.impedance_ohms"
-                                | "engine.oversampling"
-                                | "drive.drive"
-                                | "drive.tone"
-                                | "drive.level"
-                                | "drive.bias"
-                                | "drive.model"
-                                | "drive.enabled"
-                                | "gate.enabled"
-                                | "gate.threshold_db"
-                                | "gate.mode"
-                                | "gate.hysteresis_db"
-                                | "gate.attack_ms"
-                                | "gate.hold_ms"
-                                | "gate.release_ms"
-                                | "gate.range_db"
-                                | "gate.key_hpf_hz"
-                                | "gate.key_lpf_hz"
-                                | "input.boost"
-                                | "cab_1.enabled"
-                                | "cab_1.speaker"
-                                | "cab_1.mic1.angle_deg"
-                                | "cab_1.mic2.angle_deg"
-                                | "cab_1.mic1.phase_invert"
-                                | "cab_1.mic2.phase_invert"
-                                | "amp_1.enabled"
-                                | "tuner.enabled"
-                                | "tuner.output"
-                                | "tuner.ref_hz"
-                                | "looper.position"
-                                | "looper.action"
-                                | "comp_2.enabled"
-                                | "comp_2.input"
-                                | "comp_2.output"
-                                | "comp_2.attack"
-                                | "comp_2.release"
-                                | "comp_2.ratio"
-                                | "eq_1.enabled"
-                                | "eq_1.mode"
-                                | "eq_1.gain_db"
-                                | "eq_1.input_gain_db"
-                                | "eq_1.volume_db"
-                                | "eq_1.output_level_db"
-                                | "mod_2.enabled"
-                                | "mod_2.rate_hz"
-                                | "mod_2.depth"
-                                | "mod_2.mix"
-                                | "dly_1.enabled"
-                                | "dly_1.mode"
-                                | "dly_1.repeat_rate"
-                                | "dly_1.intensity"
-                                | "dly_1.echo_volume"
-                                | "dly_1.reverb_volume"
-                                | "dly_1.bass"
-                                | "dly_1.treble"
-                                | "dly_1.spillover"
-                                | "rev_1.enabled"
-                                | "rev_1.decay_s"
-                                | "rev_1.mix"
-                        ) && !k.starts_with("eq_1.band")
-                    });
-
-                    if needs_chassis_lock || param_queue_clone.is_none() {
-                        if let Ok(mut dsp) = dsp_ref.try_lock() {
-                            for (k, v) in &map {
-                                if !applied.contains(k) {
-                                    continue;
-                                }
-                                match k.as_str() {
-                                    "amp_1.gain" => dsp.set_amp_gain(v.as_f64().unwrap() as f32),
-                                    "amp_1.overdrive" => dsp.set_amp_overdrive(v.as_f64().unwrap() as f32),
-                                    "amp_1.bass" => dsp.set_amp_bass(v.as_f64().unwrap() as f32),
-                                    "amp_1.middle" => dsp.set_amp_middle(v.as_f64().unwrap() as f32),
-                                    "amp_1.treble" => dsp.set_amp_treble(v.as_f64().unwrap() as f32),
-                                    "amp_1.presence" => dsp.set_amp_presence(v.as_f64().unwrap() as f32),
-                                    "amp_1.depth" => dsp.set_amp_depth(v.as_f64().unwrap() as f32),
-                                    "amp_1.master" => dsp.set_amp_master(v.as_f64().unwrap() as f32),
-                                    "amp_1.volume_2" => dsp.set_amp_volume_2(v.as_f64().unwrap() as f32),
-                                    "amp_1.cut" => dsp.set_amp_cut(v.as_f64().unwrap() as f32),
-                                    "amp_1.reverb" => dsp.set_amp_reverb(v.as_f64().unwrap() as f32),
-                                    "amp_1.vibrato_speed" => dsp.set_amp_vibrato_speed(v.as_f64().unwrap() as f32),
-                                    "amp_1.vibrato_depth" => dsp.set_amp_vibrato_depth(v.as_f64().unwrap() as f32),
-                                    "amp_1.power" => dsp.set_amp_power(v.as_bool().unwrap()),
-                                    "amp_1.standby" => dsp.set_amp_standby(v.as_bool().unwrap()),
-                                    "amp_1.jumpered" => dsp.set_amp_jumpered(v.as_bool().unwrap()),
-                                    "amp_1.spongy" => dsp.set_amp_spongy(v.as_bool().unwrap()),
-                                    "amp_1.input_jack" => dsp.set_amp_input_jack(v.as_str().unwrap()),
-                                    "amp_1.channel_mode" => dsp.set_amp_channel_mode(v.as_str().unwrap()),
-                                    "amp_1.impedance_ohms" => dsp.set_amp_impedance_ohms(v.as_str().unwrap()),
-                                    "amp_1.model" => dsp.set_amp_model(v.as_str().unwrap()),
-                                    "engine.oversampling" => dsp.set_oversampling_factor(v.as_str().unwrap()),
-                                    "input.boost" => dsp.set_input_boost(v.as_f64().unwrap() as f32),
-                                    "gate.threshold_db" => dsp.set_gate_threshold_db(v.as_f64().unwrap() as f32),
-                                    "amp_1.bright" => dsp.set_amp_bright(v.as_bool().unwrap()),
-                                    "drive.enabled" => dsp.set_drive_enabled(v.as_bool().unwrap()),
-                                    "drive.model" => dsp.set_drive_model(v.as_str().unwrap()),
-                                    "drive.drive" => dsp.set_drive_gain(v.as_f64().unwrap() as f32),
-                                    "drive.tone" => dsp.set_drive_tone(v.as_f64().unwrap() as f32),
-                                    "drive.level" => dsp.set_drive_level(v.as_f64().unwrap() as f32),
-                                    "drive.bias" => dsp.set_drive_bias(v.as_f64().unwrap() as f32),
-                                    "gate.enabled" => dsp.set_gate_enabled(v.as_bool().unwrap()),
-                                    "gate.mode" => dsp.set_gate_mode(v.as_str().unwrap()),
-                                    "gate.hysteresis_db" => dsp.set_gate_hysteresis_db(v.as_f64().unwrap() as f32),
-                                    "gate.attack_ms" => dsp.set_gate_attack_ms(v.as_f64().unwrap() as f32),
-                                    "gate.hold_ms" => dsp.set_gate_hold_ms(v.as_f64().unwrap() as f32),
-                                    "gate.release_ms" => dsp.set_gate_release_ms(v.as_f64().unwrap() as f32),
-                                    "gate.range_db" => dsp.set_gate_range_db(v.as_f64().unwrap() as f32),
-                                    "gate.key_hpf_hz" => dsp.set_gate_key_hpf_hz(v.as_f64().unwrap() as f32),
-                                    "gate.key_lpf_hz" => dsp.set_gate_key_lpf_hz(v.as_f64().unwrap() as f32),
-                                    "amp_1.enabled" => dsp.set_amp_enabled(v.as_bool().unwrap()),
-                                    "cab_1.enabled" => dsp.set_cab_enabled(v.as_bool().unwrap()),
-                                    "input.source" => dsp.set_input_source(v.as_str().unwrap()),
-                                    "amp_1.bias_ma" => dsp.set_amp_bias_ma(v.as_f64().unwrap() as f32),
-                                    "amp_1.sag" => dsp.set_amp_sag(v.as_f64().unwrap() as f32),
-                                    "amp_1.nfb" => dsp.set_amp_nfb(v.as_f64().unwrap() as f32),
-                                    "amp_1.xformer_sat" => dsp.set_amp_xformer_sat(v.as_f64().unwrap() as f32),
-                                    "amp_1.preamp_plate_v" => dsp.set_amp_preamp_plate_v(v.as_f64().unwrap() as f32),
-                                    "amp_1.triode_asym" => dsp.set_amp_triode_asym(v.as_f64().unwrap() as f32),
-                                    "amp_1.preamp_tube" => dsp.set_amp_preamp_tube(v.as_str().unwrap()),
-                                    "amp_1.power_tube" => dsp.set_amp_power_tube(v.as_str().unwrap()),
-                                    "amp_1.rectifier" => dsp.set_amp_rectifier(v.as_str().unwrap()),
-                                    "amp_1.tonestack" => dsp.set_amp_tonestack(v.as_str().unwrap()),
-                                    "cab_1.speaker" => dsp.set_cab_speaker(v.as_str().unwrap()),
-                                    "cab_1.resonance_hz" => dsp.set_cab_resonance_hz(v.as_f64().unwrap() as f32),
-                                    "cab_1.hicut_khz" => dsp.set_cab_hicut_khz(v.as_f64().unwrap() as f32),
-                                    "cab_1.ir_enabled" => dsp.set_cab_ir_enabled(v.as_bool().unwrap()),
-                                    "cab_1.mic1.model" => dsp.set_cab_mic1_model(v.as_str().unwrap()),
-                                    "cab_1.mic1.position" => dsp.set_cab_mic1_position(v.as_f64().unwrap() as f32),
-                                    "cab_1.mic1.distance_cm" => dsp.set_cab_mic1_distance_cm(v.as_f64().unwrap() as f32),
-                                    "cab_1.mic1.level_db" => dsp.set_cab_mic1_level_db(v.as_f64().unwrap() as f32),
-                                    "cab_1.mic1.enabled" => dsp.set_cab_mic1_enabled(v.as_bool().unwrap()),
-                                    "cab_1.mic1.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) { dsp.set_cab_mic_angle_deg(0, deg); },
-                                    "cab_1.mic1.phase_invert" => dsp.set_cab_mic_phase_invert(0, v.as_bool().unwrap()),
-                                    "cab_1.mic2.model" => dsp.set_cab_mic2_model(v.as_str().unwrap()),
-                                    "cab_1.mic2.position" => dsp.set_cab_mic2_position(v.as_f64().unwrap() as f32),
-                                    "cab_1.mic2.distance_cm" => dsp.set_cab_mic2_distance_cm(v.as_f64().unwrap() as f32),
-                                    "cab_1.mic2.level_db" => dsp.set_cab_mic2_level_db(v.as_f64().unwrap() as f32),
-                                    "cab_1.mic2.enabled" => dsp.set_cab_mic2_enabled(v.as_bool().unwrap()),
-                                    "cab_1.mic2.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) { dsp.set_cab_mic_angle_deg(1, deg); },
-                                    "cab_1.mic2.phase_invert" => dsp.set_cab_mic_phase_invert(1, v.as_bool().unwrap()),
-                                    "split.enabled" => dsp.set_split_enabled(v.as_bool().unwrap()),
-                                    "split.mode" => {
-                                        let mode = v.as_str().unwrap();
-                                        let hz = map.get("split.crossover_hz").and_then(|x| x.as_f64()).map(|x| x as f32).unwrap_or(650.0);
-                                        dsp.set_split_mode(mode, hz);
-                                    }
-                                    "split.crossover_hz" => {
-                                        let hz = v.as_f64().unwrap() as f32;
-                                        let mode = map.get("split.mode").and_then(|x| x.as_str()).unwrap_or("crossover");
-                                        dsp.set_split_mode(mode, hz);
-                                    }
-                                    "merge.row_1_level_db" => {
-                                        let db = v.as_f64().unwrap() as f32;
-                                        let inv = map.get("merge.row_1_phase_invert").and_then(|x| x.as_bool()).unwrap_or(false);
-                                        dsp.set_merge_config(db, inv);
-                                    }
-                                    "merge.row_1_phase_invert" => {
-                                        let inv = v.as_bool().unwrap();
-                                        let db = map.get("merge.row_1_level_db").and_then(|x| x.as_f64()).map(|x| x as f32).unwrap_or(-6.0);
-                                        dsp.set_merge_config(db, inv);
-                                    }
-                                    "comp_2.enabled" => dsp.set_comp_2_enabled(v.as_bool().unwrap()),
-                                    "comp_2.input" => dsp.set_comp_2_input(v.as_f64().unwrap() as f32),
-                                    "comp_2.output" => dsp.set_comp_2_output(v.as_f64().unwrap() as f32),
-                                    "comp_2.attack" => dsp.set_comp_2_attack(v.as_f64().unwrap() as f32),
-                                    "comp_2.release" => dsp.set_comp_2_release(v.as_f64().unwrap() as f32),
-                                    "comp_2.ratio" => dsp.set_comp_2_ratio(v.as_str().unwrap()),
-                                    "eq_1.enabled" => dsp.set_eq_1_enabled(v.as_bool().unwrap()),
-                                    "eq_1.mode" => dsp.set_eq_1_mode(v.as_str().unwrap()),
-                                    "eq_1.gain_db" | "eq_1.input_gain_db" => dsp.set_eq_1_input_gain_db(v.as_f64().unwrap() as f32),
-                                    "eq_1.volume_db" | "eq_1.output_level_db" => dsp.set_eq_1_output_level_db(v.as_f64().unwrap() as f32),
-                                    "mod_2.enabled" => dsp.set_mod_2_enabled(v.as_bool().unwrap()),
-                                    "mod_2.rate_hz" => dsp.set_mod_2_rate_hz(v.as_f64().unwrap() as f32),
-                                    "mod_2.depth" => dsp.set_mod_2_depth(v.as_f64().unwrap() as f32),
-                                    "mod_2.mix" => dsp.set_mod_2_mix(v.as_f64().unwrap() as f32),
-                                    "dly_1.enabled" => dsp.set_dly_1_enabled(v.as_bool().unwrap()),
-                                    "dly_1.mode" => {
-                                        if let Some(s) = v.as_str() {
-                                            dsp.set_dly_1_mode(s);
-                                        } else if let Some(n) = v.as_u64() {
-                                            dsp.set_dly_1_mode(&n.to_string());
-                                        }
-                                    }
-                                    "dly_1.repeat_rate" => dsp.set_dly_1_repeat_rate(v.as_f64().unwrap() as f32),
-                                    "dly_1.intensity" => dsp.set_dly_1_intensity(v.as_f64().unwrap() as f32),
-                                    "dly_1.echo_volume" => dsp.set_dly_1_echo_volume(v.as_f64().unwrap() as f32),
-                                    "dly_1.reverb_volume" => dsp.set_dly_1_reverb_volume(v.as_f64().unwrap() as f32),
-                                    "dly_1.bass" => dsp.set_dly_1_bass(v.as_f64().unwrap() as f32),
-                                    "dly_1.treble" => dsp.set_dly_1_treble(v.as_f64().unwrap() as f32),
-                                    "dly_1.spillover" => dsp.set_dly_1_spillover(v.as_bool().unwrap()),
-                                    "rev_1.enabled" => dsp.set_rev_1_enabled(v.as_bool().unwrap()),
-                                    "rev_1.decay_s" => dsp.set_rev_1_decay_s(v.as_f64().unwrap() as f32),
-                                    "rev_1.predelay_ms" => dsp.set_rev_1_predelay_ms(v.as_f64().unwrap() as f32),
-                                    "rev_1.damping" => dsp.set_rev_1_damping(v.as_f64().unwrap() as f32),
-                                    "rev_1.mix" => dsp.set_rev_1_mix(v.as_f64().unwrap() as f32),
-                                    "rev_1.spillover" => dsp.set_rev_1_spillover(v.as_bool().unwrap()),
-                                    "amp_2.enabled" => dsp.set_amp_2_enabled(v.as_bool().unwrap()),
-                                    "amp_2.model" => dsp.set_amp_2_model(v.as_str().unwrap()),
-                                    "cab_2.enabled" => dsp.set_cab_2_enabled(v.as_bool().unwrap()),
-                                    "cab_2.speaker" => dsp.set_cab_2_speaker(v.as_str().unwrap()),
-                                    "tuner.enabled" => dsp.set_tuner_enabled(v.as_bool().unwrap()),
-                                    "tuner.output" => {
-                                        let m = if v.as_str().unwrap() == "bypass" {
-                                            ampforge_dsp::tuner::TunerOutputMode::Bypass
-                                        } else {
-                                            ampforge_dsp::tuner::TunerOutputMode::Mute
-                                        };
-                                        dsp.set_tuner_output_mode(m);
-                                    }
-                                    "tuner.ref_hz" => dsp.set_tuner_ref_hz(v.as_f64().unwrap() as f32),
-                                    "looper.position" => dsp.set_looper_position(v.as_str().unwrap()),
-                                    "looper.action" => dsp.trigger_looper_action(v.as_str().unwrap()),
-                                    k if k.starts_with("eq_1.band") => {
-                                        let rest = &k["eq_1.band".len()..];
-                                        let mut parts = rest.split('.');
-                                        if let (Some(num_s), Some(prop)) = (parts.next(), parts.next()) {
-                                            if let Ok(n) = num_s.parse::<usize>() {
-                                                if (1..=10).contains(&n) {
-                                                    let idx = n - 1;
-                                                    let cur = dsp.eq_1_band(idx);
-                                                    let mut f = cur.freq_hz;
-                                                    let mut g = cur.gain_db;
-                                                    let mut q = cur.q;
-                                                    match prop {
-                                                        "freq_hz" => f = v.as_f64().unwrap() as f32,
-                                                        "gain_db" => g = v.as_f64().unwrap() as f32,
-                                                        "q" => q = v.as_f64().unwrap() as f32,
-                                                        _ => {}
-                                                    }
-                                                    dsp.set_eq_1_band(idx, f, g, q);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-
                 let mut resp_json = serde_json::json!({
                     "status": "ok",
                     "applied": applied,
@@ -2654,20 +2973,47 @@ pub fn handle_post_params(
 
 fn handle_post_di(
     body: &[u8],
-    dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
+    ctx: &ApiContext,
 ) -> (u16, &'static str, Vec<u8>) {
     if body.len() > 20 * 1024 * 1024 {
         return (413, "text/plain", b"Payload Too Large".to_vec());
     }
 
-    let loader = ampforge_dsp::cab::WavIrLoader::new(48000.0);
+    let session_sr = ctx
+        .shared_sample_rate_bits
+        .as_ref()
+        .map(|bits| f32::from_bits(bits.load(Ordering::Relaxed)).max(1.0))
+        .unwrap_or(48000.0);
+
+    let loader = ampforge_dsp::cab::WavIrLoader::new(session_sr);
     match loader.load_wav_unlimited(body) {
         Ok(ir) => {
-            if let Some(ref dsp_ref) = dsp_chain {
+            let samples = ir.samples().to_vec();
+            if let Some(ref rq) = ctx.resource_queue {
+                if rq.push(PreparedDspResource::DiSamples(samples)).is_err() {
+                    return (
+                        503,
+                        "application/json",
+                        br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                    );
+                }
+                if let Some(ref pq) = ctx.param_queue {
+                    if pq.push(DspParamUpdate::InputSource(2)).is_err() {
+                        return (
+                            503,
+                            "application/json",
+                            br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                        );
+                    }
+                }
+            } else if let Some(ref dsp_ref) = ctx.dsp_chain {
                 if let Ok(mut dsp) = dsp_ref.lock() {
-                    dsp.load_di_wav(ir.samples().to_vec());
+                    dsp.load_di_wav(samples);
                     dsp.set_input_source("di_file");
                 }
+            }
+            if let Ok(mut st) = ctx.app_state.lock() {
+                st.input_source = "di_file".to_string();
             }
             (200, "application/json", b"{\"status\":\"ok\",\"loaded\":true}".to_vec())
         }
@@ -2679,26 +3025,54 @@ fn handle_post_di(
 
 fn handle_post_cab_ir(
     body: &[u8],
-    app_state_clone: &Arc<Mutex<AppState>>,
-    dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
+    ctx: &ApiContext,
 ) -> (u16, &'static str, Vec<u8>) {
     if body.len() > 20 * 1024 * 1024 {
         return (413, "text/plain", b"Payload Too Large".to_vec());
     }
 
-    let loader = ampforge_dsp::cab::WavIrLoader::new(48000.0);
-    match loader.load_from_bytes(body) {
-        Ok(_) => {
-            if let Some(ref dsp_ref) = dsp_chain {
+    let session_sr = ctx
+        .shared_sample_rate_bits
+        .as_ref()
+        .map(|bits| f32::from_bits(bits.load(Ordering::Relaxed)).max(1.0))
+        .unwrap_or(48000.0);
+
+    let loader = ampforge_dsp::cab::WavIrLoader::new(session_sr);
+    match loader.load_from_bytes_with_info(body) {
+        Ok((ir, source_channels)) => {
+            if let Some(ref rq) = ctx.resource_queue {
+                if rq.push(PreparedDspResource::CabinetIr { slot: 0, ir }).is_err() {
+                    return (
+                        503,
+                        "application/json",
+                        br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                    );
+                }
+                if let Some(ref pq) = ctx.param_queue {
+                    if pq.push(DspParamUpdate::CabIrEnabled(true)).is_err() {
+                        return (
+                            503,
+                            "application/json",
+                            br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                        );
+                    }
+                }
+            } else if let Some(ref dsp_ref) = ctx.dsp_chain {
                 if let Ok(mut dsp) = dsp_ref.lock() {
                     let _ = dsp.load_cab_ir(body);
                     dsp.set_cab_ir_enabled(true);
                 }
             }
-            if let Ok(mut st) = app_state_clone.lock() {
+            if let Ok(mut st) = ctx.app_state.lock() {
                 st.cab_ir_enabled = true;
             }
-            (200, "application/json", b"{\"status\":\"ok\",\"loaded\":true}".to_vec())
+            let resp = serde_json::json!({
+                "status": "ok",
+                "loaded": true,
+                "channels_used": 1,
+                "source_channels": source_channels
+            });
+            (200, "application/json", serde_json::to_vec(&resp).unwrap())
         }
         Err(e) => {
             let err_msg = format!("{}", e);
@@ -2717,8 +3091,25 @@ fn handle_post_cab_ir(
     }
 }
 
+/// Valida id de preset contra path traversal (Spec 046 CA-4): `^[a-z0-9][a-z0-9_-]{0,63}$`
+pub fn is_valid_preset_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    if bytes.is_empty() || bytes.len() > 64 {
+        return false;
+    }
+    if !matches!(bytes[0], b'a'..=b'z' | b'0'..=b'9') {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+}
+
 fn find_preset_file(id: &str) -> Option<std::path::PathBuf> {
     let clean_id = id.trim_end_matches(".sonixpreset");
+    if !is_valid_preset_id(clean_id) {
+        return None;
+    }
     let candidate_dirs = [
         "presets/factory",
         "../../presets/factory",
@@ -2784,14 +3175,13 @@ fn handle_get_presets() -> (u16, &'static str, Vec<u8>) {
         scan_dir(std::path::PathBuf::from(appdata).join("SonixPro").join("presets"));
     }
 
-    let body = serde_json::to_vec(&list).unwrap();
+    let body = serde_json::to_vec(&serde_json::json!({ "presets": list })).unwrap();
     (200, "application/json", body)
 }
 
 fn handle_post_presets_load(
     body: &[u8],
-    app_state_clone: &Arc<Mutex<AppState>>,
-    dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
+    ctx: &ApiContext,
 ) -> (u16, &'static str, Vec<u8>) {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_json\"}".to_vec());
@@ -2799,6 +3189,9 @@ fn handle_post_presets_load(
     let Some(id) = v.get("id").and_then(|id_v| id_v.as_str()) else {
         return (400, "application/json", b"{\"error\":\"missing_id\"}".to_vec());
     };
+    if !is_valid_preset_id(id) {
+        return (400, "application/json", b"{\"error\":\"invalid_preset_id\"}".to_vec());
+    }
 
     let Some(path) = find_preset_file(id) else {
         return (404, "application/json", b"{\"error\":\"preset_not_found\"}".to_vec());
@@ -2813,13 +3206,46 @@ fn handle_post_presets_load(
     };
 
     if let Some(ref params) = doc.params {
-        apply_preset_params(params, app_state_clone, dsp_chain);
+        if let Err(e) = apply_preset_params_queued(params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain) {
+            return match e {
+                PresetApplyError::Validation(msg) => (
+                    400,
+                    "application/json",
+                    format!("{{\"error\":\"invalid_preset_param\",\"message\":\"{}\"}}", msg).into_bytes(),
+                ),
+                PresetApplyError::QueueFull => (
+                    503,
+                    "application/json",
+                    br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                ),
+            };
+        }
     }
 
-    if let Ok(mut st) = app_state_clone.lock() {
+    let state_json = if let Ok(mut st) = ctx.app_state.lock() {
         st.active_preset_id = id.to_string();
         st.active_preset_name = doc.metadata.name.clone();
-    }
+        if !doc.scenes.is_empty() {
+            st.scenes = doc.scenes.clone();
+        } else {
+            st.scenes = default_scenes();
+        }
+        st.grid = doc.grid.clone();
+        st.channels = doc.channels.clone().unwrap_or_default();
+        if !doc
+            .params
+            .as_ref()
+            .map_or(false, |p| p.contains_key("scene.active"))
+        {
+            let letters = ["A", "B", "C", "D", "E", "F", "G", "H"];
+            if let Some(&l) = letters.get(doc.active_scene_index) {
+                st.scene_active = l.to_string();
+            }
+        }
+        serde_json::to_value(&*st).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
 
     (
         200,
@@ -2827,7 +3253,8 @@ fn handle_post_presets_load(
         serde_json::to_vec(&serde_json::json!({
             "status": "ok",
             "loaded": id,
-            "name": doc.metadata.name
+            "name": doc.metadata.name,
+            "state": state_json
         }))
         .unwrap(),
     )
@@ -2843,6 +3270,9 @@ fn handle_post_presets_save(
     let Some(id) = v.get("id").and_then(|id_v| id_v.as_str()) else {
         return (400, "application/json", b"{\"error\":\"missing_id\"}".to_vec());
     };
+    if !is_valid_preset_id(id) {
+        return (400, "application/json", b"{\"error\":\"invalid_preset_id\"}".to_vec());
+    }
     let name = v.get("name").and_then(|n| n.as_str()).unwrap_or(id);
 
     let save_dir = if let Ok(appdata) = std::env::var("APPDATA") {
@@ -2856,6 +3286,9 @@ fn handle_post_presets_save(
     };
 
     let file_path = save_dir.join(format!("{}.sonixpreset", id));
+    if file_path.parent() != Some(save_dir.as_path()) {
+        return (400, "application/json", b"{\"error\":\"invalid_preset_id\"}".to_vec());
+    }
 
     let current_state = if let Ok(st) = app_state_clone.lock() {
         st.clone()
@@ -2867,9 +3300,26 @@ fn handle_post_presets_save(
     let mut params_map = std::collections::HashMap::new();
     if let serde_json::Value::Object(map) = state_val {
         for (k, val) in map {
+            if matches!(
+                k.as_str(),
+                "scenes"
+                    | "grid"
+                    | "channels"
+                    | "preset.active"
+                    | "preset.name"
+                    | "amp_1.is_modded"
+                    | "is_modded"
+            ) {
+                continue;
+            }
             params_map.insert(k, val);
         }
     }
+
+    let active_scene_index = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        .iter()
+        .position(|&s| s == current_state.scene_active.as_str())
+        .unwrap_or(0);
 
     let doc = sonix_core::persistence::SonixPresetDoc {
         schema: "https://sonixpro.local/schemas/sonixpreset-v1.json".to_string(),
@@ -2880,19 +3330,19 @@ fn handle_post_presets_save(
             author: "User".to_string(),
             category: "Custom".to_string(),
             tempo_bpm: 120.0,
-            created_at: "2026-11-11T00:00:00Z".to_string(),
+            created_at: format_utc_iso8601_now(),
             footswitch_mode: "scenes".to_string(),
         },
-        active_scene_index: 0,
-        scenes: vec![],
-        grid: sonix_core::persistence::GridDto {
-            rows: 4,
-            cols: 12,
-            blocks: vec![],
-        },
+        active_scene_index,
+        scenes: current_state.scenes.clone(),
+        grid: current_state.grid.clone(),
         modifiers: vec![],
         params: Some(params_map),
-        channels: None,
+        channels: if current_state.channels.is_empty() {
+            None
+        } else {
+            Some(current_state.channels.clone())
+        },
     };
 
     let Ok(json_str) = doc.to_json_str() else {
@@ -2920,8 +3370,7 @@ fn handle_post_presets_save(
 
 fn handle_post_presets_import(
     body: &[u8],
-    app_state_clone: &Arc<Mutex<AppState>>,
-    dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
+    ctx: &ApiContext,
 ) -> (u16, &'static str, Vec<u8>) {
     let Ok(content) = std::str::from_utf8(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_utf8\"}".to_vec());
@@ -2939,12 +3388,42 @@ fn handle_post_presets_import(
     };
 
     if let Some(ref params) = doc.params {
-        apply_preset_params(params, app_state_clone, dsp_chain);
+        if let Err(e) = apply_preset_params_queued(params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain) {
+            return match e {
+                PresetApplyError::Validation(msg) => (
+                    400,
+                    "application/json",
+                    format!("{{\"error\":\"invalid_preset_param\",\"message\":\"{}\"}}", msg).into_bytes(),
+                ),
+                PresetApplyError::QueueFull => (
+                    503,
+                    "application/json",
+                    br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                ),
+            };
+        }
     }
 
-    if let Ok(mut st) = app_state_clone.lock() {
+    if let Ok(mut st) = ctx.app_state.lock() {
         st.active_preset_id = doc.metadata.id.clone();
         st.active_preset_name = doc.metadata.name.clone();
+        if !doc.scenes.is_empty() {
+            st.scenes = doc.scenes.clone();
+        } else {
+            st.scenes = default_scenes();
+        }
+        st.grid = doc.grid.clone();
+        st.channels = doc.channels.clone().unwrap_or_default();
+        if !doc
+            .params
+            .as_ref()
+            .map_or(false, |p| p.contains_key("scene.active"))
+        {
+            let letters = ["A", "B", "C", "D", "E", "F", "G", "H"];
+            if let Some(&l) = letters.get(doc.active_scene_index) {
+                st.scene_active = l.to_string();
+            }
+        }
     }
 
     (
@@ -2959,6 +3438,9 @@ fn handle_post_presets_import(
 }
 
 fn handle_get_presets_export(preset_id: &str) -> (u16, &'static str, Vec<u8>) {
+    if !is_valid_preset_id(preset_id) {
+        return (400, "application/json", b"{\"error\":\"invalid_preset_id\"}".to_vec());
+    }
     let Some(path) = find_preset_file(preset_id) else {
         return (404, "application/json", b"{\"error\":\"preset_not_found\"}".to_vec());
     };
@@ -2968,9 +3450,34 @@ fn handle_get_presets_export(preset_id: &str) -> (u16, &'static str, Vec<u8>) {
     (200, "application/json", bytes)
 }
 
+fn format_utc_iso8601_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86400);
+    let sod = secs.rem_euclid(86400);
+    let hh = sod / 3600;
+    let mm = (sod % 3600) / 60;
+    let ss = sod % 60;
+
+    // Howard Hinnant civil_from_days
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, hh, mm, ss)
+}
+
 fn handle_post_scenes_select(
     body: &[u8],
-    app_state_clone: &Arc<Mutex<AppState>>,
+    ctx: &ApiContext,
 ) -> (u16, &'static str, Vec<u8>) {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_json\"}".to_vec());
@@ -2979,14 +3486,56 @@ fn handle_post_scenes_select(
         return (400, "application/json", b"{\"error\":\"missing_scene\"}".to_vec());
     };
 
-    if !["A", "B", "C", "D", "E", "F", "G", "H"].contains(&scene) {
+    let Some(scene_idx) = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        .iter()
+        .position(|&s| s == scene)
+    else {
         return (400, "application/json", b"{\"error\":\"invalid_scene\"}".to_vec());
-    }
+    };
 
     let start = std::time::Instant::now();
-    if let Ok(mut st) = app_state_clone.lock() {
-        st.scene_active = scene.to_string();
+    let mut scene_params: std::collections::HashMap<String, serde_json::Value> =
+        std::collections::HashMap::new();
+    scene_params.insert(
+        "scene.active".to_string(),
+        serde_json::Value::String(scene.to_string()),
+    );
+
+    if let Ok(st) = ctx.app_state.lock() {
+        let ch_letters = ["A", "B", "C", "D"];
+        for block in &st.grid.blocks {
+            let bypass = block.bypass_by_scene.get(scene_idx).copied().unwrap_or(false);
+            scene_params.insert(
+                format!("{}.enabled", block.instance_id),
+                serde_json::Value::Bool(!bypass),
+            );
+            let ch_idx = block
+                .active_channel_by_scene
+                .get(scene_idx)
+                .copied()
+                .unwrap_or(0);
+            if let Some(&ch_letter) = ch_letters.get(ch_idx) {
+                if let Some(block_channels) = st.channels.get(&block.instance_id) {
+                    if let Some(ch_params) = block_channels.get(ch_letter) {
+                        for (k, val) in ch_params {
+                            scene_params.insert(k.clone(), val.clone());
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    if let Err(PresetApplyError::QueueFull) =
+        apply_preset_params_queued(&scene_params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain)
+    {
+        return (
+            503,
+            "application/json",
+            br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+        );
+    }
+
     let elapsed_ms = (start.elapsed().as_micros() as f32 / 1000.0).max(0.1);
 
     (
@@ -3001,12 +3550,208 @@ fn handle_post_scenes_select(
     )
 }
 
-/// Aplica um mapa completo de parâmetros de preset em `AppState` e no `RealtimeDspChain`.
-pub fn apply_preset_params(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresetApplyError {
+    Validation(String),
+    QueueFull,
+}
+
+fn validate_preset_param_kv(k: &str, v: &serde_json::Value) -> Result<(), String> {
+    let is_known = matches!(
+        k,
+        "amp_1.gain"
+            | "amp_1.overdrive"
+            | "amp_1.bass"
+            | "amp_1.middle"
+            | "amp_1.treble"
+            | "amp_1.presence"
+            | "amp_1.depth"
+            | "amp_1.master"
+            | "amp_1.volume_2"
+            | "amp_1.cut"
+            | "amp_1.reverb"
+            | "amp_1.vibrato_speed"
+            | "amp_1.vibrato_depth"
+            | "amp_1.power"
+            | "amp_1.standby"
+            | "amp_1.jumpered"
+            | "amp_1.spongy"
+            | "amp_1.input_jack"
+            | "amp_1.channel_mode"
+            | "amp_1.impedance_ohms"
+            | "amp_1.model"
+            | "amp_1.bright"
+            | "amp_1.enabled"
+            | "amp_1.bias_ma"
+            | "amp_1.sag"
+            | "amp_1.nfb"
+            | "amp_1.xformer_sat"
+            | "amp_1.preamp_plate_v"
+            | "amp_1.triode_asym"
+            | "amp_1.preamp_tube"
+            | "amp_1.power_tube"
+            | "amp_1.rectifier"
+            | "amp_1.tonestack"
+            | "amp_1.is_modded"
+            | "is_modded"
+            | "engine.oversampling"
+            | "input.boost"
+            | "input.source"
+            | "drive.enabled"
+            | "drive.model"
+            | "drive.drive"
+            | "drive.tone"
+            | "drive.level"
+            | "drive.bias"
+            | "gate.enabled"
+            | "gate.threshold_db"
+            | "gate.mode"
+            | "gate.hysteresis_db"
+            | "gate.attack_ms"
+            | "gate.hold_ms"
+            | "gate.release_ms"
+            | "gate.range_db"
+            | "gate.key_hpf_hz"
+            | "gate.key_lpf_hz"
+            | "cab_1.enabled"
+            | "cab_1.speaker"
+            | "cab_1.model"
+            | "cab_1.resonance_hz"
+            | "cab_1.hicut_khz"
+            | "cab_1.ir_enabled"
+            | "cab_1.mic1.model"
+            | "cab_1.mic1.position"
+            | "cab_1.mic1.distance_cm"
+            | "cab_1.mic1.level_db"
+            | "cab_1.mic1.enabled"
+            | "cab_1.mic1.angle_deg"
+            | "cab_1.mic1.phase_invert"
+            | "cab_1.mic2.model"
+            | "cab_1.mic2.position"
+            | "cab_1.mic2.distance_cm"
+            | "cab_1.mic2.level_db"
+            | "cab_1.mic2.enabled"
+            | "cab_1.mic2.angle_deg"
+            | "cab_1.mic2.phase_invert"
+            | "split.enabled"
+            | "split.mode"
+            | "split.balance"
+            | "split.crossover_hz"
+            | "merge.row_1_level_db"
+            | "merge.row_1_phase_invert"
+            | "merge.level_a_db"
+            | "merge.level_b_db"
+            | "merge.phase_invert_b"
+            | "comp_2.enabled"
+            | "comp_2.input"
+            | "comp_2.output"
+            | "comp_2.attack"
+            | "comp_2.release"
+            | "comp_2.ratio"
+            | "eq_1.enabled"
+            | "eq_1.mode"
+            | "eq_1.gain_db"
+            | "eq_1.input_gain_db"
+            | "eq_1.volume_db"
+            | "eq_1.output_level_db"
+            | "eq_1.bands_db"
+            | "mod_2.enabled"
+            | "mod_2.model"
+            | "mod_2.rate_hz"
+            | "mod_2.depth"
+            | "mod_2.mix"
+            | "mod_2.mix_pct"
+            | "dly_1.enabled"
+            | "dly_1.mode"
+            | "dly_1.heads"
+            | "dly_1.time_ms"
+            | "dly_1.feedback"
+            | "dly_1.mix_pct"
+            | "dly_1.repeat_rate"
+            | "dly_1.intensity"
+            | "dly_1.echo_volume"
+            | "dly_1.reverb_volume"
+            | "dly_1.bass"
+            | "dly_1.treble"
+            | "dly_1.spillover"
+            | "rev_1.enabled"
+            | "rev_1.decay_s"
+            | "rev_1.predelay_ms"
+            | "rev_1.damping"
+            | "rev_1.mix"
+            | "rev_1.mix_pct"
+            | "rev_1.spillover"
+            | "amp_2.enabled"
+            | "amp_2.model"
+            | "cab_2.enabled"
+            | "cab_2.speaker"
+            | "cab_2.model"
+            | "preset.active"
+            | "preset.name"
+            | "scene.active"
+            | "tuner.enabled"
+            | "tuner.output"
+            | "tuner.ref_hz"
+            | "looper.position"
+            | "looper.action"
+            | "pitch_1.enabled"
+            | "pitch_1.model"
+            | "pitch_1.semitones"
+            | "pitch_1.key"
+            | "pitch_1.scale"
+            | "pitch_1.mix"
+            | "pitch_1.mix_pct"
+    ) || (k.starts_with("eq_1.band") && (k.ends_with(".gain_db") || k.ends_with(".freq_hz") || k.ends_with(".q")));
+
+    if !is_known {
+        return Err(format!("Chave de parâmetro desconhecida: {}", k));
+    }
+    if k == "amp_1.model" {
+        let Some(m) = v.as_str() else {
+            return Err("amp_1.model deve ser string".to_string());
+        };
+        if !["jcm800_2203", "plexi_1959", "twin_ab763", "dual_rect", "ac30_tb"].contains(&m) {
+            return Err(format!("amp_1.model inválido: {}", m));
+        }
+    }
+    if k == "scene.active" {
+        let Some(s) = v.as_str() else {
+            return Err("scene.active deve ser string".to_string());
+        };
+        if !["A", "B", "C", "D", "E", "F", "G", "H"].contains(&s) {
+            return Err(format!("scene.active inválido: {}", s));
+        }
+    }
+    Ok(())
+}
+
+/// Aplica um mapa completo de parâmetros de preset em `AppState` e envia ao motor via fila SPSC sem bloquear o DSP.
+pub fn apply_preset_params_queued(
     params: &std::collections::HashMap<String, serde_json::Value>,
     app_state: &Arc<Mutex<AppState>>,
+    param_queue: &Option<Arc<LockFreeParamQueue>>,
     dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
-) {
+) -> Result<(), PresetApplyError> {
+    for (k, v) in params {
+        validate_preset_param_kv(k.as_str(), v).map_err(PresetApplyError::Validation)?;
+    }
+
+    let mut updates = Vec::with_capacity(params.len() + 2);
+    updates.push(DspParamUpdate::BeginPresetCrossfade);
+    for (k, v) in params {
+        json_kv_to_dsp_updates(k.as_str(), v, &mut updates);
+    }
+
+    if let Some(ref pq) = param_queue {
+        pq.push_batch(&updates).map_err(|_| PresetApplyError::QueueFull)?;
+    } else if let Some(ref dsp_ref) = dsp_chain {
+        if let Ok(mut dsp) = dsp_ref.lock() {
+            for u in &updates {
+                dsp.apply_param_update(*u);
+            }
+        }
+    }
+
     if let Ok(mut st) = app_state.lock() {
         for (k, v) in params {
             match k.as_str() {
@@ -3085,9 +3830,16 @@ pub fn apply_preset_params(
                 "eq_1.gain_db" | "eq_1.input_gain_db" => if let Some(n) = v.as_f64() { st.eq_1_gain_db = n as f32; },
                 "eq_1.volume_db" | "eq_1.output_level_db" => if let Some(n) = v.as_f64() { st.eq_1_volume_db = n as f32; },
                 "mod_2.enabled" => if let Some(b) = v.as_bool() { st.mod_2_enabled = b; },
+                "mod_2.model" => if let Some(s) = v.as_str() { if parse_mod_model(s).is_some() { st.mod_2_model = s.to_string(); } },
                 "mod_2.rate_hz" => if let Some(n) = v.as_f64() { st.mod_2_rate_hz = n as f32; },
                 "mod_2.depth" => if let Some(n) = v.as_f64() { st.mod_2_depth = n as f32; },
                 "mod_2.mix" | "mod_2.mix_pct" => if let Some(n) = v.as_f64() { st.mod_2_mix = n as f32; },
+                "pitch_1.enabled" => if let Some(b) = v.as_bool() { st.pitch_1_enabled = b; },
+                "pitch_1.model" => if let Some(s) = v.as_str() { if parse_pitch_model(s).is_some() { st.pitch_1_model = s.to_string(); } },
+                "pitch_1.semitones" => if let Some(n) = v.as_f64() { st.pitch_1_semitones = n as f32; },
+                "pitch_1.key" => if let Some(s) = v.as_str() { if parse_pitch_key(s).is_some() { st.pitch_1_key = s.to_string(); } },
+                "pitch_1.scale" => if let Some(s) = v.as_str() { if parse_pitch_scale(s).is_some() { st.pitch_1_scale = s.to_string(); } },
+                "pitch_1.mix" | "pitch_1.mix_pct" => if let Some(n) = v.as_f64() { st.pitch_1_mix = n as f32; },
                 "dly_1.enabled" => if let Some(b) = v.as_bool() { st.dly_1_enabled = b; },
                 "dly_1.mode" => if let Some(s) = v.as_str() { st.dly_1_mode = s.to_string(); },
                 "dly_1.heads" => if let Some(s) = v.as_str() { st.dly_1_heads = s.to_string(); },
@@ -3136,177 +3888,19 @@ pub fn apply_preset_params(
         }
         st.is_modded = st.check_is_modded();
     }
+    Ok(())
+}
 
-    if let Some(ref dsp_ref) = dsp_chain {
-        if let Ok(mut dsp) = dsp_ref.lock() {
-            for (k, v) in params {
-                match k.as_str() {
-                    "amp_1.gain" => if let Some(n) = v.as_f64() { dsp.set_amp_gain(n as f32); },
-                    "amp_1.overdrive" => if let Some(n) = v.as_f64() { dsp.set_amp_overdrive(n as f32); },
-                    "amp_1.bass" => if let Some(n) = v.as_f64() { dsp.set_amp_bass(n as f32); },
-                    "amp_1.middle" => if let Some(n) = v.as_f64() { dsp.set_amp_middle(n as f32); },
-                    "amp_1.treble" => if let Some(n) = v.as_f64() { dsp.set_amp_treble(n as f32); },
-                    "amp_1.presence" => if let Some(n) = v.as_f64() { dsp.set_amp_presence(n as f32); },
-                    "amp_1.depth" => if let Some(n) = v.as_f64() { dsp.set_amp_depth(n as f32); },
-                    "amp_1.master" => if let Some(n) = v.as_f64() { dsp.set_amp_master(n as f32); },
-                    "amp_1.volume_2" => if let Some(n) = v.as_f64() { dsp.set_amp_volume_2(n as f32); },
-                    "amp_1.cut" => if let Some(n) = v.as_f64() { dsp.set_amp_cut(n as f32); },
-                    "amp_1.reverb" => if let Some(n) = v.as_f64() { dsp.set_amp_reverb(n as f32); },
-                    "amp_1.vibrato_speed" => if let Some(n) = v.as_f64() { dsp.set_amp_vibrato_speed(n as f32); },
-                    "amp_1.vibrato_depth" => if let Some(n) = v.as_f64() { dsp.set_amp_vibrato_depth(n as f32); },
-                    "amp_1.power" => if let Some(b) = v.as_bool() { dsp.set_amp_power(b); },
-                    "amp_1.standby" => if let Some(b) = v.as_bool() { dsp.set_amp_standby(b); },
-                    "amp_1.jumpered" => if let Some(b) = v.as_bool() { dsp.set_amp_jumpered(b); },
-                    "amp_1.spongy" => if let Some(b) = v.as_bool() { dsp.set_amp_spongy(b); },
-                    "amp_1.input_jack" => if let Some(s) = v.as_str() { dsp.set_amp_input_jack(s); },
-                    "amp_1.channel_mode" => if let Some(s) = v.as_str() { dsp.set_amp_channel_mode(s); },
-                    "amp_1.impedance_ohms" => if let Some(s) = v.as_str() { dsp.set_amp_impedance_ohms(s); },
-                    "amp_1.model" => if let Some(s) = v.as_str() { dsp.set_amp_model(s); },
-                    "amp_1.bright" => if let Some(b) = v.as_bool() { dsp.set_amp_bright(b); },
-                    "amp_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_amp_enabled(b); },
-                    "amp_1.bias_ma" => if let Some(n) = v.as_f64() { dsp.set_amp_bias_ma(n as f32); },
-                    "amp_1.sag" => if let Some(n) = v.as_f64() { dsp.set_amp_sag(n as f32); },
-                    "amp_1.nfb" => if let Some(n) = v.as_f64() { dsp.set_amp_nfb(n as f32); },
-                    "amp_1.xformer_sat" => if let Some(n) = v.as_f64() { dsp.set_amp_xformer_sat(n as f32); },
-                    "amp_1.preamp_plate_v" => if let Some(n) = v.as_f64() { dsp.set_amp_preamp_plate_v(n as f32); },
-                    "amp_1.triode_asym" => if let Some(n) = v.as_f64() { dsp.set_amp_triode_asym(n as f32); },
-                    "amp_1.preamp_tube" => if let Some(s) = v.as_str() { dsp.set_amp_preamp_tube(s); },
-                    "amp_1.power_tube" => if let Some(s) = v.as_str() { dsp.set_amp_power_tube(s); },
-                    "amp_1.rectifier" => if let Some(s) = v.as_str() { dsp.set_amp_rectifier(s); },
-                    "amp_1.tonestack" => if let Some(s) = v.as_str() { dsp.set_amp_tonestack(s); },
-                    "engine.oversampling" => if let Some(s) = v.as_str() { dsp.set_oversampling_factor(s); },
-                    "input.boost" => if let Some(n) = v.as_f64() { dsp.set_input_boost(n as f32); },
-                    "input.source" => if let Some(s) = v.as_str() { dsp.set_input_source(s); },
-                    "drive.enabled" => if let Some(b) = v.as_bool() { dsp.set_drive_enabled(b); },
-                    "drive.model" => if let Some(s) = v.as_str() { dsp.set_drive_model(s); },
-                    "drive.drive" => if let Some(n) = v.as_f64() { dsp.set_drive_gain(n as f32); },
-                    "drive.tone" => if let Some(n) = v.as_f64() { dsp.set_drive_tone(n as f32); },
-                    "drive.level" => if let Some(n) = v.as_f64() { dsp.set_drive_level(n as f32); },
-                    "drive.bias" => if let Some(n) = v.as_f64() { dsp.set_drive_bias(n as f32); },
-                    "gate.enabled" => if let Some(b) = v.as_bool() { dsp.set_gate_enabled(b); },
-                    "gate.threshold_db" => if let Some(n) = v.as_f64() { dsp.set_gate_threshold_db(n as f32); },
-                    "gate.mode" => if let Some(s) = v.as_str() { dsp.set_gate_mode(s); },
-                    "gate.hysteresis_db" => if let Some(n) = v.as_f64() { dsp.set_gate_hysteresis_db(n as f32); },
-                    "gate.attack_ms" => if let Some(n) = v.as_f64() { dsp.set_gate_attack_ms(n as f32); },
-                    "gate.hold_ms" => if let Some(n) = v.as_f64() { dsp.set_gate_hold_ms(n as f32); },
-                    "gate.release_ms" => if let Some(n) = v.as_f64() { dsp.set_gate_release_ms(n as f32); },
-                    "gate.range_db" => if let Some(n) = v.as_f64() { dsp.set_gate_range_db(n as f32); },
-                    "gate.key_hpf_hz" => if let Some(n) = v.as_f64() { dsp.set_gate_key_hpf_hz(n as f32); },
-                    "gate.key_lpf_hz" => if let Some(n) = v.as_f64() { dsp.set_gate_key_lpf_hz(n as f32); },
-                    "cab_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_enabled(b); },
-                    "cab_1.speaker" | "cab_1.model" => if let Some(s) = v.as_str() { dsp.set_cab_speaker(s); },
-                    "cab_1.resonance_hz" => if let Some(n) = v.as_f64() { dsp.set_cab_resonance_hz(n as f32); },
-                    "cab_1.hicut_khz" => if let Some(n) = v.as_f64() { dsp.set_cab_hicut_khz(n as f32); },
-                    "cab_1.ir_enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_ir_enabled(b); },
-                    "cab_1.mic1.model" => if let Some(s) = v.as_str() { dsp.set_cab_mic1_model(s); },
-                    "cab_1.mic1.position" => if let Some(n) = v.as_f64() { dsp.set_cab_mic1_position(n as f32); },
-                    "cab_1.mic1.distance_cm" => if let Some(n) = v.as_f64() { dsp.set_cab_mic1_distance_cm(n as f32); },
-                    "cab_1.mic1.level_db" => if let Some(n) = v.as_f64() { dsp.set_cab_mic1_level_db(n as f32); },
-                    "cab_1.mic1.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_mic1_enabled(b); },
-                    "cab_1.mic1.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) { dsp.set_cab_mic_angle_deg(0, deg); },
-                    "cab_1.mic1.phase_invert" => if let Some(b) = v.as_bool() { dsp.set_cab_mic_phase_invert(0, b); },
-                    "cab_1.mic2.model" => if let Some(s) = v.as_str() { dsp.set_cab_mic2_model(s); },
-                    "cab_1.mic2.position" => if let Some(n) = v.as_f64() { dsp.set_cab_mic2_position(n as f32); },
-                    "cab_1.mic2.distance_cm" => if let Some(n) = v.as_f64() { dsp.set_cab_mic2_distance_cm(n as f32); },
-                    "cab_1.mic2.level_db" => if let Some(n) = v.as_f64() { dsp.set_cab_mic2_level_db(n as f32); },
-                    "cab_1.mic2.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_mic2_enabled(b); },
-                    "cab_1.mic2.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) { dsp.set_cab_mic_angle_deg(1, deg); },
-                    "cab_1.mic2.phase_invert" => if let Some(b) = v.as_bool() { dsp.set_cab_mic_phase_invert(1, b); },
-                    "split.enabled" => if let Some(b) = v.as_bool() { dsp.set_split_enabled(b); },
-                    "split.mode" => {
-                        if let Some(s) = v.as_str() {
-                            let hz = params.get("split.crossover_hz").and_then(|x| x.as_f64()).map(|x| x as f32).unwrap_or(650.0);
-                            dsp.set_split_mode(s, hz);
-                        }
-                    }
-                    "split.crossover_hz" => {
-                        if let Some(n) = v.as_f64() {
-                            let mode = params.get("split.mode").and_then(|x| x.as_str()).unwrap_or("crossover");
-                            dsp.set_split_mode(mode, n as f32);
-                        }
-                    }
-                    "merge.row_1_level_db" => {
-                        if let Some(n) = v.as_f64() {
-                            let inv = params.get("merge.row_1_phase_invert").and_then(|x| x.as_bool()).unwrap_or(false);
-                            dsp.set_merge_config(n as f32, inv);
-                        }
-                    }
-                    "merge.row_1_phase_invert" => {
-                        if let Some(b) = v.as_bool() {
-                            let db = params.get("merge.row_1_level_db").and_then(|x| x.as_f64()).map(|x| x as f32).unwrap_or(-6.0);
-                            dsp.set_merge_config(db, b);
-                        }
-                    }
-                    "comp_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_comp_2_enabled(b); },
-                    "comp_2.input" => if let Some(n) = v.as_f64() { dsp.set_comp_2_input(n as f32); },
-                    "comp_2.output" => if let Some(n) = v.as_f64() { dsp.set_comp_2_output(n as f32); },
-                    "comp_2.attack" => if let Some(n) = v.as_f64() { dsp.set_comp_2_attack(n as f32); },
-                    "comp_2.release" => if let Some(n) = v.as_f64() { dsp.set_comp_2_release(n as f32); },
-                    "comp_2.ratio" => if let Some(s) = v.as_str() { dsp.set_comp_2_ratio(s); },
-                    "eq_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_eq_1_enabled(b); },
-                    "eq_1.mode" => if let Some(s) = v.as_str() { dsp.set_eq_1_mode(s); },
-                    "eq_1.gain_db" | "eq_1.input_gain_db" => if let Some(n) = v.as_f64() { dsp.set_eq_1_input_gain_db(n as f32); },
-                    "eq_1.volume_db" | "eq_1.output_level_db" => if let Some(n) = v.as_f64() { dsp.set_eq_1_output_level_db(n as f32); },
-                    "mod_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_mod_2_enabled(b); },
-                    "mod_2.rate_hz" => if let Some(n) = v.as_f64() { dsp.set_mod_2_rate_hz(n as f32); },
-                    "mod_2.depth" => if let Some(n) = v.as_f64() { dsp.set_mod_2_depth(n as f32); },
-                    "mod_2.mix" | "mod_2.mix_pct" => if let Some(n) = v.as_f64() { dsp.set_mod_2_mix(n as f32); },
-                    "dly_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_dly_1_enabled(b); },
-                    "dly_1.mode" => if let Some(s) = v.as_str() { dsp.set_dly_1_mode(s); },
-                    "dly_1.repeat_rate" => if let Some(n) = v.as_f64() { dsp.set_dly_1_repeat_rate(n as f32); },
-                    "dly_1.intensity" => if let Some(n) = v.as_f64() { dsp.set_dly_1_intensity(n as f32); },
-                    "dly_1.echo_volume" => if let Some(n) = v.as_f64() { dsp.set_dly_1_echo_volume(n as f32); },
-                    "dly_1.reverb_volume" => if let Some(n) = v.as_f64() { dsp.set_dly_1_reverb_volume(n as f32); },
-                    "dly_1.bass" => if let Some(n) = v.as_f64() { dsp.set_dly_1_bass(n as f32); },
-                    "dly_1.treble" => if let Some(n) = v.as_f64() { dsp.set_dly_1_treble(n as f32); },
-                    "dly_1.spillover" => if let Some(b) = v.as_bool() { dsp.set_dly_1_spillover(b); },
-                    "rev_1.enabled" => if let Some(b) = v.as_bool() { dsp.set_rev_1_enabled(b); },
-                    "rev_1.decay_s" => if let Some(n) = v.as_f64() { dsp.set_rev_1_decay_s(n as f32); },
-                    "rev_1.predelay_ms" => if let Some(n) = v.as_f64() { dsp.set_rev_1_predelay_ms(n as f32); },
-                    "rev_1.damping" => if let Some(n) = v.as_f64() { dsp.set_rev_1_damping(n as f32); },
-                    "rev_1.mix" | "rev_1.mix_pct" => if let Some(n) = v.as_f64() { dsp.set_rev_1_mix(n as f32); },
-                    "rev_1.spillover" => if let Some(b) = v.as_bool() { dsp.set_rev_1_spillover(b); },
-                    "amp_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_amp_2_enabled(b); },
-                    "amp_2.model" => if let Some(s) = v.as_str() { dsp.set_amp_2_model(s); },
-                    "cab_2.enabled" => if let Some(b) = v.as_bool() { dsp.set_cab_2_enabled(b); },
-                    "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() { dsp.set_cab_2_speaker(s); },
-                    "tuner.enabled" => if let Some(b) = v.as_bool() { dsp.set_tuner_enabled(b); },
-                    "tuner.output" => if let Some(s) = v.as_str() {
-                        let m = if s == "bypass" {
-                            ampforge_dsp::tuner::TunerOutputMode::Bypass
-                        } else {
-                            ampforge_dsp::tuner::TunerOutputMode::Mute
-                        };
-                        dsp.set_tuner_output_mode(m);
-                    },
-                    "tuner.ref_hz" => if let Some(n) = v.as_f64() { dsp.set_tuner_ref_hz(n as f32); },
-                    "looper.position" => if let Some(s) = v.as_str() { dsp.set_looper_position(s); },
-                    k if k.starts_with("eq_1.band") => {
-                        let rest = &k["eq_1.band".len()..];
-                        let mut parts = rest.split('.');
-                        if let (Some(num_s), Some(prop), Some(num)) = (parts.next(), parts.next(), v.as_f64()) {
-                            if let Ok(n) = num_s.parse::<usize>() {
-                                if (1..=10).contains(&n) {
-                                    let idx = n - 1;
-                                    let cur = dsp.eq_1_band(idx);
-                                    let (mut f, mut g, mut q) = (cur.freq_hz, cur.gain_db, cur.q);
-                                    match prop {
-                                        "freq_hz" => f = num as f32,
-                                        "gain_db" => g = num as f32,
-                                        "q" => q = num as f32,
-                                        _ => {}
-                                    }
-                                    dsp.set_eq_1_band(idx, f, g, q);
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            dsp.trigger_preset_crossfade();
-        }
-    }
+/// Aplica um mapa completo de parâmetros de preset em `AppState` e no `RealtimeDspChain`.
+pub fn apply_preset_params(
+    params: &std::collections::HashMap<String, serde_json::Value>,
+    app_state: &Arc<Mutex<AppState>>,
+    dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
+) {
+    let pq = dsp_chain
+        .as_ref()
+        .and_then(|d| d.lock().ok().map(|chain| chain.param_queue()));
+    let _ = apply_preset_params_queued(params, app_state, &pq, dsp_chain);
 }
 
 /// Executa captura real de ruído/palhetada no ring lock-free e aplica calibração de entrada (Spec 029).
@@ -3376,8 +3970,7 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
             if let Some(ref pq) = ctx.param_queue {
                 let _ = pq.push(DspParamUpdate::InputBoost(result.proposed_boost));
                 let _ = pq.push(DspParamUpdate::GateThreshold(result.proposed_gate_threshold_db));
-            }
-            if let Some(ref dsp_ref) = ctx.dsp_chain {
+            } else if let Some(ref dsp_ref) = ctx.dsp_chain {
                 if let Ok(mut dsp) = dsp_ref.try_lock() {
                     dsp.set_input_boost(result.proposed_boost);
                     dsp.set_gate_threshold_db(result.proposed_gate_threshold_db);
