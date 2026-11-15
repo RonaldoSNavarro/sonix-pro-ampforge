@@ -29,7 +29,8 @@ export type BlockId =
   | 'comp'
   | 'amp2'
   | 'cab2'
-  | 'chorus';
+  | 'chorus'
+  | 'pitch';
 
 export interface PresetItem {
   id: string;
@@ -346,10 +347,14 @@ export class AppStore {
           telemetry?: Record<string, unknown>;
           tuner?: Record<string, unknown>;
           scope?: Record<string, Record<string, unknown>>;
+          calibrationDone?: boolean;
         };
       }
     ).__SONIX_048_FIXTURE__;
     if (fixture) {
+      if (fixture.calibrationDone === true) {
+        this.calibrationWizard.phase = 'done';
+      }
       if (typeof fixture.setlist === 'string') {
         this.activeSetlist = fixture.setlist;
       }

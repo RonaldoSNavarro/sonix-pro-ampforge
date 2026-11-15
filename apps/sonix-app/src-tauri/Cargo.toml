@@ -12,6 +12,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }
 
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+asio = ["sonix-desktop/asio"]
+
 [dependencies]
 sonix-desktop = { path = "../../../crates/sonix-desktop", default-features = false }
 ampforge-dsp = { path = "../../../crates/ampforge-dsp" }

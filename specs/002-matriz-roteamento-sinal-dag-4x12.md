@@ -67,4 +67,4 @@ Fontes da verdade e evidências no repositório:
 
 ## Notas
 - Rastreabilidade SRS: Seção 2.2, **RF-001**, **RF-002**, **RF-003**, **RF-004**, **RF-005**.
-- **2026-11-14 (Auditoria Spec 044):** `DagGraph` e `GridMatrix4x12` existem como biblioteca testada, enquanto `RealtimeDspChain` ainda processa cadeia fixa em produção. Ligação real do grafo dinâmico retomada pela **Spec 045**.
+- **2026-11-14 (Auditoria Spec 044):** `DagGraph` e `GridMatrix4x12` existem como biblioteca testada, enquanto `RealtimeDspChain` ainda processa cadeia fixa em produção. Ligação real do grafo dinâmico retomada pela **Spec 045** e execução ao vivo da topologia 4×12 em áudio real fechada pela **Spec 049** (CA-23..CA-28).

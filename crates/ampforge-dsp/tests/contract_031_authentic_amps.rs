@@ -3,8 +3,8 @@
 //! Cobre CA-1..CA-7, CA-9, CA-10
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::f32::consts::PI;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use ampforge_dsp::amp::{
     AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor,
@@ -14,14 +14,18 @@ use ampforge_dsp::tonestack::{analog_tonestack_magnitude_db, PassiveToneStack};
 
 // ─── Zero-Alloc Guard para CA-9 ─────────────────────────────────────────────────────────────
 struct CountingAllocator;
-static COUNT_ALLOCS: AtomicBool = AtomicBool::new(false);
-static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static COUNT_ALLOCS: Cell<bool> = const { Cell::new(false) };
+    static ALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNT_ALLOCS.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        COUNT_ALLOCS.with(|c| {
+            if c.get() {
+                ALLOC_COUNT.with(|a| a.set(a.get() + 1));
+            }
+        });
         unsafe { System.alloc(layout) }
     }
 
@@ -388,8 +392,8 @@ fn test_ca_09_zero_heap_allocations_during_process_and_switch() {
     // Warm-up
     amp.process(&input, &mut output);
 
-    ALLOC_COUNT.store(0, Ordering::SeqCst);
-    COUNT_ALLOCS.store(true, Ordering::SeqCst);
+    ALLOC_COUNT.with(|a| a.set(0));
+    COUNT_ALLOCS.with(|c| c.set(true));
 
     for i in 0..20 {
         if i == 5 {
@@ -403,8 +407,8 @@ fn test_ca_09_zero_heap_allocations_during_process_and_switch() {
         amp.process(&input, &mut output);
     }
 
-    COUNT_ALLOCS.store(false, Ordering::SeqCst);
-    let allocs = ALLOC_COUNT.load(Ordering::SeqCst);
+    COUNT_ALLOCS.with(|c| c.set(false));
+    let allocs = ALLOC_COUNT.with(|a| a.get());
     assert_eq!(
         allocs, 0,
         "Zero alocações de heap permitidas durante process() e troca de modelo (houve {})",

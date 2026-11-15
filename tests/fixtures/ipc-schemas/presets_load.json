@@ -55,7 +55,7 @@
     "cab_1.mic2.phase_invert": false,
     "cab_1.mic2.position": 0.5,
     "cab_1.resonance_hz": 98.0,
-    "cab_1.speaker": "v30_4x12_closed",
+    "cab_1.speaker": "v30_4x12",
     "cab_2.enabled": false,
     "cab_2.speaker": "alnico_blue_2x12",
     "channels": {},
@@ -98,6 +98,7 @@
     "eq_1.gain_db": 0.0,
     "eq_1.mode": "eight_band",
     "eq_1.volume_db": 0.0,
+    "footswitch.mode": "HYBRID_STOMP_SCENE",
     "gate.attack_ms": 1.0,
     "gate.enabled": true,
     "gate.hold_ms": 35.0,
@@ -114,6 +115,7 @@
       "rows": 4
     },
     "input.boost": 2.5,
+    "input.mode": "instrument",
     "input.source": "device",
     "is_modded": true,
     "looper.action": "stop",
@@ -125,6 +127,44 @@
     "mod_2.mix": 50.0,
     "mod_2.model": "AnalogBbdChorus",
     "mod_2.rate_hz": 1.0,
+    "modifiers": [
+      {
+        "curve_slope": 0.5,
+        "damping_ms": 0.0,
+        "id": "midi_cc_1_amp_gain",
+        "max_val": 10.0,
+        "min_val": 0.0,
+        "source": "MIDI_CC_1",
+        "target_param": "amp_1.gain"
+      },
+      {
+        "curve_slope": 0.5,
+        "damping_ms": 0.0,
+        "id": "midi_cc_7_amp_master",
+        "max_val": 10.0,
+        "min_val": 0.0,
+        "source": "MIDI_CC_7",
+        "target_param": "amp_1.master"
+      },
+      {
+        "curve_slope": 0.5,
+        "damping_ms": 0.0,
+        "id": "midi_cc_11_drive",
+        "max_val": 10.0,
+        "min_val": 0.0,
+        "source": "MIDI_CC_11",
+        "target_param": "drive.drive"
+      },
+      {
+        "curve_slope": 0.5,
+        "damping_ms": 0.0,
+        "id": "midi_cc_14_gate_thresh",
+        "max_val": 0.0,
+        "min_val": -90.0,
+        "source": "MIDI_CC_14",
+        "target_param": "gate.threshold_db"
+      }
+    ],
     "pitch_1.enabled": false,
     "pitch_1.key": "C",
     "pitch_1.mix": 100.0,

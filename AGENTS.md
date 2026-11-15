@@ -11,7 +11,7 @@ specs** (que é o changelog do projeto) estão em `specs/README.md` — leia-o a
 - **Regime SDD + TDD estrito:** cada `CA-n` vira um teste que falha antes da implementação (*red → green*).
 - Spec e implementação são revisadas no **mesmo PR**.
 
-> **Estado atual (2026-11-14):** Specs 034–048 (todas as fases 1–6 do review manual das Specs 001–033) implementadas e verificadas: Fases 1–4 (`034`, `037`, `046`, `044`, `036`, `035`, `048`), Fase 5 (`045`, `038`, `039`, `041`, `040`, `047`, `043`) e Fase 6 (`042` — Pitch Shifter & Harmonizer Diatônico). Design de referência em `docs/ui-desktop/canvas/`, renderizado em `docs/ui-desktop/referencia/`. O handoff anterior (`ANTIGRAVITY-033-desktop-tauri.md`) está encerrado.
+> **Estado atual (2026-11-15):** Specs 001–050 implementadas, incluindo todas as correções pós-review R1–R9 (Spec 049) e S1–S7 (Spec 050) de `docs/handoff/ANTIGRAVITY-050-pos-review.md` (handoff encerrado). Workspace Rust (`cargo test --workspace`) e suíte JS (`node --test tests/contract/`: 93/93) verdes, além de build release `sonix-app --features custom-protocol` verificado. Restam apenas `CA-36` (ASIO hardware/SDK `CPAL_ASIO_DIR`) e validadores externos `clap-validator`/VST3 SDK `validator` como `[verificação pendente]` nesta estação. Design de referência em `docs/ui-desktop/canvas/`, renderizado em `docs/ui-desktop/referencia/`.
 
 
 

@@ -136,6 +136,9 @@ pub struct DelayProcessor {
     rev_buffer: Vec<f32>,
     rev_write_pos: usize,
     rev_grain_ready: bool,
+    // Contador O(1) para invalidar caudas sem memset no callback RT
+    samples_since_clear: usize,
+    spring_samples_since_clear: usize,
 }
 
 impl DelayProcessor {
@@ -174,6 +177,8 @@ impl DelayProcessor {
             rev_buffer: vec![0.0; max_samples],
             rev_write_pos: 0,
             rev_grain_ready: false,
+            samples_since_clear: usize::MAX,
+            spring_samples_since_clear: usize::MAX,
         };
         p.update_wet_eq();
         p
@@ -269,8 +274,33 @@ impl DelayProcessor {
         self.bypassed = bypassed;
     }
 
+    pub fn reset_state(&mut self) {
+        self.clear_tail();
+        self.write_pos = 0;
+        self.spring_pos = [0; 4];
+        self.ducking_envelope = 0.0;
+        self.wet_bass_bq.z1 = 0.0;
+        self.wet_bass_bq.z2 = 0.0;
+        self.wet_treble_bq.z1 = 0.0;
+        self.wet_treble_bq.z2 = 0.0;
+    }
+
     pub fn set_spillover_enabled(&mut self, enabled: bool) {
         self.spillover_enabled = enabled;
+    }
+
+    pub fn is_spillover_enabled(&self) -> bool {
+        self.spillover_enabled
+    }
+
+    pub fn clear_tail(&mut self) {
+        // O(1): evita memset de ~3 MB no callback de áudio
+        self.samples_since_clear = 0;
+        self.spring_samples_since_clear = 0;
+        self.spring_lp.fill(0.0);
+        self.rev_write_pos = 0;
+        self.rev_grain_ready = false;
+        self.bbd_fb_lp = 0.0;
     }
 
     #[inline(always)]
@@ -279,9 +309,19 @@ impl DelayProcessor {
         let d_clamped = delay_samples.clamp(1.0, (buf_len - 2) as f32);
         let d_int = d_clamped.floor() as usize;
         let d_frac = d_clamped - d_int as f32;
-        let p0 = (self.write_pos + buf_len - d_int) % buf_len;
-        let p1 = (p0 + buf_len - 1) % buf_len;
-        self.buffer[p0] * (1.0 - d_frac) + self.buffer[p1] * d_frac
+        let s0 = if d_int > self.samples_since_clear {
+            0.0
+        } else {
+            let p0 = (self.write_pos + buf_len - d_int) % buf_len;
+            self.buffer[p0]
+        };
+        let s1 = if d_int + 1 > self.samples_since_clear {
+            0.0
+        } else {
+            let p1 = (self.write_pos + buf_len - d_int - 1) % buf_len;
+            self.buffer[p1]
+        };
+        s0 * (1.0 - d_frac) + s1 * d_frac
     }
 
     #[inline(always)]
@@ -292,12 +332,17 @@ impl DelayProcessor {
         for c in 0..4 {
             let len = ((SPRING_LENS[c] as f32 * scale).round() as usize).clamp(1, 2047);
             let pos = self.spring_pos[c] % len;
-            let y = self.spring_combs[c][pos];
+            let y = if self.spring_samples_since_clear < len {
+                0.0
+            } else {
+                self.spring_combs[c][pos]
+            };
             self.spring_lp[c] += lp_alpha * (y - self.spring_lp[c]);
             self.spring_combs[c][pos] = (x + self.spring_lp[c] * fb_gain).clamp(-1.5, 1.5);
             self.spring_pos[c] = if pos + 1 >= len { 0 } else { pos + 1 };
             sum += y;
         }
+        self.spring_samples_since_clear = self.spring_samples_since_clear.saturating_add(1);
         sum * 0.25
     }
 
@@ -498,10 +543,11 @@ impl DelayProcessor {
             } else {
                 0.0
             };
+            self.samples_since_clear = self.samples_since_clear.saturating_add(1);
 
             let wet = (echo_eq + spring_wet) * self.duck_mult;
             if self.bypassed && self.spillover_enabled {
-                output[i] = input[i] + wet;
+                output[i] = input[i] + wet * wet_ratio;
             } else if !echo_on {
                 // Mode 12: Direct signal + Spring Reverb (echo_volume silencioso para eco, reverb_volume comanda a mola)
                 output[i] = input[i] * (1.0 - 0.35 * spring_mix) + spring_wet * self.duck_mult;

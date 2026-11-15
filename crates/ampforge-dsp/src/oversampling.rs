@@ -1,5 +1,5 @@
-//! Polyphase Half-Band Oversampling Filters (RNF-004, CA-5; auditado pela Spec 044 CA-5)
-//! Suporta 1x, 2x, 4x, 8x com FIR half-band polifásico simétrico janela de Kaiser (beta = 10.8)
+//! Polyphase Half-Band Oversampling Filters (RNF-004, CA-5; Spec 049 CA-12 & CA-13)
+//! Suporta 1x, 2x, 4x, 8x com FIR half-band polifásico simétrico em ring buffer (zero shift)
 //! e medição real via DFT em `stopband_attenuation_db()`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,8 +25,20 @@ impl OversamplingFactor {
     }
 }
 
-const HB_TAPS: usize = 127;
-const HB_CENTER: usize = 63;
+const STAGE0_TAPS: usize = 103;
+const STAGE0_CENTER: usize = 51;
+const STAGE0_HALF: usize = 26; // (51 + 1) / 2
+
+const STAGE1_TAPS: usize = 43;
+const STAGE1_CENTER: usize = 21;
+const STAGE1_HALF: usize = 11; // (21 + 1) / 2
+
+const STAGE2_TAPS: usize = 27;
+const STAGE2_CENTER: usize = 13;
+const STAGE2_HALF: usize = 7; // (13 + 1) / 2
+
+const RING_SIZE: usize = 64; // Potência de 2 >= max(2 * STAGE0_HALF) = 48
+const RING_MASK: usize = RING_SIZE - 1;
 
 fn bessel_i0(x: f64) -> f64 {
     let half_x = 0.5 * x;
@@ -43,13 +55,16 @@ fn bessel_i0(x: f64) -> f64 {
     sum
 }
 
-fn build_kaiser_halfband_kernel() -> [f64; HB_TAPS] {
-    let beta = 10.8f64;
+/// Constrói apenas os `HALF` coeficientes ímpares positivos (offset = 1, 3, 5, ...)
+/// de um FIR half-band simétrico janela de Kaiser normalizado (DC gain = 1.0, center = 0.5).
+fn build_halfband_odd_taps<const TAPS: usize, const CENTER: usize, const HALF: usize>(
+    beta: f64,
+) -> ([f32; HALF], f32) {
     let denom = bessel_i0(beta);
-    let mut kernel = [0.0f64; HB_TAPS];
+    let mut full = [0.0f64; TAPS];
     let mut sum = 0.0f64;
-    for n in 0..HB_TAPS {
-        let k = n as isize - HB_CENTER as isize;
+    for n in 0..TAPS {
+        let k = n as isize - CENTER as isize;
         let sinc = if k == 0 {
             0.5
         } else if k % 2 == 0 {
@@ -58,98 +73,107 @@ fn build_kaiser_halfband_kernel() -> [f64; HB_TAPS] {
             let arg = 0.5 * std::f64::consts::PI * (k as f64);
             arg.sin() / (std::f64::consts::PI * (k as f64))
         };
-        let norm = (n as f64 - HB_CENTER as f64) / (HB_CENTER as f64);
+        let norm = (n as f64 - CENTER as f64) / (CENTER as f64);
         let arg = (1.0 - norm * norm).max(0.0).sqrt();
         let win = bessel_i0(beta * arg) / denom;
-        kernel[n] = sinc * win;
-        sum += kernel[n];
+        full[n] = sinc * win;
+        sum += full[n];
     }
     if sum > 0.0 {
-        for v in &mut kernel {
+        for v in &mut full {
             *v /= sum;
         }
     }
-    kernel
+    let mut odd = [0.0f32; HALF];
+    for i in 0..HALF {
+        let offset = 2 * i + 1;
+        odd[i] = full[CENTER + offset] as f32;
+    }
+    (odd, full[CENTER] as f32)
 }
 
 #[derive(Clone)]
-struct HalfBandStage {
-    kernel: [f64; HB_TAPS],
-    up_hist: [f64; HB_TAPS],
-    down_hist: [f64; HB_TAPS],
+struct PolyphaseStage<const HALF: usize> {
+    odd_taps: [f32; HALF],
+    center_tap: f32,
+    up_ring: [f32; RING_SIZE],
+    up_pos: usize,
+    down_even_ring: [f32; RING_SIZE],
+    down_odd_ring: [f32; RING_SIZE],
+    down_pos: usize,
 }
 
-impl HalfBandStage {
-    fn new(kernel: [f64; HB_TAPS]) -> Self {
+impl<const HALF: usize> PolyphaseStage<HALF> {
+    fn new(odd_taps: [f32; HALF], center_tap: f32) -> Self {
         Self {
-            kernel,
-            up_hist: [0.0; HB_TAPS],
-            down_hist: [0.0; HB_TAPS],
+            odd_taps,
+            center_tap,
+            up_ring: [0.0; RING_SIZE],
+            up_pos: 0,
+            down_even_ring: [0.0; RING_SIZE],
+            down_odd_ring: [0.0; RING_SIZE],
+            down_pos: 0,
         }
     }
 
-    fn push_and_fir_up(&mut self, s: f64) -> f64 {
-        for i in (1..HB_TAPS).rev() {
-            self.up_hist[i] = self.up_hist[i - 1];
+    #[inline(always)]
+    fn upsample_2x(&mut self, x: f32) -> [f32; 2] {
+        // Zero-stuffing (2*x, 0) em decomposição polifásica:
+        // Ramo par (saída 0): convolução simétrica de tamanho 2*HALF com taps ímpares (2*x).
+        // Ramo ímpar (saída 1): amostra atrasada de HALF-1 multiplicada por 2*center_tap (≈ 1.0).
+        let pos = (self.up_pos + 1) & RING_MASK;
+        self.up_pos = pos;
+        self.up_ring[pos] = x * 2.0;
+
+        let mut acc = 0.0f32;
+        for i in 0..HALF {
+            let a = self.up_ring[(pos.wrapping_sub(HALF - 1 - i)) & RING_MASK];
+            let b = self.up_ring[(pos.wrapping_sub(HALF + i)) & RING_MASK];
+            acc += (a + b) * self.odd_taps[i];
         }
-        self.up_hist[0] = s;
-        let mut acc = self.up_hist[HB_CENTER] * self.kernel[HB_CENTER];
-        // Apenas taps ímpares relativos ao centro + centro são não nulos
-        let mut offset = 1usize;
-        while offset <= HB_CENTER {
-            acc += (self.up_hist[HB_CENTER - offset] + self.up_hist[HB_CENTER + offset])
-                * self.kernel[HB_CENTER + offset];
-            offset += 2;
+
+        let y1 = self.up_ring[(pos.wrapping_sub(HALF - 1)) & RING_MASK] * self.center_tap;
+        [acc, y1]
+    }
+
+    #[inline(always)]
+    fn downsample_2x(&mut self, pair: [f32; 2]) -> f32 {
+        // Para manter fase exata com `push_and_fir_down(pair[0]); push_and_fir_down(pair[1]);`:
+        // Na saída de pair[0], `pair[0]` está nos índices pares (offsets ímpares do centro),
+        // e `pair[1]` anterior está nos índices ímpares (incluindo o centro).
+        let pos = (self.down_pos + 1) & RING_MASK;
+        self.down_pos = pos;
+        self.down_even_ring[pos] = pair[0];
+
+        let mut acc = self.down_odd_ring[(pos.wrapping_sub(HALF)) & RING_MASK] * self.center_tap;
+        for i in 0..HALF {
+            let a = self.down_even_ring[(pos.wrapping_sub(HALF - 1 - i)) & RING_MASK];
+            let b = self.down_even_ring[(pos.wrapping_sub(HALF + i)) & RING_MASK];
+            acc += (a + b) * self.odd_taps[i];
         }
+
+        self.down_odd_ring[pos] = pair[1];
         acc
-    }
-
-    #[inline]
-    fn upsample_2x(&mut self, x: f64) -> [f64; 2] {
-        // Zero-stuffing (2*x, 0) filtrado pelo FIR half-band unitário
-        let y0 = self.push_and_fir_up(x * 2.0);
-        let y1 = self.push_and_fir_up(0.0);
-        [y0, y1]
-    }
-
-    fn push_and_fir_down(&mut self, s: f64) -> f64 {
-        for i in (1..HB_TAPS).rev() {
-            self.down_hist[i] = self.down_hist[i - 1];
-        }
-        self.down_hist[0] = s;
-        let mut acc = self.down_hist[HB_CENTER] * self.kernel[HB_CENTER];
-        let mut offset = 1usize;
-        while offset <= HB_CENTER {
-            acc += (self.down_hist[HB_CENTER - offset] + self.down_hist[HB_CENTER + offset])
-                * self.kernel[HB_CENTER + offset];
-            offset += 2;
-        }
-        acc
-    }
-
-    #[inline]
-    fn downsample_2x(&mut self, pair: [f64; 2]) -> f64 {
-        let y0 = self.push_and_fir_down(pair[0]);
-        let _ = self.push_and_fir_down(pair[1]);
-        y0
     }
 }
 
 pub struct HalfBandOversampler {
     factor: OversamplingFactor,
-    stages: [HalfBandStage; 3],
+    stage0: PolyphaseStage<STAGE0_HALF>,
+    stage1: PolyphaseStage<STAGE1_HALF>,
+    stage2: PolyphaseStage<STAGE2_HALF>,
 }
 
 impl HalfBandOversampler {
     pub fn new(factor: OversamplingFactor) -> Self {
-        let kernel = build_kaiser_halfband_kernel();
+        let (odd0, c0) = build_halfband_odd_taps::<STAGE0_TAPS, STAGE0_CENTER, STAGE0_HALF>(11.5);
+        let (odd1, c1) = build_halfband_odd_taps::<STAGE1_TAPS, STAGE1_CENTER, STAGE1_HALF>(11.5);
+        let (odd2, c2) = build_halfband_odd_taps::<STAGE2_TAPS, STAGE2_CENTER, STAGE2_HALF>(11.5);
         Self {
             factor,
-            stages: [
-                HalfBandStage::new(kernel),
-                HalfBandStage::new(kernel),
-                HalfBandStage::new(kernel),
-            ],
+            stage0: PolyphaseStage::new(odd0, c0),
+            stage1: PolyphaseStage::new(odd1, c1),
+            stage2: PolyphaseStage::new(odd2, c2),
         }
     }
 
@@ -164,16 +188,8 @@ impl HalfBandOversampler {
             return 0.0;
         }
 
-        let num_stages = self.factor.stages();
-        let kernel = build_kaiser_halfband_kernel();
-        let mut probe = Self {
-            factor: self.factor,
-            stages: [
-                HalfBandStage::new(kernel),
-                HalfBandStage::new(kernel),
-                HalfBandStage::new(kernel),
-            ],
-        };
+        let _num_stages = self.factor.stages();
+        let mut probe = Self::new(self.factor);
 
         // Coleta resposta ao impulso completa do interpolador implementado
         let base_len = 256usize;
@@ -197,7 +213,6 @@ impl HalfBandOversampler {
         let end_omega = std::f64::consts::PI;
         let mut max_stop_mag = 1e-15f64;
 
-        let _ = num_stages;
         for b in 0..=num_bins {
             let omega = start_omega + (end_omega - start_omega) * (b as f64 / num_bins as f64);
             let mut re = 0.0f64;
@@ -220,16 +235,23 @@ impl HalfBandOversampler {
     }
 
     pub fn latency_samples(&self) -> usize {
-        // Atraso de grupo aproximado por estágio em amostras na taxa base
+        // Atraso de grupo roundtrip (upsample + downsample) em amostras na taxa base:
+        // Stage 0: STAGE0_CENTER = 51 amostras na taxa base.
+        // Stage 1: STAGE1_CENTER / 2 = 10.5 amostras na taxa base.
+        // Stage 2: STAGE2_CENTER / 4 = 3.25 amostras na taxa base (total 8x = 64.75 -> 65).
         match self.factor {
             OversamplingFactor::X1 => 0,
-            OversamplingFactor::X2 => HB_CENTER / 2,
-            OversamplingFactor::X4 => (HB_CENTER * 3) / 4,
-            OversamplingFactor::X8 => (HB_CENTER * 7) / 8,
+            OversamplingFactor::X2 => STAGE0_CENTER,
+            OversamplingFactor::X4 => STAGE0_CENTER + STAGE1_CENTER / 2,
+            OversamplingFactor::X8 => {
+                (STAGE0_CENTER as f64 + (STAGE1_CENTER as f64) * 0.5 + (STAGE2_CENTER as f64) * 0.25)
+                    .round() as usize
+            }
         }
     }
 
     /// Executa upsampling polifásico em cascata sem alocações na heap.
+    #[inline]
     pub fn upsample_sample(&mut self, input: f32, out_buffer: &mut [f32]) {
         let m = self.factor.multiplier();
         if m == 1 {
@@ -237,57 +259,58 @@ impl HalfBandOversampler {
             return;
         }
 
-        let s0 = self.stages[0].upsample_2x(input as f64);
+        let s0 = self.stage0.upsample_2x(input);
         if m == 2 {
-            out_buffer[0] = s0[0] as f32;
-            out_buffer[1] = s0[1] as f32;
+            out_buffer[0] = s0[0];
+            out_buffer[1] = s0[1];
             return;
         }
 
-        let a0 = self.stages[1].upsample_2x(s0[0]);
-        let a1 = self.stages[1].upsample_2x(s0[1]);
+        let a0 = self.stage1.upsample_2x(s0[0]);
+        let a1 = self.stage1.upsample_2x(s0[1]);
         if m == 4 {
-            out_buffer[0] = a0[0] as f32;
-            out_buffer[1] = a0[1] as f32;
-            out_buffer[2] = a1[0] as f32;
-            out_buffer[3] = a1[1] as f32;
+            out_buffer[0] = a0[0];
+            out_buffer[1] = a0[1];
+            out_buffer[2] = a1[0];
+            out_buffer[3] = a1[1];
             return;
         }
 
-        let s2_0 = self.stages[2].upsample_2x(a0[0]);
-        let s2_1 = self.stages[2].upsample_2x(a0[1]);
-        let s2_2 = self.stages[2].upsample_2x(a1[0]);
-        let s2_3 = self.stages[2].upsample_2x(a1[1]);
-        out_buffer[0] = s2_0[0] as f32;
-        out_buffer[1] = s2_0[1] as f32;
-        out_buffer[2] = s2_1[0] as f32;
-        out_buffer[3] = s2_1[1] as f32;
-        out_buffer[4] = s2_2[0] as f32;
-        out_buffer[5] = s2_2[1] as f32;
-        out_buffer[6] = s2_3[0] as f32;
-        out_buffer[7] = s2_3[1] as f32;
+        let s2_0 = self.stage2.upsample_2x(a0[0]);
+        let s2_1 = self.stage2.upsample_2x(a0[1]);
+        let s2_2 = self.stage2.upsample_2x(a1[0]);
+        let s2_3 = self.stage2.upsample_2x(a1[1]);
+        out_buffer[0] = s2_0[0];
+        out_buffer[1] = s2_0[1];
+        out_buffer[2] = s2_1[0];
+        out_buffer[3] = s2_1[1];
+        out_buffer[4] = s2_2[0];
+        out_buffer[5] = s2_2[1];
+        out_buffer[6] = s2_3[0];
+        out_buffer[7] = s2_3[1];
     }
 
     /// Executa decimação polifásica em cascata sem alocações na heap.
+    #[inline]
     pub fn downsample_block(&mut self, in_buffer: &[f32]) -> f32 {
         let m = self.factor.multiplier();
         if m == 1 {
             return in_buffer[0];
         }
         if m == 2 {
-            return self.stages[0].downsample_2x([in_buffer[0] as f64, in_buffer[1] as f64]) as f32;
+            return self.stage0.downsample_2x([in_buffer[0], in_buffer[1]]);
         }
         if m == 4 {
-            let d0 = self.stages[1].downsample_2x([in_buffer[0] as f64, in_buffer[1] as f64]);
-            let d1 = self.stages[1].downsample_2x([in_buffer[2] as f64, in_buffer[3] as f64]);
-            return self.stages[0].downsample_2x([d0, d1]) as f32;
+            let d0 = self.stage1.downsample_2x([in_buffer[0], in_buffer[1]]);
+            let d1 = self.stage1.downsample_2x([in_buffer[2], in_buffer[3]]);
+            return self.stage0.downsample_2x([d0, d1]);
         }
-        let c0 = self.stages[2].downsample_2x([in_buffer[0] as f64, in_buffer[1] as f64]);
-        let c1 = self.stages[2].downsample_2x([in_buffer[2] as f64, in_buffer[3] as f64]);
-        let c2 = self.stages[2].downsample_2x([in_buffer[4] as f64, in_buffer[5] as f64]);
-        let c3 = self.stages[2].downsample_2x([in_buffer[6] as f64, in_buffer[7] as f64]);
-        let d0 = self.stages[1].downsample_2x([c0, c1]);
-        let d1 = self.stages[1].downsample_2x([c2, c3]);
-        self.stages[0].downsample_2x([d0, d1]) as f32
+        let c0 = self.stage2.downsample_2x([in_buffer[0], in_buffer[1]]);
+        let c1 = self.stage2.downsample_2x([in_buffer[2], in_buffer[3]]);
+        let c2 = self.stage2.downsample_2x([in_buffer[4], in_buffer[5]]);
+        let c3 = self.stage2.downsample_2x([in_buffer[6], in_buffer[7]]);
+        let d0 = self.stage1.downsample_2x([c0, c1]);
+        let d1 = self.stage1.downsample_2x([c2, c3]);
+        self.stage0.downsample_2x([d0, d1])
     }
 }

@@ -9,15 +9,36 @@ use sonix_desktop::audio::{
     RealtimeDuplexAudioStreams, RealtimeDuplexEngine, TelemetryBuffer,
 };
 use sonix_desktop::DesktopAudioHost;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use tauri::ipc::Channel;
 use tauri::State;
+
+/// Controle da thread fallback quando o app inicia sem dispositivo real (Spec 049 CA-5).
+pub struct FallbackWorkerControl {
+    pub running: Arc<AtomicBool>,
+    pub worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl FallbackWorkerControl {
+    pub fn stop_and_join(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = self.worker.lock() {
+            if let Some(handle) = guard.take() {
+                handle.thread().unpark();
+                let _ = handle.join();
+            }
+        }
+    }
+}
 
 /// Handles ativos do motor de áudio gerenciados pelo runtime Tauri (Spec 034, CA-3/CA-4/CA-9).
 pub struct AudioRuntimeControl {
     pub duplex: Arc<RealtimeDuplexEngine>,
     pub dsp_chain: Arc<Mutex<RealtimeDspChain>>,
     pub active_streams: Arc<Mutex<Option<RealtimeDuplexAudioStreams>>>,
+    pub fallback: Arc<FallbackWorkerControl>,
 }
 
 /// Resposta bruta espelhando `(status, content_type, body)` do despachante puro `api::dispatch`.
@@ -235,7 +256,7 @@ pub fn configure_audio_device_with_opener<F>(
     opener: F,
 ) -> Result<Value, String>
 where
-    F: FnOnce(
+    F: FnMut(
         Arc<RealtimeDuplexEngine>,
         Arc<Mutex<RealtimeDspChain>>,
         Arc<TelemetryBuffer>,
@@ -244,6 +265,29 @@ where
         Option<u32>,
         Option<u32>,
     ) -> Result<(Option<RealtimeDuplexAudioStreams>, AudioStatusTelemetry), AudioDriverError>,
+{
+    configure_audio_device_generic(payload, api_ctx, duplex, dsp_chain, active_streams, None, opener)
+}
+
+pub fn configure_audio_device_generic<T, F>(
+    payload: &Value,
+    api_ctx: &ApiContext,
+    duplex: &Arc<RealtimeDuplexEngine>,
+    dsp_chain: &Arc<Mutex<RealtimeDspChain>>,
+    active_streams: &Arc<Mutex<Option<T>>>,
+    fallback: Option<&FallbackWorkerControl>,
+    mut opener: F,
+) -> Result<Value, String>
+where
+    F: FnMut(
+        Arc<RealtimeDuplexEngine>,
+        Arc<Mutex<RealtimeDspChain>>,
+        Arc<TelemetryBuffer>,
+        Option<&str>,
+        Option<&str>,
+        Option<u32>,
+        Option<u32>,
+    ) -> Result<(Option<T>, AudioStatusTelemetry), AudioDriverError>,
 {
     let host = DesktopAudioHost::new();
     let known_devices = host.enumerate_devices();
@@ -284,10 +328,31 @@ where
         .and_then(|v| v.as_str())
         .unwrap_or("left")
         .to_string();
+
+    let prev_telemetry = api_ctx
+        .audio_telemetry
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+
+    // CA-5: Para e faz join da thread fallback antes de iniciar o stream real.
+    if let Some(fb) = fallback {
+        fb.stop_and_join();
+    }
+
+    // CA-4: Encerra o stream antigo ANTES de tentar abrir o novo (evita conflito de modo exclusivo / SPSC).
+    let had_prev_stream = if let Ok(mut stream_guard) = active_streams.lock() {
+        let old = stream_guard.take();
+        let existed = old.is_some();
+        drop(old);
+        existed
+    } else {
+        false
+    };
+
     duplex.set_input_channel(InputChannel::from_str_opt(&input_channel));
 
-    // Tenta abrir o novo stream antes de desligar/sobrescrever o anterior (atomicidade com rollback em erro)
-    let (new_streams, actual_telemetry) = opener(
+    let open_res = opener(
         duplex.clone(),
         dsp_chain.clone(),
         api_ctx.telemetry.clone(),
@@ -295,8 +360,35 @@ where
         output_device.as_deref(),
         Some(sample_rate),
         Some(buffer_size),
-    )
-    .map_err(|e| format!("{}", e))?;
+    );
+
+    let (new_streams, actual_telemetry) = match open_res {
+        Ok(ok) => ok,
+        Err(e) => {
+            // CA-4: Se o novo falhar e havia stream anterior, restaura o stream anterior com mesma configuração.
+            if had_prev_stream {
+                if let Some(prev) = prev_telemetry {
+                    if let Ok((restored_stream, restored_tele)) = opener(
+                        duplex.clone(),
+                        dsp_chain.clone(),
+                        api_ctx.telemetry.clone(),
+                        Some(prev.input_device.as_str()),
+                        Some(prev.output_device.as_str()),
+                        Some(prev.sample_rate),
+                        Some(prev.output_period_frames),
+                    ) {
+                        if let Ok(mut stream_guard) = active_streams.lock() {
+                            *stream_guard = restored_stream;
+                        }
+                        if let Ok(mut guard) = api_ctx.audio_telemetry.lock() {
+                            *guard = Some(restored_tele);
+                        }
+                    }
+                }
+            }
+            return Err(format!("{}", e));
+        }
+    };
 
     duplex.set_target_period(actual_telemetry.output_period_frames as usize);
     if let Ok(mut d) = dsp_chain.lock() {
@@ -307,7 +399,6 @@ where
     }
 
     if let Ok(mut stream_guard) = active_streams.lock() {
-        // Substitui stream antigo após abertura bem-sucedida do novo
         *stream_guard = new_streams;
     }
 
@@ -334,15 +425,26 @@ pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<
     let Some(ref ctrl) = state.audio_ctrl else {
         return Err("Controle de áudio não inicializado".to_string());
     };
-    configure_audio_device_with_opener(
+    let host = DesktopAudioHost::new();
+    let backend = payload
+        .get("backend")
+        .and_then(|v| v.as_str())
+        .unwrap_or("wasapi");
+    let requested_mode_str = payload
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or(backend);
+    let mode_enum = host.validate_requested_mode(requested_mode_str)?;
+    configure_audio_device_generic(
         &payload,
         &state.api_ctx,
         &ctrl.duplex,
         &ctrl.dsp_chain,
         &ctrl.active_streams,
+        Some(ctrl.fallback.as_ref()),
         |duplex, dsp_chain, telemetry, in_dev, out_dev, sr, buf| {
-            let streams = DesktopAudioHost::start_realtime_wasapi_duplex_with_config(
-                duplex, dsp_chain, telemetry, in_dev, out_dev, sr, buf,
+            let streams = DesktopAudioHost::start_realtime_duplex_with_mode(
+                duplex, dsp_chain, telemetry, mode_enum, in_dev, out_dev, sr, buf,
             )?;
             let tele = streams.telemetry.clone();
             Ok((Some(streams), tele))

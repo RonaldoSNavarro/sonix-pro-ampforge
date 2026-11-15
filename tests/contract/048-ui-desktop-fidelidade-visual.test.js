@@ -138,6 +138,7 @@ test('Spec 048 CA-2..CA-10 & CA-12: fidelidade visual E2E em 1440x900 e estrutur
         presetId: 'recto',
         presetName: 'Cali Dual Recto Modern Metal',
         sceneIdx: 5,
+        calibrationDone: true,
         presets: [
           { id: 'usdeluxe', name: 'P01 Twin Clean Sparkle', setlist: 'Show 2026' },
           { id: 'plexi', name: 'P02 Plexi Jumped Crunch', setlist: 'Show 2026' },

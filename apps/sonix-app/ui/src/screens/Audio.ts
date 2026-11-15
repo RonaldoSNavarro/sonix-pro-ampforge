@@ -117,7 +117,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       ['wasapi_shared', 'WASAPI Shared', Boolean(caps.wasapi_shared), ''],
       ['wasapi_shared_low_latency', 'WASAPI Shared Low-Latency', Boolean(caps.wasapi_shared_low_latency), ''],
       ['wasapi_exclusive', 'WASAPI Exclusive (Spec 036)', Boolean(caps.wasapi_exclusive), 'Indisponível (Spec 036)'],
-      ['asio', 'ASIO (Spec 036)', Boolean(caps.asio), 'Indisponível (Spec 036)'],
+      ['asio', 'ASIO (Driver Nativo)', Boolean(caps.asio), 'Indisponível (Spec 036 / Spec 049 CA-36)'],
     ];
     for (const [val, text, supported, titleHint] of drivers) {
       const opt = document.createElement('option');
@@ -132,6 +132,32 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       pending.backend = driverSel.value;
     });
     devCard.appendChild(makeRow('Driver / Backend', driverSel));
+
+    // CA-38: Modo Instrument (Hi-Z -10 dBV) vs Line (+4 dBu) com aviso honesto
+    const inModeSel = document.createElement('select');
+    inModeSel.style.cssText = selStyle;
+    inModeSel.dataset.controlId = 'main.input_mode';
+    const curMode = String(store.params?.['input.mode'] ?? 'instrument');
+    for (const [mVal, mLbl] of [
+      ['instrument', 'Instrument / Hi-Z (-10 dBV)'],
+      ['line', 'Line (+4 dBu)'],
+    ]) {
+      const o = document.createElement('option');
+      o.value = mVal;
+      o.textContent = mLbl;
+      if (curMode === mVal) o.selected = true;
+      inModeSel.appendChild(o);
+    }
+    inModeSel.addEventListener('change', () => {
+      void store.setControl('main.input_mode', inModeSel.value);
+    });
+    devCard.appendChild(makeRow('Nível de Entrada', inModeSel));
+
+    const hizNote = document.createElement('div');
+    hizNote.style.cssText = 'font-size:11px;color:#8e96a0;line-height:1.35;';
+    hizNote.textContent =
+      'Hi-Z é uma propriedade elétrica da entrada da interface: o app não converte uma entrada de linha em Hi-Z por software. Para Reamp, normalmente é necessário um reamp box entre a saída de linha e a entrada do amplificador.';
+    devCard.appendChild(hizNote);
 
     const inDevs = store.devices.filter((d) => d.is_input);
     const outDevs = store.devices.filter((d) => d.is_output);

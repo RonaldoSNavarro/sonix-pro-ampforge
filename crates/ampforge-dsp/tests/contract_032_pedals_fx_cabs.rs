@@ -4,8 +4,8 @@
 //! Equalizador Multi-Modo (8 bandas / Boogie 5 / MXR 10), Gabinete Twin 2x12 Open, Off-Axis e Zero-Alloc.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::f32::consts::PI;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use ampforge_dsp::cab::{MicModel, SpeakerCabModel, VirtualCabProcessor};
 use ampforge_dsp::fx::delay::{DelayModel, DelayProcessor};
@@ -14,14 +14,18 @@ use ampforge_dsp::fx::drive::{DriveModel, DriveProcessor};
 use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
 
 struct CountingAlloc;
-static TRACK_ALLOC: AtomicBool = AtomicBool::new(false);
-static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static TRACK_ALLOC: Cell<bool> = const { Cell::new(false) };
+    static ALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if TRACK_ALLOC.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        TRACK_ALLOC.with(|t| {
+            if t.get() {
+                ALLOC_COUNT.with(|c| c.set(c.get() + 1));
+            }
+        });
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -509,8 +513,8 @@ fn test_ca_08_zero_allocations_in_fx_and_cab_process_paths() {
     eq.process(&input, &mut output);
     cab.process(&input, &mut output);
 
-    ALLOC_COUNT.store(0, Ordering::SeqCst);
-    TRACK_ALLOC.store(true, Ordering::SeqCst);
+    ALLOC_COUNT.with(|c| c.set(0));
+    TRACK_ALLOC.with(|t| t.set(true));
 
     for d in &mut drives {
         d.process(&input, &mut output);
@@ -521,8 +525,8 @@ fn test_ca_08_zero_allocations_in_fx_and_cab_process_paths() {
     eq.process(&input, &mut output);
     cab.process(&input, &mut output);
 
-    TRACK_ALLOC.store(false, Ordering::SeqCst);
-    let allocs = ALLOC_COUNT.load(Ordering::SeqCst);
+    TRACK_ALLOC.with(|t| t.set(false));
+    let allocs = ALLOC_COUNT.with(|c| c.get());
     assert_eq!(
         allocs, 0,
         "Nenhuma alocação de heap pode ocorrer em process()/set_mode() de Drive/Comp/Delay/EQ/Cab (alocou {}x)",

@@ -294,9 +294,61 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
   }
 
   if (blk === 'split') {
+    const modeRow = document.createElement('div');
+    modeRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const curMode = str(store, 'split.mode', 'ab').toLowerCase();
+    for (const [val, lbl] of [
+      ['ab', 'A/B'],
+      ['crossover', 'Crossover'],
+      ['dynamic_split', 'Dinâmico'],
+    ] as const) {
+      modeRow.appendChild(
+        makeChipButton('split.mode', lbl, curMode === val, () => void store.setControl('split.mode', val))
+      );
+    }
     container.append(
+      modeRow,
       makeControlSlider(store, 'split.crossover_hz', 'split.crossover_hz', 'Crossover', 800, (v) => `${v.toFixed(0)} Hz`),
       makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Balanço Linha B', 0, (v) => `${v.toFixed(1)} dB`)
+    );
+    return;
+  }
+
+  if (blk === 'out') {
+    const outChips = document.createElement('div');
+    outChips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const supportsMultiCh = Number(store.params['audio.channels'] ?? 2) > 2;
+    const taps: Array<{ id: string; label: string; multiOnly?: boolean }> = [
+      { id: 'MAIN_XLR_LR', label: 'MAIN XLR L/R' },
+      { id: 'AMP_OUT_P10_NO_CAB', label: 'AMP OUT P10 (Sem Cab)' },
+      { id: 'FX_SEND', label: 'FX SEND', multiOnly: true },
+      { id: 'USB_REC_OUT', label: 'USB REC OUT', multiOnly: true },
+    ];
+    const activeTap = str(store, 'ui.output_tap', 'MAIN_XLR_LR');
+    for (const tap of taps) {
+      const btn = makeChipButton('ui.output_tap', tap.label, activeTap === tap.id, () => {
+        if (tap.multiOnly && !supportsMultiCh) return;
+        store.params['ui.output_tap'] = tap.id;
+        store.selectBlock('out');
+      });
+      if (tap.multiOnly && !supportsMultiCh) {
+        btn.disabled = true;
+        btn.title = 'Requer interface de áudio com >2 canais de saída (dispositivo estéreo 2ch atual).';
+        btn.style.opacity = '0.45';
+      }
+      outChips.appendChild(btn);
+    }
+    const warn = document.createElement('div');
+    warn.style.cssText = 'font-size:11px;color:#ffd166;';
+    warn.textContent =
+      activeTap === 'AMP_OUT_P10_NO_CAB'
+        ? 'Aviso: AMP_OUT_P10_NO_CAB envia sinal pré-gabinete direto para power amp + caixa real.'
+        : 'Saída principal L/R com simulação de gabinete ativa.';
+    container.append(
+      outChips,
+      warn,
+      makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Master', 0, (v) => `${v.toFixed(1)} dB`),
+      makeToggleRow(store, 'merge.row_1_phase_invert', 'merge.row_1_phase_invert', 'Inverter Fase', false, '180°', '0°')
     );
     return;
   }
@@ -602,7 +654,7 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
     'flex:1;height:226px;border-radius:12px;background:#050505;box-shadow:0 20px 30px rgba(0,0,0,.7),0 0 0 1px #000;padding:8px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;min-width:0;';
   const tHdr = document.createElement('div');
   tHdr.style.cssText = 'display:flex;align-items:center;';
-  const liveBPlus = (store.state?.telemetry as { b_plus_v?: number } | null | undefined)?.b_plus_v ?? numSafe(store, 'amp_1.preamp_plate_v', 280);
+  const liveBPlus = (store.telemetry as { b_plus_v?: number } | null | undefined)?.b_plus_v ?? numSafe(store, 'amp_1.preamp_plate_v', 280);
   tHdr.innerHTML = `<span class="m-lbl" style="flex:1;font-size:9px;">VÁLVULAS · ${str(store, 'amp_1.preamp_tube', '12ax7').toUpperCase()} · 4× ${str(store, 'amp_1.power_tube', '6l6gc').toUpperCase()}</span><span class="m-mono" style="font-size:9px;color:#ffb347;">B+ ${Math.round(liveBPlus)} V</span>`;
 
   const tubesRow = document.createElement('div');

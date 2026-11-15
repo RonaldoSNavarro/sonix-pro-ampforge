@@ -338,7 +338,7 @@ function updateLiveReadouts(
 
   const ok = !store.bridgeError;
   refs.bridgeStatusEl.innerHTML = ok
-    ? '<span style="width:6px;height:6px;border-radius:50%;background:#4ee680;box-shadow:0 0 6px #4ee680;display:inline-block;"></span><span style="color:#4ee680;">ponte UI→DSP ok</span><span style="color:#6c7580;">· 2 ms</span>'
+    ? '<span style="width:6px;height:6px;border-radius:50%;background:#4ee680;box-shadow:0 0 6px #4ee680;display:inline-block;"></span><span style="color:#4ee680;">ponte UI→DSP ok</span>'
     : `<span style="width:6px;height:6px;border-radius:50%;background:#ff5e5e;display:inline-block;"></span><span style="color:#ff7b7b;">ponte UI→DSP erro</span>`;
 
   if (store.bridgeError) {
@@ -399,16 +399,20 @@ function updateLiveReadouts(
           ? ' low-latency'
           : '';
     const backendLabel = `${escHtml((store.audioStatus.backend || 'WASAPI').toUpperCase())}${modeSuffix}`;
-    const deviceLabel = escHtml(store.audioStatus.output_device || 'Focusrite USB Audio');
+    const deviceLabel = escHtml(store.audioStatus.output_device || 'sem dispositivo');
     const gateTxt = gateOpen ? 'aberto' : 'fechado';
-    const peakStr = inDb <= -59.5 ? '-14.2' : inDb.toFixed(1);
+    const peakStr = inDb <= -100 ? '—' : inDb.toFixed(1);
     const xruns = store.audioStatus.underruns ?? 0;
+    const streamRunning = Boolean(store.audioStatus.connected && store.audioStatus.output_device);
+    const motorLabel = streamRunning ? 'Motor ativo' : 'Motor parado';
+    const motorColor = streamRunning ? '#29c46a' : '#6c7580';
+    const calLabel = store.calibrationWizard.phase === 'done' ? 'entrada calibrada' : 'não calibrada';
 
     refs.statusbar.style.paddingBottom = '2px';
     refs.statusbar.innerHTML = `
       <span style="display:flex;align-items:center;gap:6px;">
-        <span style="width:7px;height:7px;border-radius:50%;background:#29c46a;box-shadow:0 0 6px #29c46a;"></span>
-        <span>Motor ativo</span>
+        <span style="width:7px;height:7px;border-radius:50%;background:${motorColor};box-shadow:0 0 6px ${motorColor};"></span>
+        <span>${motorLabel}</span>
       </span>
       <span>${backendLabel} · ${deviceLabel}</span>
       <span>${srKhz} kHz</span>
@@ -417,7 +421,7 @@ function updateLiveReadouts(
       <span>xruns ${xruns}</span>
       <span style="flex:1;"></span>
       <span>gate ${gateTxt}</span>
-      <span>entrada calibrada · pico ${peakStr} dBFS</span>
+      <span>${calLabel} · pico ${peakStr} dBFS</span>
     `;
   }
 }

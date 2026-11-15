@@ -4,6 +4,7 @@ pub mod api;
 pub mod audio;
 pub mod calibration;
 pub mod midi;
+pub mod reamp;
 #[cfg(feature = "dev-http")]
 pub mod server;
 

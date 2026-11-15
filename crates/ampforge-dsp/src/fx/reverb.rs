@@ -44,6 +44,8 @@ pub struct ReverbProcessor {
     shimmer_last_out: f32,
     predelay_buffer: Vec<f32>,
     predelay_pos: usize,
+    // Contador O(1) para invalidar caudas sem memset no callback RT
+    samples_since_clear: usize,
 }
 
 impl ReverbProcessor {
@@ -84,6 +86,7 @@ impl ReverbProcessor {
             shimmer_last_out: 0.0,
             predelay_buffer: vec![0.0f32; 14400], // até 150 ms a 96 kHz
             predelay_pos: 0,
+            samples_since_clear: usize::MAX,
         };
         p.update_comb_feedback();
         p
@@ -140,8 +143,25 @@ impl ReverbProcessor {
         self.bypassed = bypassed;
     }
 
+    pub fn reset_state(&mut self) {
+        self.clear_tail();
+    }
+
     pub fn set_spillover_enabled(&mut self, enabled: bool) {
         self.spillover_enabled = enabled;
+    }
+
+    pub fn is_spillover_enabled(&self) -> bool {
+        self.spillover_enabled
+    }
+
+    pub fn clear_tail(&mut self) {
+        // O(1): evita memset dos buffers de delay/comb/allpass no callback RT
+        self.samples_since_clear = 0;
+        self.damp_states.fill(0.0);
+        self.spring_disp_x1.fill(0.0);
+        self.spring_disp_y1.fill(0.0);
+        self.shimmer_last_out = 0.0;
     }
 
     fn update_comb_feedback(&mut self) {
@@ -179,6 +199,9 @@ impl ReverbProcessor {
     #[inline(always)]
     fn read_shimmer_linear(&self, delay_samples: f32) -> f32 {
         let d = delay_samples.clamp(1.0, (SHIMMER_BUF_LEN - 2) as f32);
+        if (d.ceil() as usize) > self.samples_since_clear {
+            return 0.0;
+        }
         let pos = (self.shimmer_write_pos as f32 + SHIMMER_BUF_LEN as f32 - d)
             % SHIMMER_BUF_LEN as f32;
         let i0 = pos.floor() as usize % SHIMMER_BUF_LEN;
@@ -221,10 +244,13 @@ impl ReverbProcessor {
 
             // Predelay circular buffer
             self.predelay_buffer[self.predelay_pos] = in_sample;
-            let read_idx = (self.predelay_pos + predelay_len
-                - predelay_samples.min(predelay_len - 1))
-                % predelay_len;
-            let delayed_in = self.predelay_buffer[read_idx];
+            let pd = predelay_samples.min(predelay_len - 1);
+            let delayed_in = if pd > self.samples_since_clear {
+                0.0
+            } else {
+                let read_idx = (self.predelay_pos + predelay_len - pd) % predelay_len;
+                self.predelay_buffer[read_idx]
+            };
             self.predelay_pos = (self.predelay_pos + 1) % predelay_len;
 
             let tank_input = if self.has_shimmer_octave_generation() {
@@ -237,7 +263,11 @@ impl ReverbProcessor {
             for c in 0..num_combs {
                 let len = self.comb_active_lens[c];
                 let pos = self.comb_positions[c];
-                let out_c = self.comb_buffers[c][pos];
+                let out_c = if self.samples_since_clear < len {
+                    0.0
+                } else {
+                    self.comb_buffers[c][pos]
+                };
                 wet_sum += out_c;
 
                 // One-pole low-pass damping in loop
@@ -267,7 +297,11 @@ impl ReverbProcessor {
                 for a in 0..4 {
                     let len = self.ap_active_lens[a];
                     let pos = self.ap_positions[a];
-                    let buf_out = self.ap_buffers[a][pos];
+                    let buf_out = if self.samples_since_clear < len {
+                        0.0
+                    } else {
+                        self.ap_buffers[a][pos]
+                    };
                     let y = -ap_g * diffused + buf_out;
                     self.ap_buffers[a][pos] = (diffused + ap_g * y).clamp(-4.0, 4.0);
                     self.ap_positions[a] = if pos + 1 >= len { 0 } else { pos + 1 };
@@ -292,8 +326,9 @@ impl ReverbProcessor {
                 diffused = diffused * 0.65 + shifted * 0.55;
             }
 
+            self.samples_since_clear = self.samples_since_clear.saturating_add(1);
             if self.bypassed && self.spillover_enabled {
-                output[i] = input[i] + diffused;
+                output[i] = input[i] + diffused * wet_ratio;
             } else {
                 output[i] = input[i] * dry_ratio + diffused * wet_ratio;
             }

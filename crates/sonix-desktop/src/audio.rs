@@ -694,14 +694,12 @@ impl CpalAudioEnumerator {
         }
         rates
     }
-}
-
-impl AudioDeviceEnumerator for CpalAudioEnumerator {
-    fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
-        let host = cpal::default_host();
-        let backend = Self::host_backend();
-        let mut out = Vec::new();
-
+    fn enumerate_host_devices(
+        host: &cpal::Host,
+        backend: AudioBackendType,
+        prefix: &str,
+        out: &mut Vec<DesktopAudioDevice>,
+    ) {
         let default_in_name = host
             .default_input_device()
             .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()));
@@ -724,7 +722,7 @@ impl AudioDeviceEnumerator for CpalAudioEnumerator {
                 inputs_list.push((
                     is_default,
                     DesktopAudioDevice {
-                        id: format!("in_{}", idx),
+                        id: format!("{}in_{}", prefix, idx),
                         name,
                         backend: backend.clone(),
                         is_input: true,
@@ -752,7 +750,7 @@ impl AudioDeviceEnumerator for CpalAudioEnumerator {
                 outputs_list.push((
                     is_default,
                     DesktopAudioDevice {
-                        id: format!("out_{}", idx),
+                        id: format!("{}out_{}", prefix, idx),
                         name,
                         backend: backend.clone(),
                         is_input: false,
@@ -764,6 +762,20 @@ impl AudioDeviceEnumerator for CpalAudioEnumerator {
         }
         outputs_list.sort_by_key(|(is_def, _)| std::cmp::Reverse(*is_def));
         out.extend(outputs_list.into_iter().map(|(_, d)| d));
+    }
+}
+
+impl AudioDeviceEnumerator for CpalAudioEnumerator {
+    fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
+        let host = cpal::default_host();
+        let backend = Self::host_backend();
+        let mut out = Vec::new();
+        Self::enumerate_host_devices(&host, backend, "", &mut out);
+
+        #[cfg(feature = "asio")]
+        if let Ok(asio_host) = cpal::host_from_id(cpal::HostId::Asio) {
+            Self::enumerate_host_devices(&asio_host, AudioBackendType::Asio, "asio_", &mut out);
+        }
 
         out
     }
@@ -808,12 +820,13 @@ impl DesktopAudioHost {
         self.enumerate_devices()
     }
 
-    /// Informa suporte real do host para modos de áudio (Spec 036 CA-7).
+    /// Informa suporte real do host para modos de áudio (Spec 036 CA-7 / Spec 049 CA-36..CA-37).
     pub fn has_mode_support(&self, mode: AudioMode) -> bool {
-        matches!(
-            mode,
-            AudioMode::Auto | AudioMode::WasapiShared | AudioMode::WasapiSharedLowLatency
-        )
+        match mode {
+            AudioMode::Auto | AudioMode::WasapiShared | AudioMode::WasapiSharedLowLatency => true,
+            AudioMode::Asio => cfg!(feature = "asio"),
+            AudioMode::WasapiExclusive => false,
+        }
     }
 
     pub fn validate_requested_mode(&self, mode_str: &str) -> Result<AudioMode, String> {
@@ -953,7 +966,7 @@ impl DesktopAudioHost {
         let chunk_cap = mono_in.len().min(mono_out.len()).max(1);
         let mut offset = 0usize;
         let mut peak = 0.0f32;
-        let mut gate_telemetry: Option<(GateState, f32)> = None;
+        let mut gate_telemetry: Option<(GateState, f32, f32)> = None;
         let t0 = std::time::Instant::now();
 
         while offset < total_frames {
@@ -961,7 +974,7 @@ impl DesktopAudioHost {
             duplex.pop_samples_for_processing(&mut mono_in[..frames]);
             if let Ok(mut dsp) = dsp_chain.try_lock() {
                 dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
-                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
+                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
             } else {
                 // Contenção não silencia áudio: encaminha o sinal de entrada em bypass sem zeros (Spec 034, CA-6)
                 telemetry.record_dsp_contention_silence();
@@ -984,8 +997,9 @@ impl DesktopAudioHost {
         let cpu_pct = (elapsed_s / budget_s) * 100.0;
         let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
         telemetry.update_peaks(telemetry.input_peak_db(), peak_db, cpu_pct);
-        if let Some((gs, ggr)) = gate_telemetry {
+        if let Some((gs, ggr, b_plus_v)) = gate_telemetry {
             telemetry.update_gate_telemetry(gs, ggr);
+            telemetry.update_b_plus_v(b_plus_v);
         }
     }
 
@@ -1017,7 +1031,7 @@ impl DesktopAudioHost {
         let chunk_cap = mono_in.len().min(mono_out.len()).max(1);
         let mut offset = 0usize;
         let mut peak = 0.0f32;
-        let mut gate_telemetry: Option<(GateState, f32)> = None;
+        let mut gate_telemetry: Option<(GateState, f32, f32)> = None;
         let t0 = std::time::Instant::now();
 
         while offset < total_frames {
@@ -1025,7 +1039,7 @@ impl DesktopAudioHost {
             duplex.pop_samples_for_processing(&mut mono_in[..frames]);
             if let Ok(mut dsp) = dsp_chain.try_lock() {
                 dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
-                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db()));
+                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
             } else {
                 telemetry.record_dsp_contention_silence();
                 mono_out[..frames].copy_from_slice(&mono_in[..frames]);
@@ -1048,9 +1062,52 @@ impl DesktopAudioHost {
         let cpu_pct = (elapsed_s / budget_s) * 100.0;
         let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
         telemetry.update_peaks(telemetry.input_peak_db(), peak_db, cpu_pct);
-        if let Some((gs, ggr)) = gate_telemetry {
+        if let Some((gs, ggr, b_plus_v)) = gate_telemetry {
             telemetry.update_gate_telemetry(gs, ggr);
+            telemetry.update_b_plus_v(b_plus_v);
         }
+    }
+
+    /// Resolve taxas de amostragem alinhadas para entrada e saída duplex (Spec 050, CA-3).
+    /// Recusa com erro quando a taxa pedida não é suportada ou quando não existe taxa comum.
+    pub fn resolve_duplex_sample_rate(
+        default_in_sr: u32,
+        default_out_sr: u32,
+        requested_sr: Option<u32>,
+        supported_in_rates: &[u32],
+        supported_out_rates: &[u32],
+    ) -> Result<(u32, u32), AudioDriverError> {
+        let in_supports = |sr: u32| supported_in_rates.is_empty() || supported_in_rates.contains(&sr);
+        let out_supports = |sr: u32| supported_out_rates.is_empty() || supported_out_rates.contains(&sr);
+
+        if let Some(sr) = requested_sr {
+            if supported_in_rates.contains(&sr) && supported_out_rates.contains(&sr) {
+                return Ok((sr, sr));
+            }
+            return Err(AudioDriverError::InitFailed(format!(
+                "mode_unavailable: taxa solicitada {} Hz não é suportada simultaneamente por entrada ({:?}) e saída ({:?})",
+                sr, supported_in_rates, supported_out_rates
+            )));
+        }
+        if default_in_sr == default_out_sr && in_supports(default_in_sr) && out_supports(default_out_sr) {
+            return Ok((default_in_sr, default_out_sr));
+        }
+        if supported_in_rates.contains(&default_out_sr) && out_supports(default_out_sr) {
+            return Ok((default_out_sr, default_out_sr));
+        }
+        if supported_out_rates.contains(&default_in_sr) && in_supports(default_in_sr) {
+            return Ok((default_in_sr, default_in_sr));
+        }
+        if let Some(&common) = supported_out_rates
+            .iter()
+            .find(|r| supported_in_rates.contains(r))
+        {
+            return Ok((common, common));
+        }
+        Err(AudioDriverError::InitFailed(format!(
+            "mode_unavailable: entrada ({:?}) e saída ({:?}) não compartilham taxa de amostragem comum",
+            supported_in_rates, supported_out_rates
+        )))
     }
 
     /// Inicia streaming duplex real-time com hardware nativo WASAPI via CPAL
@@ -1060,6 +1117,58 @@ impl DesktopAudioHost {
         telemetry: Arc<TelemetryBuffer>,
     ) -> Result<RealtimeDuplexAudioStreams, AudioDriverError> {
         Self::start_realtime_wasapi_duplex_with_config(duplex, dsp_chain, telemetry, None, None, None, None)
+    }
+
+    /// Inicia streaming duplex real-time selecionando modo (WASAPI ou ASIO quando feature `asio` está ativa — Spec 049 CA-36/CA-37).
+    pub fn start_realtime_duplex_with_mode(
+        duplex: Arc<RealtimeDuplexEngine>,
+        dsp_chain: Arc<Mutex<RealtimeDspChain>>,
+        telemetry: Arc<TelemetryBuffer>,
+        mode: AudioMode,
+        requested_input_device: Option<&str>,
+        requested_output_device: Option<&str>,
+        requested_sample_rate: Option<u32>,
+        requested_buffer_size: Option<u32>,
+    ) -> Result<RealtimeDuplexAudioStreams, AudioDriverError> {
+        if mode == AudioMode::Asio {
+            #[cfg(feature = "asio")]
+            {
+                let asio_host = cpal::host_from_id(cpal::HostId::Asio).map_err(|e| {
+                    AudioDriverError::InitFailed(format!(
+                        "mode_unavailable: driver ASIO indisponível: {}",
+                        e
+                    ))
+                })?;
+                return Self::start_realtime_duplex_on_host(
+                    &asio_host,
+                    "asio",
+                    "asio_native",
+                    duplex,
+                    dsp_chain,
+                    telemetry,
+                    requested_input_device,
+                    requested_output_device,
+                    requested_sample_rate,
+                    requested_buffer_size,
+                )
+                .map_err(|e| AudioDriverError::InitFailed(format!("mode_unavailable: {}", e)));
+            }
+            #[cfg(not(feature = "asio"))]
+            {
+                return Err(AudioDriverError::InitFailed(
+                    "mode_unavailable: suporte ASIO não compilado (feature `asio` requer CPAL_ASIO_DIR)".to_string(),
+                ));
+            }
+        }
+        Self::start_realtime_wasapi_duplex_with_config(
+            duplex,
+            dsp_chain,
+            telemetry,
+            requested_input_device,
+            requested_output_device,
+            requested_sample_rate,
+            requested_buffer_size,
+        )
     }
 
     /// Inicia streaming duplex real-time com dispositivos/taxa/buffer explícitos (Spec 034, CA-3, CA-4, CA-9).
@@ -1073,6 +1182,32 @@ impl DesktopAudioHost {
         requested_buffer_size: Option<u32>,
     ) -> Result<RealtimeDuplexAudioStreams, AudioDriverError> {
         let host = cpal::default_host();
+        Self::start_realtime_duplex_on_host(
+            &host,
+            "wasapi",
+            "wasapi_shared",
+            duplex,
+            dsp_chain,
+            telemetry,
+            requested_input_device,
+            requested_output_device,
+            requested_sample_rate,
+            requested_buffer_size,
+        )
+    }
+
+    fn start_realtime_duplex_on_host(
+        host: &cpal::Host,
+        backend_name: &str,
+        default_mode_name: &str,
+        duplex: Arc<RealtimeDuplexEngine>,
+        dsp_chain: Arc<Mutex<RealtimeDspChain>>,
+        telemetry: Arc<TelemetryBuffer>,
+        requested_input_device: Option<&str>,
+        requested_output_device: Option<&str>,
+        requested_sample_rate: Option<u32>,
+        requested_buffer_size: Option<u32>,
+    ) -> Result<RealtimeDuplexAudioStreams, AudioDriverError> {
         let in_device = if let Some(req) = requested_input_device {
             host.input_devices()
                 .map_err(|e| AudioDriverError::InitFailed(format!("Falha ao enumerar entradas: {}", e)))?
@@ -1103,16 +1238,22 @@ impl DesktopAudioHost {
         let in_channels = in_config.channels() as usize;
         let out_channels = out_config.channels() as usize;
 
+        let supported_in = CpalAudioEnumerator::collect_sample_rates(&in_device, true);
+        let supported_out = CpalAudioEnumerator::collect_sample_rates(&out_device, false);
+        let (aligned_in_sr, aligned_out_sr) = Self::resolve_duplex_sample_rate(
+            in_config.sample_rate(),
+            out_config.sample_rate(),
+            requested_sample_rate,
+            &supported_in,
+            &supported_out,
+        )?;
+
         let mut in_stream_config: cpal::StreamConfig = in_config.clone().into();
-        if let Some(sr) = requested_sample_rate {
-            in_stream_config.sample_rate = sr;
-        }
+        in_stream_config.sample_rate = aligned_in_sr;
         in_stream_config.buffer_size = cpal::BufferSize::Fixed(target_period);
 
         let mut out_stream_config: cpal::StreamConfig = out_config.clone().into();
-        if let Some(sr) = requested_sample_rate {
-            out_stream_config.sample_rate = sr;
-        }
+        out_stream_config.sample_rate = aligned_out_sr;
         out_stream_config.buffer_size = cpal::BufferSize::Fixed(target_period);
 
         let observed_in_period = Arc::new(AtomicU32::new(target_period));
@@ -1331,13 +1472,14 @@ impl DesktopAudioHost {
             .unwrap_or(16);
 
         let status_telemetry = AudioStatusTelemetry {
-            backend: "wasapi".to_string(),
-            mode: if out_opened_fixed && out_period_frames <= 128 {
-                "wasapi_shared_low_latency"
+            backend: backend_name.to_string(),
+            mode: if backend_name == "asio" {
+                default_mode_name.to_string()
+            } else if out_opened_fixed && out_period_frames <= 128 {
+                "wasapi_shared_low_latency".to_string()
             } else {
-                "wasapi_shared"
-            }
-            .to_string(),
+                default_mode_name.to_string()
+            },
             fallback_reason: if out_opened_fixed {
                 None
             } else {
@@ -1407,12 +1549,15 @@ impl InputSource {
 pub enum ChainSplitMode {
     Ab,
     Crossover,
+    DynamicSplit,
 }
 
 impl ChainSplitMode {
     pub fn from_str_name(s: &str) -> Self {
         if s.eq_ignore_ascii_case("crossover") {
             Self::Crossover
+        } else if s.eq_ignore_ascii_case("dynamic_split") || s.eq_ignore_ascii_case("dynamic") {
+            Self::DynamicSplit
         } else {
             Self::Ab
         }
@@ -1422,6 +1567,235 @@ impl ChainSplitMode {
         match self {
             Self::Ab => "ab",
             Self::Crossover => "crossover",
+            Self::DynamicSplit => "dynamic_split",
+        }
+    }
+}
+
+/// Blocos executáveis na grade DAG 4×12 ao vivo (Spec 049, Parte C — CA-23..CA-28)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DagBlockKind {
+    Gate,
+    Pitch1,
+    Drive,
+    Split,
+    Amp1,
+    Cab1,
+    Eq1,
+    Comp2,
+    Amp2,
+    Cab2,
+    Mod2,
+    Merge,
+    Dly1,
+    Rev1,
+}
+
+impl DagBlockKind {
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "gate" => Some(Self::Gate),
+            "pitch_1" | "pitch" => Some(Self::Pitch1),
+            "drive" => Some(Self::Drive),
+            "split" => Some(Self::Split),
+            "amp_1" | "amp" => Some(Self::Amp1),
+            "cab_1" | "cab" => Some(Self::Cab1),
+            "eq_1" | "eq" => Some(Self::Eq1),
+            "comp_2" | "comp" => Some(Self::Comp2),
+            "amp_2" => Some(Self::Amp2),
+            "cab_2" => Some(Self::Cab2),
+            "mod_2" | "mod" => Some(Self::Mod2),
+            "merge" => Some(Self::Merge),
+            "dly_1" | "delay" => Some(Self::Dly1),
+            "rev_1" | "reverb" => Some(Self::Rev1),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Gate => "gate",
+            Self::Pitch1 => "pitch_1",
+            Self::Drive => "drive",
+            Self::Split => "split",
+            Self::Amp1 => "amp_1",
+            Self::Cab1 => "cab_1",
+            Self::Eq1 => "eq_1",
+            Self::Comp2 => "comp_2",
+            Self::Amp2 => "amp_2",
+            Self::Cab2 => "cab_2",
+            Self::Mod2 => "mod_2",
+            Self::Merge => "merge",
+            Self::Dly1 => "dly_1",
+            Self::Rev1 => "rev_1",
+        }
+    }
+}
+
+/// Topologia compilada lock-free/zero-alloc para a grade 4×12 do callback RT (Spec 049, CA-23/CA-24)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompiledDagTopology {
+    pub id: u64,
+    pub slots: [Option<DagBlockKind>; 48],
+}
+
+impl CompiledDagTopology {
+    pub fn default_layout(id: u64) -> Self {
+        let mut slots = [None; 48];
+        // Row 0 (0..12)
+        slots[0] = Some(DagBlockKind::Gate);
+        slots[1] = Some(DagBlockKind::Drive);
+        slots[2] = Some(DagBlockKind::Pitch1);
+        slots[3] = Some(DagBlockKind::Amp1);
+        slots[4] = Some(DagBlockKind::Cab1);
+        slots[6] = Some(DagBlockKind::Eq1);
+        slots[9] = Some(DagBlockKind::Dly1);
+        slots[10] = Some(DagBlockKind::Rev1);
+        // Row 1 (12..24)
+        slots[12 + 3] = Some(DagBlockKind::Comp2);
+        slots[12 + 4] = Some(DagBlockKind::Amp2);
+        slots[12 + 5] = Some(DagBlockKind::Cab2);
+        slots[12 + 6] = Some(DagBlockKind::Mod2);
+        Self { id, slots }
+    }
+}
+
+/// Fontes suportadas pelo motor de Modifiers em tempo real (Spec 049, CA-31/CA-32)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompiledModifierSource {
+    ExpPedal1,
+    ExpPedal2,
+    MidiCc(u8),
+    InternalLfo1,
+    InternalLfo2,
+    EnvelopeFollower,
+    SceneController,
+}
+
+impl CompiledModifierSource {
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        let up = s.trim().to_ascii_uppercase();
+        if up == "EXP_PEDAL_1" {
+            Some(Self::ExpPedal1)
+        } else if up == "EXP_PEDAL_2" {
+            Some(Self::ExpPedal2)
+        } else if up == "INTERNAL_LFO_1" {
+            Some(Self::InternalLfo1)
+        } else if up == "INTERNAL_LFO_2" {
+            Some(Self::InternalLfo2)
+        } else if up == "ENVELOPE_FOLLOWER" {
+            Some(Self::EnvelopeFollower)
+        } else if up == "SCENE_CONTROLLER" {
+            Some(Self::SceneController)
+        } else if let Some(rest) = up.strip_prefix("MIDI_CC_") {
+            rest.parse::<u8>().ok().filter(|&cc| cc <= 127).map(Self::MidiCc)
+        } else {
+            None
+        }
+    }
+}
+
+/// Parâmetros contínuos alvos de Modifiers (Spec 049 CA-32: exclui parâmetros discretos)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModifierTargetParam {
+    Amp1Gain,
+    Amp1Master,
+    Amp1Bass,
+    Amp1Middle,
+    Amp1Treble,
+    Amp1Presence,
+    DriveDrive,
+    DriveLevel,
+    Mod2Depth,
+    Mod2RateHz,
+    Dly1Mix,
+    Dly1Intensity,
+    Rev1Mix,
+    GateThresholdDb,
+}
+
+impl ModifierTargetParam {
+    pub const COUNT: usize = 14;
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Amp1Gain,
+        Self::Amp1Master,
+        Self::Amp1Bass,
+        Self::Amp1Middle,
+        Self::Amp1Treble,
+        Self::Amp1Presence,
+        Self::DriveDrive,
+        Self::DriveLevel,
+        Self::Mod2Depth,
+        Self::Mod2RateHz,
+        Self::Dly1Mix,
+        Self::Dly1Intensity,
+        Self::Rev1Mix,
+        Self::GateThresholdDb,
+    ];
+
+    #[inline]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub fn from_str_name(s: &str) -> Option<(Self, f32, f32)> {
+        match s.trim() {
+            "amp_1.gain" => Some((Self::Amp1Gain, 0.0, 10.0)),
+            "amp_1.master" => Some((Self::Amp1Master, 0.0, 10.0)),
+            "amp_1.bass" => Some((Self::Amp1Bass, 0.0, 10.0)),
+            "amp_1.middle" => Some((Self::Amp1Middle, 0.0, 10.0)),
+            "amp_1.treble" => Some((Self::Amp1Treble, 0.0, 10.0)),
+            "amp_1.presence" => Some((Self::Amp1Presence, 0.0, 10.0)),
+            "drive.drive" => Some((Self::DriveDrive, 0.0, 10.0)),
+            "drive.level" => Some((Self::DriveLevel, 0.0, 10.0)),
+            "mod_2.depth" => Some((Self::Mod2Depth, 0.0, 100.0)),
+            "mod_2.rate_hz" => Some((Self::Mod2RateHz, 0.1, 10.0)),
+            "dly_1.mix" | "dly_1.echo_volume" => Some((Self::Dly1Mix, 0.0, 100.0)),
+            "dly_1.intensity" => Some((Self::Dly1Intensity, 0.0, 10.0)),
+            "rev_1.mix" => Some((Self::Rev1Mix, 0.0, 100.0)),
+            "gate.threshold_db" => Some((Self::GateThresholdDb, -90.0, 0.0)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CompiledModifierBinding {
+    pub active: bool,
+    pub target: ModifierTargetParam,
+    pub source: CompiledModifierSource,
+    pub min_val: f32,
+    pub max_val: f32,
+    pub curve_slope: f32,
+    pub damping_ms: f32,
+}
+
+impl Default for CompiledModifierBinding {
+    fn default() -> Self {
+        Self {
+            active: false,
+            target: ModifierTargetParam::Amp1Gain,
+            source: CompiledModifierSource::ExpPedal1,
+            min_val: 0.0,
+            max_val: 10.0,
+            curve_slope: 0.5,
+            damping_ms: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CompiledModifierTable {
+    pub bindings: [CompiledModifierBinding; 16],
+    pub len: usize,
+}
+
+impl CompiledModifierTable {
+    pub fn empty() -> Self {
+        Self {
+            bindings: [CompiledModifierBinding::default(); 16],
+            len: 0,
         }
     }
 }
@@ -1430,28 +1804,82 @@ impl ChainSplitMode {
 pub enum PreparedDspResource {
     CabinetIr { slot: u8, ir: ImpulseResponse },
     DiSamples(Vec<f32>),
+    Topology(Box<CompiledDagTopology>),
+    Modifiers(Box<CompiledModifierTable>),
 }
 
 /// Recursos aposentados pelo callback RT cuja desalocação é delegada ao reaper thread (Spec 037, CA-3)
 pub enum RetiredDspResource {
     CabinetIr(ImpulseResponse),
     DiSamples(Vec<f32>),
+    Topology(Box<CompiledDagTopology>),
+    Modifiers(Box<CompiledModifierTable>),
 }
 
-/// Fila SPSC lock-free de transferência de recursos pesados entre controle e thread de áudio (Spec 037, CA-3/CA-4)
+/// Fila MPSC (produtores serializados por lock externo ao callback, consumidor SPSC lock-free)
+/// de transferência de recursos pesados entre controle e thread de áudio (Spec 037 CA-3/CA-4, Spec 049 CA-7/CA-24)
 pub struct LockFreeResourceQueue {
     inner: Arc<SpscOwnedQueue<PreparedDspResource, 16>>,
+    producer_lock: Arc<Mutex<()>>,
+    retired_queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
+    retired_reclaimed: Arc<AtomicU64>,
+    retired_consumer_lock: Arc<Mutex<()>>,
 }
 
 impl LockFreeResourceQueue {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(SpscOwnedQueue::new()),
+            producer_lock: Arc::new(Mutex::new(())),
+            retired_queue: Arc::new(SpscOwnedQueue::new()),
+            retired_reclaimed: Arc::new(AtomicU64::new(0)),
+            retired_consumer_lock: Arc::new(Mutex::new(())),
         }
     }
 
     pub fn push(&self, item: PreparedDspResource) -> Result<(), PreparedDspResource> {
+        self.reclaim_retired();
+        let _guard = self.producer_lock.lock().unwrap_or_else(|e| e.into_inner());
         self.inner.push(item)
+    }
+
+    pub fn push_topology(&self, topo: Box<CompiledDagTopology>) -> Result<(), Box<CompiledDagTopology>> {
+        self.push(PreparedDspResource::Topology(topo)).map_err(|rej| match rej {
+            PreparedDspResource::Topology(t) => t,
+            _ => unreachable!(),
+        })
+    }
+
+    pub fn push_modifiers(&self, table: Box<CompiledModifierTable>) -> Result<(), Box<CompiledModifierTable>> {
+        self.push(PreparedDspResource::Modifiers(table)).map_err(|rej| match rej {
+            PreparedDspResource::Modifiers(t) => t,
+            _ => unreachable!(),
+        })
+    }
+
+    /// Garante drenagem cooperativa fora da thread de áudio (Spec 049, CA-24)
+    pub fn reclaim_retired(&self) {
+        let _guard = self.retired_consumer_lock.lock().unwrap_or_else(|e| e.into_inner());
+        while let Some(item) = self.retired_queue.pop() {
+            drop(item);
+            self.retired_reclaimed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn reclaimed_count(&self) -> u64 {
+        self.retired_reclaimed.load(Ordering::Relaxed)
+    }
+
+    fn retired_queue(&self) -> Arc<SpscOwnedQueue<RetiredDspResource, 64>> {
+        Arc::clone(&self.retired_queue)
+    }
+
+    fn retired_reclaimed(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.retired_reclaimed)
+    }
+
+    fn retired_consumer_lock(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.retired_consumer_lock)
     }
 
     #[inline]
@@ -1464,6 +1892,10 @@ impl Clone for LockFreeResourceQueue {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            producer_lock: Arc::clone(&self.producer_lock),
+            retired_queue: Arc::clone(&self.retired_queue),
+            retired_reclaimed: Arc::clone(&self.retired_reclaimed),
+            retired_consumer_lock: Arc::clone(&self.retired_consumer_lock),
         }
     }
 }
@@ -1476,7 +1908,7 @@ impl Default for LockFreeResourceQueue {
 
 /// Coletor em background que libera `ImpulseResponse` / `Vec<f32>` aposentados fora do callback RT (Spec 037, CA-3)
 struct RetiredReaper {
-    queue: Arc<SpscOwnedQueue<RetiredDspResource, 16>>,
+    queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
     reclaimed_count: Arc<AtomicU64>,
     shutdown: Arc<AtomicBool>,
     worker_handle: Option<JoinHandle<()>>,
@@ -1484,36 +1916,46 @@ struct RetiredReaper {
 }
 
 impl RetiredReaper {
-    fn noop() -> Self {
+    fn noop_with_queue(
+        queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
+        reclaimed_count: Arc<AtomicU64>,
+    ) -> Self {
         Self {
-            queue: Arc::new(SpscOwnedQueue::new()),
-            reclaimed_count: Arc::new(AtomicU64::new(0)),
+            queue,
+            reclaimed_count,
             shutdown: Arc::new(AtomicBool::new(true)),
             worker_handle: None,
             worker_thread: thread::current(),
         }
     }
 
-    fn new() -> Self {
-        let queue = Arc::new(SpscOwnedQueue::new());
-        let reclaimed_count = Arc::new(AtomicU64::new(0));
+    fn with_queue(
+        queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
+        reclaimed_count: Arc<AtomicU64>,
+        consumer_lock: Arc<Mutex<()>>,
+    ) -> Self {
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let q_w = queue.clone();
         let c_w = reclaimed_count.clone();
         let s_w = shutdown.clone();
+        let l_w = consumer_lock;
 
         let worker_handle = thread::Builder::new()
             .name("sonix-rt-reaper".to_string())
             .spawn(move || {
                 loop {
                     let mut drained = false;
-                    while let Some(item) = q_w.pop() {
-                        drop(item);
-                        c_w.fetch_add(1, Ordering::Relaxed);
-                        drained = true;
+                    {
+                        let _guard = l_w.lock().unwrap_or_else(|e| e.into_inner());
+                        while let Some(item) = q_w.pop() {
+                            drop(item);
+                            c_w.fetch_add(1, Ordering::Relaxed);
+                            drained = true;
+                        }
                     }
                     if s_w.load(Ordering::Acquire) {
+                        let _guard = l_w.lock().unwrap_or_else(|e| e.into_inner());
                         while let Some(item) = q_w.pop() {
                             drop(item);
                             c_w.fetch_add(1, Ordering::Relaxed);
@@ -1557,6 +1999,34 @@ impl RetiredReaper {
             return true;
         }
         match self.queue.push(RetiredDspResource::DiSamples(di)) {
+            Ok(()) => {
+                self.worker_thread.unpark();
+                true
+            }
+            Err(rejected) => {
+                std::mem::forget(rejected);
+                false
+            }
+        }
+    }
+
+    #[inline]
+    fn retire_topology(&self, topo: Box<CompiledDagTopology>) -> bool {
+        match self.queue.push(RetiredDspResource::Topology(topo)) {
+            Ok(()) => {
+                self.worker_thread.unpark();
+                true
+            }
+            Err(rejected) => {
+                std::mem::forget(rejected);
+                false
+            }
+        }
+    }
+
+    #[inline]
+    fn retire_modifiers(&self, table: Box<CompiledModifierTable>) -> bool {
+        match self.queue.push(RetiredDspResource::Modifiers(table)) {
             Ok(()) => {
                 self.worker_thread.unpark();
                 true
@@ -1614,6 +2084,7 @@ pub enum DspParamUpdate {
     AmpToneStack(ToneStackTopology),
     EngineOversampling(usize),
     InputBoost(f32),
+    InputModeLine(bool),
     GateThreshold(f32),
     GateEnabled(bool),
     GateMode(NoiseGateMode),
@@ -2005,6 +2476,7 @@ pub struct RealtimeDspChain {
     max_block: usize,
     shared_sample_rate_bits: Arc<AtomicU32>,
     shared_algo_latency_samples: Arc<AtomicU32>,
+    shared_b_plus_v_bits: Arc<AtomicU32>,
     gate: NoiseGateProcessor,
     gate_enabled: bool,
     drive: DriveProcessor,
@@ -2014,8 +2486,11 @@ pub struct RealtimeDspChain {
     cab: VirtualCabProcessor,
     cab_enabled: bool,
     input_boost: f32,
-    dc_x1: f32,
-    dc_y1: f32,
+    input_mode_line: bool,
+    dc_x1: f64,
+    dc_x2: f64,
+    dc_y1: f64,
+    dc_y2: f64,
     temp_boost_buf: Vec<f32>,
     temp_source_buf: Vec<f32>,
     temp_gate_buf: Vec<f32>,
@@ -2072,6 +2547,7 @@ pub struct RealtimeDspChain {
     temp_merge_r_buf: Vec<f32>,
     temp_delay_buf: Vec<f32>,
     temp_reverb_buf: Vec<f32>,
+    #[allow(dead_code)]
     temp_pitch_buf: Vec<f32>,
     looper: LooperProcessor,
     looper_position: LooperPosition,
@@ -2105,6 +2581,28 @@ pub struct RealtimeDspChain {
     resource_queue: Arc<LockFreeResourceQueue>,
     retired_reaper: RetiredReaper,
     cpu_monitor: ampforge_dsp::cpu::CpuMonitor,
+
+    // Spec 049 Parte C (CA-23..CA-28): Topologia DAG 4x12 dinâmica + tap pré-gabinete
+    active_topology: Box<CompiledDagTopology>,
+    shared_topology_id: Arc<AtomicU64>,
+    pre_cab_row0_buf: Vec<f32>,
+    temp_dag_scratch_buf: Vec<f32>,
+
+    // Spec 049 Parte D (CA-30, CA-30b, CA-32): Banco de canais sem custo inativo + Modifiers zero-alloc
+    active_channel_idx: usize,
+    channel_amp_models: [AmpModelId; 4],
+    channel_process_counts: [u64; 4],
+    active_modifiers: Box<CompiledModifierTable>,
+    modifier_base_values: [f32; ModifierTargetParam::COUNT],
+    modifier_smoothed: [f32; 16],
+    modifier_outputs: [f32; 16],
+    modifier_exp1: f32,
+    modifier_exp2: f32,
+    modifier_scene: f32,
+    modifier_midi_cc: [f32; 128],
+    lfo1_phase: f32,
+    lfo2_phase: f32,
+    env_follower: f32,
 }
 
 impl RealtimeDspChain {
@@ -2198,12 +2696,28 @@ impl RealtimeDspChain {
         looper.prepare(sample_rate, 60);
 
         let initial_latency = amp.algorithmic_latency_samples();
+        let initial_b_plus_v = amp.current_b_plus_v();
+
+        let resource_queue = Arc::new(LockFreeResourceQueue::new());
+        let retired_reaper = if with_runtime_resources {
+            RetiredReaper::with_queue(
+                resource_queue.retired_queue(),
+                resource_queue.retired_reclaimed(),
+                resource_queue.retired_consumer_lock(),
+            )
+        } else {
+            RetiredReaper::noop_with_queue(
+                resource_queue.retired_queue(),
+                resource_queue.retired_reclaimed(),
+            )
+        };
 
         Self {
             sample_rate,
             max_block: 2048,
             shared_sample_rate_bits: Arc::new(AtomicU32::new(sample_rate.max(1.0).to_bits())),
             shared_algo_latency_samples: Arc::new(AtomicU32::new(initial_latency)),
+            shared_b_plus_v_bits: Arc::new(AtomicU32::new(initial_b_plus_v.to_bits())),
             gate,
             gate_enabled: true,
             drive,
@@ -2213,8 +2727,11 @@ impl RealtimeDspChain {
             cab,
             cab_enabled: true,
             input_boost: 2.5,
+            input_mode_line: false,
             dc_x1: 0.0,
+            dc_x2: 0.0,
             dc_y1: 0.0,
+            dc_y2: 0.0,
             temp_boost_buf: vec![0.0; 2048],
             temp_source_buf: vec![0.0; 2048],
             temp_gate_buf: vec![0.0; 2048],
@@ -2298,16 +2815,229 @@ impl RealtimeDspChain {
             tuner_mute_gain: 1.0,
 
             param_queue: Arc::new(LockFreeParamQueue::new()),
-            resource_queue: Arc::new(LockFreeResourceQueue::new()),
-            retired_reaper: if with_runtime_resources {
-                RetiredReaper::new()
-            } else {
-                RetiredReaper::noop()
-            },
+            resource_queue,
+            retired_reaper,
             cpu_monitor: ampforge_dsp::cpu::CpuMonitor::new(
                 ampforge_dsp::config::SampleRate::Rate48000,
                 ampforge_dsp::config::BufferSize::Size128,
             ),
+            active_topology: Box::new(CompiledDagTopology::default_layout(1)),
+            shared_topology_id: Arc::new(AtomicU64::new(1)),
+            pre_cab_row0_buf: vec![0.0; 2048],
+            temp_dag_scratch_buf: vec![0.0; 2048],
+            active_channel_idx: 0,
+            channel_amp_models: [
+                AmpModelId::BritJcm800_2203,
+                AmpModelId::UsTwinBlackface65,
+                AmpModelId::BritJcm800_2203,
+                AmpModelId::BritJcm800_2203,
+            ],
+            channel_process_counts: [0; 4],
+            active_modifiers: Box::new(CompiledModifierTable::empty()),
+            modifier_base_values: [
+                8.0, 7.0, 5.0, 5.0, 5.0, 5.0, // Amp1 Gain, Master, Bass, Middle, Treble, Presence
+                5.0, 5.0,                     // Drive Drive, Level
+                50.0, 1.0,                    // Mod2 Depth, RateHz
+                25.0, 3.0,                    // Dly1 Mix, Intensity
+                25.0, -65.0,                  // Rev1 Mix, GateThresholdDb
+            ],
+            modifier_smoothed: [0.0; 16],
+            modifier_outputs: [0.0; 16],
+            modifier_exp1: 0.0,
+            modifier_exp2: 0.0,
+            modifier_scene: 0.0,
+            modifier_midi_cc: [0.0; 128],
+            lfo1_phase: 0.0,
+            lfo2_phase: 0.0,
+            env_follower: 0.0,
+        }
+    }
+
+    pub fn configure_channel_amp_model(&mut self, ch: usize, model: &str) {
+        if ch < 4 {
+            let id = ampforge_dsp::amp::find_model_by_name(model)
+                .unwrap_or(AmpModelId::BritJcm800_2203);
+            self.channel_amp_models[ch] = id;
+            if ch == self.active_channel_idx {
+                self.amp.set_target_model(id);
+            }
+        }
+    }
+
+    /// Troca o canal ativo; blocos tonais/por canal zeram estado, enquanto delay/reverb respeitam `spillover` (Spec 049, CA-3 / CA-30b).
+    pub fn set_active_channel(&mut self, ch: usize) {
+        let idx = ch.min(3);
+        if idx != self.active_channel_idx {
+            self.active_channel_idx = idx;
+            if self.dc_x1.abs() < 1e-5 && self.dc_y1.abs() < 2e-3 {
+                self.dc_x1 = 0.0;
+                self.dc_x2 = 0.0;
+                self.dc_y1 = 0.0;
+                self.dc_y2 = 0.0;
+            }
+            if !self.dly_1.is_spillover_enabled() {
+                self.dly_1.reset_state();
+            }
+            if !self.rev_1.is_spillover_enabled() {
+                self.rev_1.reset_state();
+            }
+            self.mod_2.reset_state();
+            self.amp.set_target_model(self.channel_amp_models[idx]);
+        }
+    }
+
+    pub fn reset_channel_process_counts(&mut self) {
+        self.channel_process_counts = [0; 4];
+    }
+
+    pub fn channel_process_counts(&self) -> [u64; 4] {
+        self.channel_process_counts
+    }
+
+    pub fn set_modifier_source_value(&mut self, src: CompiledModifierSource, val: f32) {
+        let v = val.clamp(0.0, 1.0);
+        match src {
+            CompiledModifierSource::ExpPedal1 => self.modifier_exp1 = v,
+            CompiledModifierSource::ExpPedal2 => self.modifier_exp2 = v,
+            CompiledModifierSource::SceneController => self.modifier_scene = v,
+            CompiledModifierSource::MidiCc(cc) => {
+                if (cc as usize) < 128 {
+                    self.modifier_midi_cc[cc as usize] = v;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn current_modifier_output(&self, idx: usize) -> f32 {
+        self.modifier_outputs.get(idx).copied().unwrap_or(0.0)
+    }
+
+    #[inline]
+    fn evaluate_modifiers_for_block(&mut self, input: &[f32]) {
+        let len = input.len();
+        if len == 0 {
+            return;
+        }
+        let dt = len as f32 / self.sample_rate.max(1.0);
+        self.lfo1_phase = (self.lfo1_phase + dt * 1.0) % 1.0;
+        self.lfo2_phase = (self.lfo2_phase + dt * 0.5) % 1.0;
+
+        let mut peak = 0.0f32;
+        for &s in input {
+            let a = s.abs();
+            if a > peak {
+                peak = a;
+            }
+        }
+        let env_coeff = (-dt / 0.025).exp();
+        self.env_follower = self.env_follower * env_coeff + peak * (1.0 - env_coeff);
+
+        let n = self.active_modifiers.len.min(16);
+        for i in 0..n {
+            let b = self.active_modifiers.bindings[i];
+            if !b.active {
+                continue;
+            }
+            let raw_u = match b.source {
+                CompiledModifierSource::ExpPedal1 => self.modifier_exp1,
+                CompiledModifierSource::ExpPedal2 => self.modifier_exp2,
+                CompiledModifierSource::SceneController => self.modifier_scene,
+                CompiledModifierSource::MidiCc(cc) => self.modifier_midi_cc[cc.min(127) as usize],
+                CompiledModifierSource::InternalLfo1 => {
+                    0.5 + 0.5 * (2.0 * std::f32::consts::PI * self.lfo1_phase).sin()
+                }
+                CompiledModifierSource::InternalLfo2 => {
+                    0.5 + 0.5 * (2.0 * std::f32::consts::PI * self.lfo2_phase).sin()
+                }
+                CompiledModifierSource::EnvelopeFollower => self.env_follower.clamp(0.0, 1.0),
+            };
+            let u = raw_u.clamp(0.0, 1.0);
+            let curved_u = if (b.curve_slope - 0.5).abs() < 1e-4 {
+                u
+            } else {
+                let exp = ((1.0 - b.curve_slope) / b.curve_slope.max(0.01)).clamp(0.1, 10.0);
+                u.powf(exp)
+            };
+            let target_val = b.min_val + curved_u * (b.max_val - b.min_val);
+            let smoothed = if b.damping_ms <= 0.1 {
+                target_val
+            } else {
+                let tau = b.damping_ms * 0.001;
+                let alpha = 1.0 - (-dt / tau).exp();
+                self.modifier_smoothed[i] + alpha * (target_val - self.modifier_smoothed[i])
+            };
+            self.modifier_smoothed[i] = smoothed;
+            self.modifier_outputs[i] = smoothed;
+
+            self.apply_modifier_target(b.target, smoothed);
+        }
+    }
+
+    #[inline]
+    fn apply_modifier_target(&mut self, target: ModifierTargetParam, val: f32) {
+        match target {
+            ModifierTargetParam::Amp1Gain => self.gain_smoother.set_target(val as f64),
+            ModifierTargetParam::Amp1Master => self.amp.panel_mut().set_master_volume(val),
+            ModifierTargetParam::Amp1Bass => self.amp.panel_mut().set_bass(val),
+            ModifierTargetParam::Amp1Middle => self.amp.panel_mut().set_middle(val),
+            ModifierTargetParam::Amp1Treble => self.amp.panel_mut().set_treble(val),
+            ModifierTargetParam::Amp1Presence => self.amp.panel_mut().set_presence(val),
+            ModifierTargetParam::DriveDrive => self.drive.set_gain(val),
+            ModifierTargetParam::DriveLevel => self.drive.set_level(val),
+            ModifierTargetParam::Mod2Depth => self.mod_2.set_depth(val),
+            ModifierTargetParam::Mod2RateHz => self.mod_2.set_rate_hz(val),
+            ModifierTargetParam::Dly1Mix => self.dly_1.set_mix_pct(val),
+            ModifierTargetParam::Dly1Intensity => self.dly_1.set_feedback_pct(val * 10.0),
+            ModifierTargetParam::Rev1Mix => self.rev_1.set_mix_pct(val),
+            ModifierTargetParam::GateThresholdDb => self.gate.set_threshold_db(val),
+        }
+    }
+
+    fn sync_modifiers_from(&mut self, table: &CompiledModifierTable, outputs: &[f32; 16]) {
+        let n = table.len.min(16);
+        for i in 0..n {
+            let b = table.bindings[i];
+            if b.active {
+                self.apply_modifier_target(b.target, outputs[i]);
+            }
+        }
+    }
+
+    fn restore_unmodified_targets(&mut self, new_table: &CompiledModifierTable) {
+        let old_n = self.active_modifiers.len.min(16);
+        let new_n = new_table.len.min(16);
+        for &target in &ModifierTargetParam::ALL {
+            let was_active = (0..old_n).any(|i| {
+                self.active_modifiers.bindings[i].active
+                    && self.active_modifiers.bindings[i].target == target
+            });
+            if !was_active {
+                continue;
+            }
+            let still_active = (0..new_n).any(|i| {
+                new_table.bindings[i].active && new_table.bindings[i].target == target
+            });
+            if !still_active {
+                let base = self.modifier_base_values[target.index()];
+                self.apply_modifier_target(target, base);
+            }
+        }
+    }
+
+    pub fn topology_id(&self) -> u64 {
+        self.active_topology.id
+    }
+
+    pub fn shared_topology_id(&self) -> Arc<AtomicU64> {
+        self.shared_topology_id.clone()
+    }
+
+    pub fn read_amp_out_p10_no_cab(&self, dst: &mut [f32]) {
+        let n = dst.len().min(self.pre_cab_row0_buf.len());
+        dst[..n].copy_from_slice(&self.pre_cab_row0_buf[..n]);
+        if dst.len() > n {
+            dst[n..].fill(0.0);
         }
     }
 
@@ -2325,6 +3055,10 @@ impl RealtimeDspChain {
 
     pub fn shared_algo_latency_samples(&self) -> Arc<AtomicU32> {
         self.shared_algo_latency_samples.clone()
+    }
+
+    pub fn shared_b_plus_v_bits(&self) -> Arc<AtomicU32> {
+        self.shared_b_plus_v_bits.clone()
     }
 
     pub fn param_queue(&self) -> Arc<LockFreeParamQueue> {
@@ -2401,6 +3135,25 @@ impl RealtimeDspChain {
                     self.di_pos = 0;
                     self.retired_reaper.retire_di(old);
                 }
+                PreparedDspResource::Topology(new_topo) => {
+                    let new_id = new_topo.id;
+                    if let Some(ref mut shadow) = self.shadow {
+                        *shadow.active_topology = *new_topo;
+                        shadow.shared_topology_id.store(new_id, Ordering::Release);
+                    }
+                    let old_topo = std::mem::replace(&mut self.active_topology, new_topo);
+                    self.shared_topology_id.store(new_id, Ordering::Release);
+                    self.retired_reaper.retire_topology(old_topo);
+                }
+                PreparedDspResource::Modifiers(new_mods) => {
+                    self.restore_unmodified_targets(&new_mods);
+                    if let Some(ref mut shadow) = self.shadow {
+                        shadow.restore_unmodified_targets(&new_mods);
+                        *shadow.active_modifiers = *new_mods;
+                    }
+                    let old_mods = std::mem::replace(&mut self.active_modifiers, new_mods);
+                    self.retired_reaper.retire_modifiers(old_mods);
+                }
             }
             count += 1;
         }
@@ -2464,6 +3217,7 @@ impl RealtimeDspChain {
                     .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
             }
             DspParamUpdate::InputBoost(v) => self.set_input_boost(v),
+            DspParamUpdate::InputModeLine(is_line) => self.input_mode_line = is_line,
             DspParamUpdate::GateThreshold(v) => self.set_gate_threshold_db(v),
             DspParamUpdate::GateEnabled(b) => self.set_gate_enabled(b),
             DspParamUpdate::GateMode(m) => self.gate.set_mode(m),
@@ -2534,13 +3288,33 @@ impl RealtimeDspChain {
             DspParamUpdate::Eq1Enabled(b) => self.set_eq_1_enabled(b),
             DspParamUpdate::Mod2Enabled(b) => self.set_mod_2_enabled(b),
             DspParamUpdate::Mod2Model(m) => self.set_mod_2_model(m),
-            DspParamUpdate::Mod2RateHz(rate) => self.mod_2.set_rate_hz(rate),
-            DspParamUpdate::Mod2Depth(depth) => self.mod_2.set_depth(depth),
+            DspParamUpdate::Mod2RateHz(rate) => {
+                if rate.is_finite() {
+                    self.modifier_base_values[ModifierTargetParam::Mod2RateHz.index()] = rate;
+                }
+                self.mod_2.set_rate_hz(rate);
+            }
+            DspParamUpdate::Mod2Depth(depth) => {
+                if depth.is_finite() {
+                    self.modifier_base_values[ModifierTargetParam::Mod2Depth.index()] = depth;
+                }
+                self.mod_2.set_depth(depth);
+            }
             DspParamUpdate::Mod2Mix(mix) => self.mod_2.set_mix_pct(mix),
             DspParamUpdate::Dly1Enabled(b) => self.set_dly_1_enabled(b),
             DspParamUpdate::Dly1TimeMs(time) => self.dly_1.set_delay_time_ms(time),
-            DspParamUpdate::Dly1Feedback(fb) => self.dly_1.set_feedback_pct(fb),
-            DspParamUpdate::Dly1Mix(mix) => self.dly_1.set_mix_pct(mix),
+            DspParamUpdate::Dly1Feedback(fb) => {
+                if fb.is_finite() {
+                    self.modifier_base_values[ModifierTargetParam::Dly1Intensity.index()] = fb * 0.1;
+                }
+                self.dly_1.set_feedback_pct(fb);
+            }
+            DspParamUpdate::Dly1Mix(mix) => {
+                if mix.is_finite() {
+                    self.modifier_base_values[ModifierTargetParam::Dly1Mix.index()] = mix;
+                }
+                self.dly_1.set_mix_pct(mix);
+            }
             DspParamUpdate::Rev1Enabled(b) => self.set_rev_1_enabled(b),
             DspParamUpdate::Rev1DecayS(decay) => self.rev_1.set_decay_time_s(decay),
             DspParamUpdate::Rev1PredelayMs(pd) => self.rev_1.set_predelay_ms(pd),
@@ -2628,12 +3402,16 @@ impl RealtimeDspChain {
         std::mem::swap(&mut self.cab, &mut other.cab);
         std::mem::swap(&mut self.cab_enabled, &mut other.cab_enabled);
         std::mem::swap(&mut self.input_boost, &mut other.input_boost);
+        std::mem::swap(&mut self.input_mode_line, &mut other.input_mode_line);
         std::mem::swap(&mut self.gain_smoother, &mut other.gain_smoother);
         std::mem::swap(&mut self.cab_fade, &mut other.cab_fade);
         std::mem::swap(&mut self.cab_target_fade, &mut other.cab_target_fade);
         std::mem::swap(&mut self.split, &mut other.split);
         std::mem::swap(&mut self.split_enabled, &mut other.split_enabled);
         std::mem::swap(&mut self.split_mode, &mut other.split_mode);
+        std::mem::swap(&mut self.active_topology, &mut other.active_topology);
+        self.shared_topology_id
+            .store(self.active_topology.id, Ordering::Release);
         std::mem::swap(&mut self.split_crossover_hz, &mut other.split_crossover_hz);
         std::mem::swap(&mut self.comp_2, &mut other.comp_2);
         std::mem::swap(&mut self.comp_2_enabled, &mut other.comp_2_enabled);
@@ -2648,14 +3426,9 @@ impl RealtimeDspChain {
         std::mem::swap(&mut self.merge, &mut other.merge);
         std::mem::swap(&mut self.merge_row_1_level_db, &mut other.merge_row_1_level_db);
         std::mem::swap(&mut self.merge_row_1_phase_invert, &mut other.merge_row_1_phase_invert);
-        std::mem::swap(&mut self.dly_1, &mut other.dly_1);
-        std::mem::swap(&mut self.dly_1_enabled, &mut other.dly_1_enabled);
-        std::mem::swap(&mut self.rev_1, &mut other.rev_1);
-        std::mem::swap(&mut self.rev_1_enabled, &mut other.rev_1_enabled);
         std::mem::swap(&mut self.pitch_1, &mut other.pitch_1);
         std::mem::swap(&mut self.pitch_1_enabled, &mut other.pitch_1_enabled);
-        std::mem::swap(&mut self.looper, &mut other.looper);
-        std::mem::swap(&mut self.looper_position, &mut other.looper_position);
+        std::mem::swap(&mut self.modifier_base_values, &mut other.modifier_base_values);
     }
 
     pub fn begin_preset_crossfade(&mut self) {
@@ -2668,6 +3441,13 @@ impl RealtimeDspChain {
                 self.swap_dsp_state(&mut shadow);
             }
             self.shadow = Some(shadow);
+        }
+        // Spec 049 CA-2/CA-3: blocos de tempo são instância única; sem spillover, limpa a cauda anterior
+        if !self.dly_1.is_spillover_enabled() {
+            self.dly_1.clear_tail();
+        }
+        if !self.rev_1.is_spillover_enabled() {
+            self.rev_1.clear_tail();
         }
         self.preset_crossfading = true;
         self.preset_fade = 0.0;
@@ -2819,6 +3599,8 @@ impl RealtimeDspChain {
             self.temp_delay_buf.resize(target_block, 0.0);
             self.temp_reverb_buf.resize(target_block, 0.0);
             self.temp_looper_buf.resize(target_block, 0.0);
+            self.pre_cab_row0_buf.resize(target_block, 0.0);
+            self.temp_dag_scratch_buf.resize(target_block, 0.0);
         }
         if self.shadow_out_buf.len() < target_block {
             self.shadow_out_buf.resize(target_block, 0.0);
@@ -2842,12 +3624,13 @@ impl RealtimeDspChain {
     }
 
     pub fn inject_nan_state_for_test(&mut self) {
-        self.dc_x1 = f32::NAN;
-        self.dc_y1 = f32::NAN;
+        self.dc_x1 = f64::NAN;
+        self.dc_y1 = f64::NAN;
     }
 
     pub fn set_gate_threshold_db(&mut self, db: f32) {
         if !db.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::GateThresholdDb.index()] = db;
         self.gate.set_threshold_db(db);
     }
 
@@ -2922,6 +3705,7 @@ impl RealtimeDspChain {
 
     pub fn set_amp_gain(&mut self, gain: f32) {
         if !gain.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::Amp1Gain.index()] = gain;
         self.gain_smoother.set_target(gain as f64);
     }
 
@@ -2932,21 +3716,25 @@ impl RealtimeDspChain {
 
     pub fn set_amp_bass(&mut self, bass: f32) {
         if !bass.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::Amp1Bass.index()] = bass;
         self.amp.panel_mut().set_bass(bass);
     }
 
     pub fn set_amp_middle(&mut self, mid: f32) {
         if !mid.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::Amp1Middle.index()] = mid;
         self.amp.panel_mut().set_middle(mid);
     }
 
     pub fn set_amp_treble(&mut self, treb: f32) {
         if !treb.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::Amp1Treble.index()] = treb;
         self.amp.panel_mut().set_treble(treb);
     }
 
     pub fn set_amp_presence(&mut self, pres: f32) {
         if !pres.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::Amp1Presence.index()] = pres;
         self.amp.panel_mut().set_presence(pres);
     }
 
@@ -2957,6 +3745,7 @@ impl RealtimeDspChain {
 
     pub fn set_amp_master(&mut self, master: f32) {
         if !master.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::Amp1Master.index()] = master;
         self.amp.panel_mut().set_master_volume(master);
     }
 
@@ -3138,6 +3927,7 @@ impl RealtimeDspChain {
 
     pub fn set_drive_gain(&mut self, gain: f32) {
         if !gain.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::DriveDrive.index()] = gain;
         self.drive.set_gain(gain);
     }
 
@@ -3148,6 +3938,7 @@ impl RealtimeDspChain {
 
     pub fn set_drive_level(&mut self, level: f32) {
         if !level.is_finite() { return; }
+        self.modifier_base_values[ModifierTargetParam::DriveLevel.index()] = level;
         self.drive.set_level(level);
     }
 
@@ -3281,10 +4072,20 @@ impl RealtimeDspChain {
     }
 
     fn apply_split_config(&mut self) {
-        if self.split_mode == ChainSplitMode::Crossover {
-            self.split.set_mode(SplitMode::Crossover { freq_hz: self.split_crossover_hz });
-        } else {
-            self.split.set_mode(SplitMode::BalanceAb { ratio: 0.5 });
+        match self.split_mode {
+            ChainSplitMode::Crossover => {
+                self.split.set_mode(SplitMode::Crossover { freq_hz: self.split_crossover_hz });
+            }
+            ChainSplitMode::DynamicSplit => {
+                self.split.set_mode(SplitMode::DynamicSplit {
+                    threshold_db: -30.0,
+                    attack_ms: 5.0,
+                    release_ms: 80.0,
+                });
+            }
+            ChainSplitMode::Ab => {
+                self.split.set_mode(SplitMode::BalanceAb { ratio: 0.5 });
+            }
         }
     }
 
@@ -3433,6 +4234,14 @@ impl RealtimeDspChain {
         self.dly_1.set_tone_treble(treble);
     }
 
+    pub fn set_dly_1_tempo_bpm(&mut self, bpm: f32) {
+        self.dly_1.set_tempo_bpm(bpm);
+    }
+
+    pub fn dly_1_tempo_bpm(&self) -> f32 {
+        self.dly_1.tempo_bpm()
+    }
+
     pub fn set_tuner_ref_hz(&mut self, hz: f32) {
         self.tuner.set_a4_reference_hz(hz);
     }
@@ -3493,6 +4302,9 @@ impl RealtimeDspChain {
     }
 
     pub fn set_rev_1_mix(&mut self, mix: f32) {
+        if mix.is_finite() {
+            self.modifier_base_values[ModifierTargetParam::Rev1Mix.index()] = mix;
+        }
         self.rev_1.set_mix_pct(mix);
     }
 
@@ -3552,6 +4364,8 @@ impl RealtimeDspChain {
             let elapsed_micros = (rt_start.elapsed().as_micros().max(1)).min(u64::MAX as u128) as u64;
             self.cpu_monitor.record_execution_time_micros(elapsed_micros);
         }
+        self.shared_b_plus_v_bits
+            .store(self.amp.current_b_plus_v().to_bits(), Ordering::Relaxed);
     }
 
     fn process_chunk(&mut self, input: &[f32], output: &mut [f32]) {
@@ -3559,6 +4373,8 @@ impl RealtimeDspChain {
         if len == 0 {
             return;
         }
+        self.channel_process_counts[self.active_channel_idx] += 1;
+        self.evaluate_modifiers_for_block(input);
 
         // 0. Contabiliza clipping no conversor de entrada (|x| >= 0.999) (Spec 019, CA-4)
         for &s in input {
@@ -3588,33 +4404,42 @@ impl RealtimeDspChain {
         // 1. Entrada pós-boost pronta para processamento (suavização ocorre na aplicação real do amp)
         // (Spec 044 CA-4: sem loop morto prévio de gain_smoother)
 
-        // 2. DC Blocker de 1 polo (~10 Hz) e captura limpa (sem boost ainda, pois input_boost faz parte do preset)
-        let r = 0.995f32;
+        // 2. DC Blocker de 1 polo em f64 (~0.08 Hz: plano em ±0.0001 dB @ 40 Hz, < -86 dBFS de resíduo em transientes)
+        let r = 0.99999_f64;
         let mut ring_pos = self.clean_input_ring.total_written_relaxed();
         for i in 0..len {
-            let x = source_slice[i];
+            let x = source_slice[i] as f64;
             let y = x - self.dc_x1 + r * self.dc_y1;
             self.dc_x1 = x;
             self.dc_y1 = y;
-            source_slice[i] = y;
+            let yf = y as f32;
+            source_slice[i] = yf;
 
             // Spec 026 / 029: Copia sinal limpo no ring SPSC lock-free (0 alocações, 0 locks)
-            self.clean_input_ring.push_sample_at(ring_pos, y);
+            self.clean_input_ring.push_sample_at(ring_pos, yf);
             ring_pos = ring_pos.wrapping_add(1);
         }
         self.clean_input_ring.commit_write_pos(ring_pos);
 
+        // Looper PreChain (instância única fora do par ativa/sombra, Spec 049 CA-1)
+        if self.looper_position == LooperPosition::PreChain {
+            let pre_looper_slice = &mut self.temp_looper_buf[..len];
+            self.looper.process(&self.temp_source_buf[..len], pre_looper_slice);
+            self.temp_source_buf[..len].copy_from_slice(pre_looper_slice);
+        }
+
         if self.preset_crossfading {
             if let Some(mut shadow) = self.shadow.take() {
+                shadow.sync_modifiers_from(&self.active_modifiers, &self.modifier_outputs);
                 let clean = &self.temp_source_buf[..len];
                 let shadow_out = &mut self.shadow_out_buf[..len];
-                shadow.process_dsp_core(clean, shadow_out);
+                shadow.process_tonal_core(clean, shadow_out);
                 self.shadow = Some(shadow);
             }
         }
 
-        // Processa cadeia ativa diretamente para `output[..len]`
-        self.process_dsp_core_from_source(len, &mut output[..len]);
+        // Processa cadeia tonal ativa diretamente para `self.temp_merge_l_buf[..len]`
+        self.process_tonal_core_from_source(len);
 
         // Retira IRs aposentadas de self e shadow
         if let Some(old_ir) = self.cab.take_retired_ir() {
@@ -3624,19 +4449,18 @@ impl RealtimeDspChain {
             self.retired_reaper.retire_ir(old_ir);
         }
 
-        // 9. Crossfade real de preset/cena (20 ms equal-power) + Limitador de Saída Segura + defesa NaN/Inf
-        let mut has_non_finite = false;
-        for (i, s) in output[..len].iter_mut().enumerate() {
-            let mut val = *s;
+        // Crossfade real de preset/cena apenas na cadeia tonal (20 ms equal-power)
+        for i in 0..len {
             if self.preset_crossfading {
                 let old_val = self.shadow_out_buf[i];
+                let new_val = self.temp_merge_l_buf[i];
                 let angle = 0.5 * std::f32::consts::PI * self.preset_fade.clamp(0.0, 1.0);
                 let w_old = angle.cos();
                 let w_new = angle.sin();
-                val = if old_val.is_finite() && val.is_finite() {
-                    old_val * w_old + val * w_new
-                } else if val.is_finite() {
-                    val * w_new
+                self.temp_merge_l_buf[i] = if old_val.is_finite() && new_val.is_finite() {
+                    old_val * w_old + new_val * w_new
+                } else if new_val.is_finite() {
+                    new_val * w_new
                 } else {
                     0.0
                 };
@@ -3646,6 +4470,25 @@ impl RealtimeDspChain {
                     self.preset_crossfading = false;
                 }
             }
+        }
+
+        // 8. Pós-Merge (instância única): Delay 1 -> Reverb 1 -> Looper PostChain (Spec 049 CA-1..CA-3)
+        self.dly_1
+            .process(&self.temp_merge_l_buf[..len], &mut self.temp_delay_buf[..len]);
+        self.rev_1
+            .process(&self.temp_delay_buf[..len], &mut self.temp_reverb_buf[..len]);
+
+        if self.looper_position == LooperPosition::PostChain {
+            self.looper
+                .process(&self.temp_reverb_buf[..len], &mut output[..len]);
+        } else {
+            output[..len].copy_from_slice(&self.temp_reverb_buf[..len]);
+        }
+
+        // 9. Limitador de Saída Segura + defesa NaN/Inf
+        let mut has_non_finite = false;
+        for s in output[..len].iter_mut() {
+            let val = *s;
             if !val.is_finite() {
                 *s = 0.0;
                 has_non_finite = true;
@@ -3653,6 +4496,14 @@ impl RealtimeDspChain {
                 *s = val.clamp(-1.0, 1.0);
             }
         }
+
+        // Spec 047 CA-2: Captura lock-free e zero-alloc da saída do motor para o CRT Waveform
+        let mut out_pos = self.scope_output_ring.total_written_relaxed();
+        for &s in &output[..len] {
+            self.scope_output_ring.push_sample_at(out_pos, s);
+            out_pos = out_pos.wrapping_add(1);
+        }
+        self.scope_output_ring.commit_write_pos(out_pos);
 
         if !self.preset_crossfading && self.pending_shadow_len > 0 {
             if let Some(mut shadow) = self.shadow.take() {
@@ -3681,196 +4532,261 @@ impl RealtimeDspChain {
 
         if has_non_finite {
             self.dc_x1 = 0.0;
+            self.dc_x2 = 0.0;
             self.dc_y1 = 0.0;
+            self.dc_y2 = 0.0;
             self.cab_fade = self.cab_target_fade;
         }
     }
 
-    fn process_dsp_core_from_source(&mut self, len: usize, output: &mut [f32]) {
-        let boost_slice = &mut self.temp_boost_buf[..len];
-        for i in 0..len {
-            boost_slice[i] = self.temp_source_buf[i] * self.input_boost;
+    #[inline]
+    fn effective_input_gain(&self) -> f32 {
+        // CA-38: -10 dBV (0.316228 V) no modo instrument vs +4 dBu (1.2276 V) no modo line => pad -11.78 dB (0.2576x)
+        if self.input_mode_line {
+            self.input_boost * 0.257_598_55
+        } else {
+            self.input_boost
         }
-        self.process_dsp_core_inner(len, output);
     }
 
-    fn process_dsp_core(&mut self, clean_input: &[f32], output: &mut [f32]) {
+    fn process_tonal_core_from_source(&mut self, len: usize) {
+        let g = self.effective_input_gain();
+        let boost_slice = &mut self.temp_boost_buf[..len];
+        for i in 0..len {
+            boost_slice[i] = self.temp_source_buf[i] * g;
+        }
+        self.process_tonal_core_inner(len);
+    }
+
+    fn process_tonal_core(&mut self, clean_input: &[f32], output: &mut [f32]) {
         let len = clean_input.len().min(output.len());
         if len == 0 {
             return;
         }
+        let g = self.effective_input_gain();
         self.temp_source_buf[..len].copy_from_slice(&clean_input[..len]);
         let boost_slice = &mut self.temp_boost_buf[..len];
         for i in 0..len {
-            boost_slice[i] = clean_input[i] * self.input_boost;
+            boost_slice[i] = clean_input[i] * g;
         }
-        self.process_dsp_core_inner(len, output);
+        self.process_tonal_core_inner(len);
+        output[..len].copy_from_slice(&self.temp_merge_l_buf[..len]);
     }
 
-    fn process_dsp_core_inner(&mut self, len: usize, output: &mut [f32]) {
-        let di_slice = &self.temp_source_buf[..len];
-        let boost_slice = &self.temp_boost_buf[..len];
-        let gate_slice = &mut self.temp_gate_buf[..len];
-        let drive_slice = &mut self.temp_drive_buf[..len];
-
-        // 3. Noise Gate (Natural usa DI limpo; Classic usa entrada do bloco)
-        if self.gate_enabled {
-            self.gate.process(boost_slice, Some(di_slice), gate_slice);
+    #[inline]
+    fn execute_dag_block(&mut self, kind: DagBlockKind, in_is_row1: bool, len: usize) -> bool {
+        let input_slice: &[f32] = if in_is_row1 {
+            &self.temp_split_b_buf[..len]
         } else {
-            gate_slice.copy_from_slice(boost_slice);
-        }
-
-        // 3.1 Looper PreChain
-        let pre_looper_slice = &mut self.temp_looper_buf[..len];
-        let pitch_in_slice: &[f32] = if self.looper_position == LooperPosition::PreChain {
-            self.looper.process(gate_slice, pre_looper_slice);
-            pre_looper_slice
-        } else {
-            gate_slice
+            &self.temp_merge_l_buf[..len]
         };
-
-        // 3.15 Pitch Processor (Whammy / Drop Capo / Harmonizer / Micro Detune)
-        let pitch_slice = &mut self.temp_pitch_buf[..len];
-        let drive_in_slice: &[f32] = if self.pitch_1_enabled {
-            self.pitch_1.process(pitch_in_slice, pitch_slice);
-            pitch_slice
-        } else {
-            pitch_in_slice
-        };
-
-        // 3.2 Drive Processor
-        let amp_in_slice = if self.drive_enabled {
-            self.drive.process(drive_in_slice, drive_slice);
-            drive_slice
-        } else {
-            drive_in_slice
-        };
-
-        // 4. Split Node
-        let split_a_slice = &mut self.temp_split_a_buf[..len];
-        let split_b_slice = &mut self.temp_split_b_buf[..len];
-        if self.split_enabled {
-            self.split.process(amp_in_slice, split_a_slice, split_b_slice);
-        } else {
-            split_a_slice.copy_from_slice(amp_in_slice);
-            split_b_slice.fill(0.0);
-        }
-
-        // 5. Linha 0: Amp 1 -> Cab 1 -> EQ 1
-        let amp_slice = &mut self.temp_amp_buf[..len];
-        if self.amp_enabled {
-            let mut sub_off = 0usize;
-            while sub_off < len {
-                let sub_end = (sub_off + 16).min(len);
-                let mut g = self.gain_smoother.current_value();
-                for _ in sub_off..sub_end {
-                    g = self.gain_smoother.next_sample();
+        let output_slice = &mut self.temp_dag_scratch_buf[..len];
+        let mut ran_amp1 = false;
+        match kind {
+            DagBlockKind::Gate => {
+                if self.gate_enabled {
+                    self.gate
+                        .process(input_slice, Some(&self.temp_source_buf[..len]), output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
                 }
-                self.amp.panel_mut().set_input_gain(g as f32);
-                self.amp
-                    .process(&split_a_slice[sub_off..sub_end], &mut amp_slice[sub_off..sub_end]);
-                sub_off = sub_end;
             }
+            DagBlockKind::Pitch1 => {
+                if self.pitch_1_enabled {
+                    self.pitch_1.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Drive => {
+                if self.drive_enabled {
+                    self.drive.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Amp1 => {
+                ran_amp1 = true;
+                if self.amp_enabled {
+                    let mut sub_off = 0usize;
+                    while sub_off < len {
+                        let sub_end = (sub_off + 16).min(len);
+                        let mut g = self.gain_smoother.current_value();
+                        for _ in sub_off..sub_end {
+                            g = self.gain_smoother.next_sample();
+                        }
+                        self.amp.panel_mut().set_input_gain(g as f32);
+                        self.amp
+                            .process(&input_slice[sub_off..sub_end], &mut output_slice[sub_off..sub_end]);
+                        sub_off = sub_end;
+                    }
+                } else {
+                    for _ in 0..len {
+                        self.gain_smoother.next_sample();
+                    }
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Cab1 => {
+                self.pre_cab_row0_buf[..len].copy_from_slice(input_slice);
+                if (self.cab_fade - self.cab_target_fade).abs() > 1e-4 {
+                    self.cab.process(input_slice, output_slice);
+                    for i in 0..len {
+                        if self.cab_fade < self.cab_target_fade {
+                            self.cab_fade = (self.cab_fade + self.fade_step).min(self.cab_target_fade);
+                        } else {
+                            self.cab_fade = (self.cab_fade - self.fade_step).max(self.cab_target_fade);
+                        }
+                        output_slice[i] =
+                            input_slice[i] * (1.0 - self.cab_fade) + output_slice[i] * self.cab_fade;
+                    }
+                } else if self.cab_enabled {
+                    self.cab.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Eq1 => {
+                if self.eq_1_enabled {
+                    self.eq_1.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Comp2 => {
+                if self.comp_2_enabled {
+                    self.comp_2.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Amp2 => {
+                if self.amp_2_enabled {
+                    self.amp_2.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Cab2 => {
+                if self.cab_2_enabled {
+                    self.cab_2.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Mod2 => {
+                if self.mod_2_enabled {
+                    self.mod_2.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
+            DagBlockKind::Split | DagBlockKind::Merge | DagBlockKind::Dly1 | DagBlockKind::Rev1 => {
+                return false;
+            }
+        }
+        if in_is_row1 {
+            self.temp_split_b_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
         } else {
+            self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
+        }
+        ran_amp1
+    }
+
+    fn process_tonal_core_inner(&mut self, len: usize) {
+        self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_boost_buf[..len]);
+        let topo = *self.active_topology;
+
+        let mut split_col = None;
+        let mut first_r1_col = None;
+        let mut explicit_merge_col = None;
+        for col in 0..12usize {
+            if split_col.is_none() && matches!(topo.slots[col], Some(DagBlockKind::Split)) {
+                split_col = Some(col);
+            }
+            if first_r1_col.is_none() && topo.slots[12 + col].is_some() {
+                first_r1_col = Some(col);
+            }
+            if matches!(topo.slots[col], Some(DagBlockKind::Merge)) {
+                explicit_merge_col = Some(col);
+            }
+        }
+        let effective_split_col = split_col.or(first_r1_col).unwrap_or(3);
+        let effective_merge_col = explicit_merge_col
+            .filter(|&c| c > effective_split_col)
+            .unwrap_or(12);
+
+        let mut split_active = false;
+        let mut ran_amp1 = false;
+        let mut ran_comp2 = false;
+        let mut ran_mod2 = false;
+
+        for col in 0..12usize {
+            if self.split_enabled && col == effective_split_col {
+                self.split.process(
+                    &self.temp_merge_l_buf[..len],
+                    &mut self.temp_split_a_buf[..len],
+                    &mut self.temp_split_b_buf[..len],
+                );
+                self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_split_a_buf[..len]);
+                split_active = true;
+            }
+
+            if let Some(kind) = topo.slots[col] {
+                if kind == DagBlockKind::Comp2 {
+                    ran_comp2 = true;
+                } else if kind == DagBlockKind::Mod2 {
+                    ran_mod2 = true;
+                }
+                if self.execute_dag_block(kind, false, len) {
+                    ran_amp1 = true;
+                }
+            }
+
+            if split_active {
+                if let Some(kind1) = topo.slots[12 + col] {
+                    if self.execute_dag_block(kind1, true, len) {
+                        ran_amp1 = true;
+                    }
+                }
+                if col + 1 == effective_merge_col {
+                    self.temp_split_a_buf[..len].copy_from_slice(&self.temp_merge_l_buf[..len]);
+                    self.merge.process(
+                        &[&self.temp_split_a_buf[..len], &self.temp_split_b_buf[..len]],
+                        &mut self.temp_merge_l_buf[..len],
+                        &mut self.temp_merge_r_buf[..len],
+                    );
+                    split_active = false;
+                }
+            } else if let Some(kind1) = topo.slots[12 + col] {
+                if matches!(kind1, DagBlockKind::Comp2 | DagBlockKind::Mod2) {
+                    if kind1 == DagBlockKind::Comp2 {
+                        ran_comp2 = true;
+                    } else if kind1 == DagBlockKind::Mod2 {
+                        ran_mod2 = true;
+                    }
+                    let _ = self.execute_dag_block(kind1, false, len);
+                }
+            }
+        }
+
+        if !self.split_enabled && !ran_comp2 && self.comp_2_enabled {
+            self.comp_2
+                .process(&self.temp_merge_l_buf[..len], &mut self.temp_dag_scratch_buf[..len]);
+            self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
+        }
+
+        if !self.split_enabled && !ran_mod2 && self.mod_2_enabled {
+            self.mod_2
+                .process(&self.temp_merge_l_buf[..len], &mut self.temp_dag_scratch_buf[..len]);
+            self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
+        }
+
+        if !ran_amp1 {
             for _ in 0..len {
                 self.gain_smoother.next_sample();
             }
-            amp_slice.copy_from_slice(split_a_slice);
         }
-
-        let cab_slice = &mut self.temp_cab_buf[..len];
-        if (self.cab_fade - self.cab_target_fade).abs() > 1e-4 {
-            self.cab.process(amp_slice, cab_slice);
-            for i in 0..len {
-                if self.cab_fade < self.cab_target_fade {
-                    self.cab_fade = (self.cab_fade + self.fade_step).min(self.cab_target_fade);
-                } else {
-                    self.cab_fade = (self.cab_fade - self.fade_step).max(self.cab_target_fade);
-                }
-                cab_slice[i] = amp_slice[i] * (1.0 - self.cab_fade) + cab_slice[i] * self.cab_fade;
-            }
-        } else if self.cab_enabled {
-            self.cab.process(amp_slice, cab_slice);
-        } else {
-            cab_slice.copy_from_slice(amp_slice);
-        }
-
-        let eq_slice = &mut self.temp_eq_buf[..len];
-        if self.eq_1_enabled {
-            self.eq_1.process(cab_slice, eq_slice);
-        } else {
-            eq_slice.copy_from_slice(cab_slice);
-        }
-
-        // 6. Linha 1: Comp 2 -> Amp 2 -> Cab 2 -> Mod 2
-        let row_1_out = if self.split_enabled {
-            let comp_slice = &mut self.temp_comp_buf[..len];
-            if self.comp_2_enabled {
-                self.comp_2.process(split_b_slice, comp_slice);
-            } else {
-                comp_slice.copy_from_slice(split_b_slice);
-            }
-
-            let amp2_slice = &mut self.temp_amp2_buf[..len];
-            if self.amp_2_enabled {
-                self.amp_2.process(comp_slice, amp2_slice);
-            } else {
-                amp2_slice.copy_from_slice(comp_slice);
-            }
-
-            let cab2_slice = &mut self.temp_cab2_buf[..len];
-            if self.cab_2_enabled {
-                self.cab_2.process(amp2_slice, cab2_slice);
-            } else {
-                cab2_slice.copy_from_slice(amp2_slice);
-            }
-
-            let mod_slice = &mut self.temp_mod_buf[..len];
-            if self.mod_2_enabled {
-                self.mod_2.process(cab2_slice, mod_slice);
-            } else {
-                mod_slice.copy_from_slice(cab2_slice);
-            }
-            mod_slice
-        } else {
-            &mut self.temp_mod_buf[..len]
-        };
-
-        // 7. Merge
-        let merge_slice = &mut self.temp_merge_l_buf[..len];
-        if self.split_enabled {
-            let merge_r_slice = &mut self.temp_merge_r_buf[..len];
-            self.merge.process(&[eq_slice, row_1_out], merge_slice, merge_r_slice);
-        } else if self.comp_2_enabled {
-            let comp_slice = &mut self.temp_comp_buf[..len];
-            self.comp_2.process(eq_slice, comp_slice);
-            merge_slice.copy_from_slice(comp_slice);
-        } else {
-            merge_slice.copy_from_slice(eq_slice);
-        }
-
-        // 8. Pós-Merge: Delay 1 -> Reverb 1 -> Looper PostChain
-        let delay_slice = &mut self.temp_delay_buf[..len];
-        self.dly_1.process(merge_slice, delay_slice);
-
-        let reverb_slice = &mut self.temp_reverb_buf[..len];
-        self.rev_1.process(delay_slice, reverb_slice);
-
-        if self.looper_position == LooperPosition::PostChain {
-            let post_looper_slice = &mut self.temp_looper_buf[..len];
-            self.looper.process(reverb_slice, post_looper_slice);
-            output[..len].copy_from_slice(post_looper_slice);
-        } else {
-            output[..len].copy_from_slice(reverb_slice);
-        }
-
-        // Spec 047 CA-2: Captura lock-free e zero-alloc da saída do motor para o CRT Waveform
-        let mut out_pos = self.scope_output_ring.total_written_relaxed();
-        for &s in &output[..len] {
-            self.scope_output_ring.push_sample_at(out_pos, s);
-            out_pos = out_pos.wrapping_add(1);
-        }
-        self.scope_output_ring.commit_write_pos(out_pos);
     }
 }
 

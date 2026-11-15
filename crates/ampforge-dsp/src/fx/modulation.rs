@@ -59,6 +59,16 @@ pub struct ModulationProcessor {
 }
 
 impl ModulationProcessor {
+    pub fn reset_state(&mut self) {
+        self.delay_buffer.fill(0.0);
+        self.write_pos = 0;
+        self.ap_x1 = [0.0; 4];
+        self.ap_y1 = [0.0; 4];
+        self.flanger_fb_state = 0.0;
+        self.bbd_lp_state = 0.0;
+        self.rotary_lp_state = 0.0;
+    }
+
     pub fn new(model: ModModel) -> Self {
         Self {
             model,

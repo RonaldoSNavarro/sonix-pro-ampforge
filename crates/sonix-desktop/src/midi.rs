@@ -126,13 +126,55 @@ impl DesktopMidiHost {
         Ok(())
     }
 
+    /// Mapeamento MIDI padrão migrado para Modifiers editáveis (Spec 049, CA-33)
+    pub fn default_midi_modifiers() -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({
+                "id": "midi_cc_1_amp_gain",
+                "target_param": "amp_1.gain",
+                "source": "MIDI_CC_1",
+                "min_val": 0.0,
+                "max_val": 10.0,
+                "curve_slope": 0.5,
+                "damping_ms": 0.0
+            }),
+            serde_json::json!({
+                "id": "midi_cc_7_amp_master",
+                "target_param": "amp_1.master",
+                "source": "MIDI_CC_7",
+                "min_val": 0.0,
+                "max_val": 10.0,
+                "curve_slope": 0.5,
+                "damping_ms": 0.0
+            }),
+            serde_json::json!({
+                "id": "midi_cc_11_drive",
+                "target_param": "drive.drive",
+                "source": "MIDI_CC_11",
+                "min_val": 0.0,
+                "max_val": 10.0,
+                "curve_slope": 0.5,
+                "damping_ms": 0.0
+            }),
+            serde_json::json!({
+                "id": "midi_cc_14_gate_thresh",
+                "target_param": "gate.threshold_db",
+                "source": "MIDI_CC_14",
+                "min_val": -90.0,
+                "max_val": 0.0,
+                "curve_slope": 0.5,
+                "damping_ms": 0.0
+            }),
+        ]
+    }
+
     pub fn map_cc_to_param(controller: u8, value: u8) -> Option<(&'static str, serde_json::Value)> {
         let norm = (value.min(127) as f32) / 127.0;
         match controller {
             1 => Some(("amp_1.gain", serde_json::json!(norm * 10.0))),
             7 => Some(("amp_1.master", serde_json::json!(norm * 10.0))),
             11 => Some(("drive.drive", serde_json::json!(norm * 10.0))),
-            14 => Some(("gate.threshold_db", serde_json::json!(-96.0 + norm * 96.0))),
+            14 => Some(("gate.threshold_db", serde_json::json!(-90.0 + norm * 90.0))),
             80 => Some(("amp_1.enabled", serde_json::json!(value >= 64))),
             81 => Some(("drive.enabled", serde_json::json!(value >= 64))),
             _ => None,

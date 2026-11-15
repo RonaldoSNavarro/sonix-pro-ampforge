@@ -118,6 +118,10 @@ fn parse_pitch_scale(s: &str) -> Option<ampforge_dsp::fx::pitch::ScaleType> {
     }
 }
 
+fn default_input_mode() -> String {
+    "instrument".to_string()
+}
+
 /// Estado persistente e observável da cadeia e interface (tabela única de parâmetros da Spec 014).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppState {
@@ -151,6 +155,8 @@ pub struct AppState {
     pub gate_threshold_db: f32,
     #[serde(rename = "input.source")]
     pub input_source: String,
+    #[serde(default = "default_input_mode", rename = "input.mode")]
+    pub input_mode: String,
     #[serde(rename = "amp_1.bright")]
     pub amp_bright: bool,
     #[serde(default = "default_true", rename = "amp_1.power")]
@@ -385,6 +391,53 @@ pub struct AppState {
         String,
         std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
     >,
+    #[serde(skip, default = "default_dag_topology")]
+    pub dag_topology: crate::audio::CompiledDagTopology,
+    #[serde(default = "default_footswitch_mode", rename = "footswitch.mode")]
+    pub footswitch_mode: String,
+    #[serde(default = "default_modifiers")]
+    pub modifiers: Vec<ModifierBindingDto>,
+    #[serde(skip)]
+    pub setlist_active_index: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ModifierBindingDto {
+    pub id: String,
+    pub target_param: String,
+    pub source: String,
+    pub min_val: f32,
+    pub max_val: f32,
+    #[serde(default = "default_curve_slope")]
+    pub curve_slope: f32,
+    #[serde(default)]
+    pub damping_ms: f32,
+}
+
+fn default_curve_slope() -> f32 {
+    0.5
+}
+
+fn default_footswitch_mode() -> String {
+    "HYBRID_STOMP_SCENE".to_string()
+}
+
+fn default_modifiers() -> Vec<ModifierBindingDto> {
+    crate::midi::DesktopMidiHost::default_midi_modifiers()
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect()
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SetlistDto {
+    pub id: String,
+    pub name: String,
+    pub presets: Vec<String>,
+}
+
+fn default_dag_topology() -> crate::audio::CompiledDagTopology {
+    crate::audio::CompiledDagTopology::default_layout(1)
 }
 
 fn default_scenes() -> Vec<sonix_core::persistence::SceneDto> {
@@ -467,6 +520,7 @@ impl Default for AppState {
             input_boost: 2.5,
             gate_threshold_db: -65.0,
             input_source: "device".to_string(),
+            input_mode: "instrument".to_string(),
             amp_bright: false,
             amp_power: true,
             amp_standby: false,
@@ -582,6 +636,10 @@ impl Default for AppState {
             scenes: default_scenes(),
             grid: default_grid(),
             channels: std::collections::HashMap::new(),
+            dag_topology: default_dag_topology(),
+            footswitch_mode: default_footswitch_mode(),
+            modifiers: default_modifiers(),
+            setlist_active_index: 0,
         }
     }
 }
@@ -619,6 +677,7 @@ pub struct ApiContext {
     pub shared_adc_clips: Option<Arc<AtomicU64>>,
     pub shared_sample_rate_bits: Option<Arc<AtomicU32>>,
     pub shared_algo_latency_samples: Option<Arc<AtomicU32>>,
+    pub shared_b_plus_v_bits: Option<Arc<AtomicU32>>,
     pub clean_input_ring: Option<Arc<CleanInputRing>>,
     pub scope_output_ring: Option<Arc<CleanInputRing>>,
     pub calibration_store: Option<CalibrationStore>,
@@ -626,6 +685,7 @@ pub struct ApiContext {
     pub calibration_session: Arc<Mutex<CalibrationSession>>,
     pub device_enumerator: Arc<dyn AudioDeviceEnumerator>,
     pub duplex_engine: Option<Arc<RealtimeDuplexEngine>>,
+    pub custom_presets_dir: Option<std::path::PathBuf>,
 }
 
 impl ApiContext {
@@ -642,6 +702,7 @@ impl ApiContext {
         let mut shared_adc_clips = None;
         let mut shared_sample_rate_bits = None;
         let mut shared_algo_latency_samples = None;
+        let mut shared_b_plus_v_bits = None;
         let mut clean_input_ring = None;
         let mut scope_output_ring = None;
 
@@ -654,6 +715,7 @@ impl ApiContext {
                 shared_adc_clips = Some(chain.adc_clips_handle());
                 shared_sample_rate_bits = Some(chain.shared_sample_rate_bits());
                 shared_algo_latency_samples = Some(chain.shared_algo_latency_samples());
+                shared_b_plus_v_bits = Some(chain.shared_b_plus_v_bits());
                 clean_input_ring = Some(chain.clean_input_ring());
                 scope_output_ring = Some(chain.scope_output_ring());
             }
@@ -669,6 +731,7 @@ impl ApiContext {
             shared_adc_clips,
             shared_sample_rate_bits,
             shared_algo_latency_samples,
+            shared_b_plus_v_bits,
             clean_input_ring,
             scope_output_ring,
             calibration_store,
@@ -676,7 +739,12 @@ impl ApiContext {
             calibration_session: Arc::new(Mutex::new(CalibrationSession::default())),
             device_enumerator: Arc::new(CpalAudioEnumerator::new()),
             duplex_engine: None,
+            custom_presets_dir: None,
         }
+    }
+
+    pub fn set_presets_dir(&mut self, dir: std::path::PathBuf) {
+        self.custom_presets_dir = Some(dir);
     }
 }
 
@@ -812,12 +880,11 @@ pub fn dispatch(
         }
         "/api/telemetry" => {
             let mut snap = ctx.telemetry.snapshot();
-            if let Some(ref dsp_ref) = ctx.dsp_chain {
-                if let Ok(chain) = dsp_ref.try_lock() {
-                    snap.b_plus_v = chain.current_b_plus_v();
+            if let Some(ref b_bits) = ctx.shared_b_plus_v_bits {
+                let bv = f32::from_bits(b_bits.load(Ordering::Relaxed));
+                if bv.is_finite() && bv > 0.0 {
+                    snap.b_plus_v = bv;
                 }
-            } else if let Ok(st) = ctx.app_state.lock() {
-                snap.b_plus_v = st.preamp_plate_v;
             }
             let json = serde_json::to_string(&snap).unwrap_or_else(|_| "{}".to_string());
             (200, "application/json", json.into_bytes())
@@ -942,6 +1009,7 @@ pub fn dispatch(
                     amp2_model,
                     cab2_en,
                     cab2_speaker,
+                    dag_topo,
                 ) = if let Ok(st) = ctx.app_state.lock() {
                     (
                         st.gate_enabled,
@@ -961,6 +1029,7 @@ pub fn dispatch(
                         st.amp_2_model.clone(),
                         st.cab_2_enabled,
                         st.cab_2_speaker.clone(),
+                        st.dag_topology,
                     )
                 } else {
                     (
@@ -981,8 +1050,42 @@ pub fn dispatch(
                         "twin_ab763".to_string(),
                         false,
                         "alnico_blue_2x12".to_string(),
+                        default_dag_topology(),
                     )
                 };
+
+                let is_block_enabled = |k: crate::audio::DagBlockKind| -> bool {
+                    use crate::audio::DagBlockKind::*;
+                    match k {
+                        Gate => gate_en,
+                        Pitch1 => false,
+                        Drive => drive_en,
+                        Split => split_en,
+                        Amp1 => amp_en,
+                        Cab1 => cab_en,
+                        Eq1 => eq_en,
+                        Comp2 => comp_en,
+                        Amp2 => amp2_en,
+                        Cab2 => cab2_en,
+                        Mod2 => mod_en,
+                        Merge => true,
+                        Dly1 => dly_en,
+                        Rev1 => rev_en,
+                    }
+                };
+                let slots_json: Vec<serde_json::Value> = (0..48usize)
+                    .map(|idx| {
+                        let row = idx / 12;
+                        let col = idx % 12;
+                        let blk = dag_topo.slots[idx];
+                        serde_json::json!({
+                            "row": row,
+                            "col": col,
+                            "block": blk.map(|b| b.as_str()),
+                            "enabled": blk.map(is_block_enabled).unwrap_or(false),
+                        })
+                    })
+                    .collect();
 
                 let amp_display_name = |m: &str| match m {
                     "jcm800_2203" => "Brit 800 2203",
@@ -1008,6 +1111,8 @@ pub fn dispatch(
                 };
 
                 let graph = serde_json::json!({
+                    "topology_id": dag_topo.id,
+                    "slots": slots_json,
                     "rows": [
                         {
                             "index": 0,
@@ -1035,6 +1140,106 @@ pub fn dispatch(
                     ]
                 });
                 (200, "application/json", serde_json::to_vec(&graph).unwrap())
+            } else if method == "POST" {
+                let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+                    return (
+                        400,
+                        "application/json",
+                        serde_json::to_vec(&serde_json::json!({"error": "JSON inválido em /api/graph"})).unwrap(),
+                    );
+                };
+                if let Some(conns) = v.get("connections").and_then(|c| c.as_array()) {
+                    let mut dag = ampforge_dsp::dag::DagGraph::new();
+                    for c in conns {
+                        let fr = c.get("from").and_then(|x| x.get("row")).and_then(|x| x.as_u64());
+                        let fc = c.get("from").and_then(|x| x.get("col")).and_then(|x| x.as_u64());
+                        let tr = c.get("to").and_then(|x| x.get("row")).and_then(|x| x.as_u64());
+                        let tc = c.get("to").and_then(|x| x.get("col")).and_then(|x| x.as_u64());
+                        let (Some(fr), Some(fc), Some(tr), Some(tc)) = (fr, fc, tr, tc) else {
+                            return (
+                                400,
+                                "application/json",
+                                serde_json::to_vec(&serde_json::json!({"error": "Conexão inválida em /api/graph"})).unwrap(),
+                            );
+                        };
+                        if fr >= 4 || fc >= 12 || tr >= 4 || tc >= 12 {
+                            return (
+                                400,
+                                "application/json",
+                                serde_json::to_vec(&serde_json::json!({"error": "Coordenada fora da grade 4x12"})).unwrap(),
+                            );
+                        }
+                        if let Err(err) = dag.add_connection(
+                            ampforge_dsp::dag::SlotId::new(fr as usize, fc as usize).unwrap(),
+                            ampforge_dsp::dag::SlotId::new(tr as usize, tc as usize).unwrap(),
+                        ) {
+                            return (
+                                400,
+                                "application/json",
+                                serde_json::to_vec(&serde_json::json!({"error": format!("DagCycleError: {:?}", err)})).unwrap(),
+                            );
+                        }
+                    }
+                }
+                let mut new_topo_opt = None;
+                if let Ok(mut st) = ctx.app_state.lock() {
+                    let mut next = st.dag_topology;
+                    if let Some(slots) = v.get("slots").and_then(|s| s.as_array()) {
+                        for item in slots {
+                            let Some(r) = item.get("row").and_then(|x| x.as_u64()) else {
+                                return (400, "application/json", b"{\"error\":\"row ausente\"}".to_vec());
+                            };
+                            let Some(c) = item.get("col").and_then(|x| x.as_u64()) else {
+                                return (400, "application/json", b"{\"error\":\"col ausente\"}".to_vec());
+                            };
+                            if r >= 4 || c >= 12 {
+                                return (400, "application/json", b"{\"error\":\"Coordenada fora da grade 4x12\"}".to_vec());
+                            }
+                            let idx = (r as usize) * 12 + (c as usize);
+                            match item.get("block") {
+                                Some(serde_json::Value::Null) | None => {
+                                    next.slots[idx] = None;
+                                }
+                                Some(serde_json::Value::String(s)) if s.is_empty() => {
+                                    next.slots[idx] = None;
+                                }
+                                Some(serde_json::Value::String(s)) => {
+                                    let Some(kind) = crate::audio::DagBlockKind::from_str_name(s) else {
+                                        return (
+                                            400,
+                                            "application/json",
+                                            serde_json::to_vec(&serde_json::json!({"error": format!("Bloco desconhecido: {}", s)})).unwrap(),
+                                        );
+                                    };
+                                    for slot in next.slots.iter_mut() {
+                                        if *slot == Some(kind) {
+                                            *slot = None;
+                                        }
+                                    }
+                                    next.slots[idx] = Some(kind);
+                                }
+                                Some(_) => {
+                                    return (400, "application/json", "{\"error\":\"block inválido\"}".as_bytes().to_vec());
+                                }
+                            }
+                        }
+                    }
+                    next.id = st.dag_topology.id.wrapping_add(1);
+                    st.dag_topology = next;
+                    new_topo_opt = Some(next);
+                }
+                if let Some(topo) = new_topo_opt {
+                    if let Some(ref rq) = ctx.resource_queue {
+                        let _ = rq.push_topology(Box::new(topo));
+                    }
+                    (
+                        200,
+                        "application/json",
+                        serde_json::to_vec(&serde_json::json!({"ok": true, "topology_id": topo.id})).unwrap(),
+                    )
+                } else {
+                    (500, "application/json", b"{\"error\":\"Falha ao atualizar topologia\"}".to_vec())
+                }
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -1264,7 +1469,55 @@ pub fn dispatch(
         }
         "/api/presets/save" => {
             if method == "POST" {
-                handle_post_presets_save(body, &ctx.app_state)
+                handle_post_presets_save(body, &ctx.app_state, ctx.custom_presets_dir.as_deref())
+            } else {
+                (405, "text/plain", b"Method Not Allowed".to_vec())
+            }
+        }
+        "/api/setlist" => {
+            if method == "GET" {
+                handle_get_setlist(ctx)
+            } else if method == "POST" {
+                handle_post_setlist(body, ctx)
+            } else {
+                (405, "text/plain", b"Method Not Allowed".to_vec())
+            }
+        }
+        "/api/setlist/next" => {
+            if method == "POST" {
+                handle_post_setlist_step(1, ctx)
+            } else {
+                (405, "text/plain", b"Method Not Allowed".to_vec())
+            }
+        }
+        "/api/setlist/prev" => {
+            if method == "POST" {
+                handle_post_setlist_step(-1, ctx)
+            } else {
+                (405, "text/plain", b"Method Not Allowed".to_vec())
+            }
+        }
+        "/api/modifiers" => {
+            if method == "GET" {
+                handle_get_modifiers(ctx)
+            } else if method == "POST" {
+                handle_post_modifiers(body, ctx)
+            } else if method == "DELETE" {
+                handle_delete_modifiers(body, ctx)
+            } else {
+                (405, "text/plain", b"Method Not Allowed".to_vec())
+            }
+        }
+        "/api/footswitch" => {
+            if method == "GET" {
+                handle_get_footswitch(ctx)
+            } else {
+                (405, "text/plain", b"Method Not Allowed".to_vec())
+            }
+        }
+        "/api/footswitch/press" => {
+            if method == "POST" {
+                handle_post_footswitch_press(body, ctx)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -1279,6 +1532,13 @@ pub fn dispatch(
         "/api/scenes/select" => {
             if method == "POST" {
                 handle_post_scenes_select(body, ctx)
+            } else {
+                (405, "text/plain", b"Method Not Allowed".to_vec())
+            }
+        }
+        "/api/reamp/run" => {
+            if method == "POST" {
+                handle_post_reamp_run(body, ctx)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -1454,6 +1714,9 @@ fn json_kv_to_dsp_updates(k: &str, v: &serde_json::Value, out: &mut Vec<DspParam
         "input.source" => if let Some(s) = v.as_str() {
             let code = match s { "test_riff" => 1, "di_file" => 2, _ => 0 };
             out.push(DspParamUpdate::InputSource(code));
+        },
+        "input.mode" => if let Some(s) = v.as_str() {
+            out.push(DspParamUpdate::InputModeLine(s == "line"));
         },
         "drive.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::DriveEnabled(b)); },
         "drive.model" => if let Some(s) = v.as_str() {
@@ -2040,6 +2303,19 @@ pub fn handle_post_params(
                             break;
                         }
                     }
+                    "input.mode" => {
+                        if let Some(s) = v.as_str() {
+                            if s == "instrument" || s == "line" {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("input.mode fora dos valores permitidos ('instrument', 'line')".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("input.mode deve ser string".to_string());
+                            break;
+                        }
+                    }
                     "amp_1.bias_ma" => {
                         if let Some(num) = v.as_f64() {
                             if num >= 20.0 && num <= 55.0 {
@@ -2144,7 +2420,7 @@ pub fn handle_post_params(
                             break;
                         }
                     }
-                    "cab_1.speaker" => {
+                    "cab_1.speaker" | "cab_1.model" => {
                         if let Some(s) = v.as_str() {
                             if parse_speaker_model(s).is_some() {
                                 applied.push(k.clone());
@@ -2201,10 +2477,13 @@ pub fn handle_post_params(
                     }
                     "split.mode" => {
                         if let Some(s) = v.as_str() {
-                            if s == "ab" || s == "crossover" {
+                            if matches!(
+                                s.to_ascii_lowercase().as_str(),
+                                "ab" | "crossover" | "dynamic_split" | "dynamic"
+                            ) {
                                 applied.push(k.clone());
                             } else {
-                                validation_error = Some("split.mode inválido ('ab' ou 'crossover')".to_string());
+                                validation_error = Some("split.mode inválido ('ab', 'crossover' ou 'dynamic_split')".to_string());
                                 break;
                             }
                         } else {
@@ -2453,7 +2732,7 @@ pub fn handle_post_params(
                             break;
                         }
                     }
-                    "mod_2.mix" => {
+                    "mod_2.mix" | "mod_2.mix_pct" => {
                         if let Some(num) = v.as_f64() {
                             if num >= 0.0 && num <= 100.0 {
                                 applied.push(k.clone());
@@ -2560,7 +2839,7 @@ pub fn handle_post_params(
                             break;
                         }
                     }
-                    "rev_1.mix" => {
+                    "rev_1.mix" | "rev_1.mix_pct" => {
                         if let Some(num) = v.as_f64() {
                             if num >= 0.0 && num <= 100.0 {
                                 applied.push(k.clone());
@@ -2594,7 +2873,7 @@ pub fn handle_post_params(
                             break;
                         }
                     }
-                    "cab_2.speaker" => {
+                    "cab_2.speaker" | "cab_2.model" => {
                         if let Some(s) = v.as_str() {
                             if parse_speaker_model(s).is_some() {
                                 applied.push(k.clone());
@@ -2686,6 +2965,22 @@ pub fn handle_post_params(
                             }
                         } else {
                             validation_error = Some(format!("{} deve ser string", k));
+                            break;
+                        }
+                    }
+                    "footswitch.mode" => {
+                        if let Some(s) = v.as_str() {
+                            if matches!(
+                                s.to_ascii_uppercase().as_str(),
+                                "PRESET" | "SCENE" | "STOMP" | "HYBRID_STOMP_SCENE" | "SCENES"
+                            ) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("footswitch.mode inválido (PRESET|SCENE|STOMP|HYBRID_STOMP_SCENE)".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("footswitch.mode deve ser string".to_string());
                             break;
                         }
                     }
@@ -2849,6 +3144,7 @@ pub fn handle_post_params(
                             "amp_1.enabled" => st.amp_enabled = v.as_bool().unwrap(),
                             "cab_1.enabled" => st.cab_enabled = v.as_bool().unwrap(),
                             "input.source" => st.input_source = v.as_str().unwrap().to_string(),
+                            "input.mode" => st.input_mode = v.as_str().unwrap().to_string(),
                             "amp_1.bias_ma" => st.bias_ma = v.as_f64().unwrap() as f32,
                             "amp_1.sag" => st.sag = v.as_f64().unwrap() as f32,
                             "amp_1.nfb" => st.nfb = v.as_f64().unwrap() as f32,
@@ -2859,7 +3155,7 @@ pub fn handle_post_params(
                             "amp_1.power_tube" => st.power_tube = v.as_str().unwrap().to_string(),
                             "amp_1.rectifier" => st.rectifier = v.as_str().unwrap().to_string(),
                             "amp_1.tonestack" => st.tonestack = v.as_str().unwrap().to_string(),
-                            "cab_1.speaker" => {
+                            "cab_1.speaker" | "cab_1.model" => {
                                 st.cab_speaker = v.as_str().unwrap().to_string();
                                 st.cab_resonance_hz = match st.cab_speaker.as_str() {
                                     "greenback_4x12" => 98.0,
@@ -2916,7 +3212,13 @@ pub fn handle_post_params(
                             "mod_2.model" => st.mod_2_model = v.as_str().unwrap().to_string(),
                             "mod_2.rate_hz" => st.mod_2_rate_hz = v.as_f64().unwrap() as f32,
                             "mod_2.depth" => st.mod_2_depth = v.as_f64().unwrap() as f32,
-                            "mod_2.mix" => st.mod_2_mix = v.as_f64().unwrap() as f32,
+                            "mod_2.mix" | "mod_2.mix_pct" => st.mod_2_mix = v.as_f64().unwrap() as f32,
+                            "pitch_1.enabled" => st.pitch_1_enabled = v.as_bool().unwrap(),
+                            "pitch_1.model" => st.pitch_1_model = v.as_str().unwrap().to_string(),
+                            "pitch_1.semitones" => st.pitch_1_semitones = v.as_f64().unwrap() as f32,
+                            "pitch_1.key" => st.pitch_1_key = v.as_str().unwrap().to_string(),
+                            "pitch_1.scale" => st.pitch_1_scale = v.as_str().unwrap().to_string(),
+                            "pitch_1.mix" | "pitch_1.mix_pct" => st.pitch_1_mix = v.as_f64().unwrap() as f32,
                             "dly_1.enabled" => st.dly_1_enabled = v.as_bool().unwrap(),
                             "dly_1.mode" => {
                                 if let Some(s) = v.as_str() {
@@ -2937,13 +3239,14 @@ pub fn handle_post_params(
                             "rev_1.decay_s" => st.rev_1_decay_s = v.as_f64().unwrap() as f32,
                             "rev_1.predelay_ms" => st.rev_1_predelay_ms = v.as_f64().unwrap() as f32,
                             "rev_1.damping" => st.rev_1_damping = v.as_f64().unwrap() as f32,
-                            "rev_1.mix" => st.rev_1_mix = v.as_f64().unwrap() as f32,
+                            "rev_1.mix" | "rev_1.mix_pct" => st.rev_1_mix = v.as_f64().unwrap() as f32,
                             "rev_1.spillover" => st.rev_1_spillover = v.as_bool().unwrap(),
                             "amp_2.enabled" => st.amp_2_enabled = v.as_bool().unwrap(),
                             "amp_2.model" => st.amp_2_model = v.as_str().unwrap().to_string(),
                             "cab_2.enabled" => st.cab_2_enabled = v.as_bool().unwrap(),
-                            "cab_2.speaker" => st.cab_2_speaker = v.as_str().unwrap().to_string(),
+                            "cab_2.speaker" | "cab_2.model" => st.cab_2_speaker = v.as_str().unwrap().to_string(),
                             "scene.active" => st.scene_active = v.as_str().unwrap().to_string(),
+                            "footswitch.mode" => st.footswitch_mode = v.as_str().unwrap().to_string(),
                             "tuner.enabled" => st.tuner_enabled = v.as_bool().unwrap(),
                             "tuner.output" => st.tuner_output = v.as_str().unwrap().to_string(),
                             "tuner.ref_hz" => st.tuner_ref_hz = v.as_f64().unwrap() as f32,
@@ -3105,10 +3408,16 @@ pub fn is_valid_preset_id(id: &str) -> bool {
         .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
 }
 
-fn find_preset_file(id: &str) -> Option<std::path::PathBuf> {
+fn find_preset_file_in(custom_dir: Option<&std::path::Path>, id: &str) -> Option<std::path::PathBuf> {
     let clean_id = id.trim_end_matches(".sonixpreset");
     if !is_valid_preset_id(clean_id) {
         return None;
+    }
+    if let Some(dir) = custom_dir {
+        let p = dir.join(format!("{}.sonixpreset", clean_id));
+        if p.exists() {
+            return Some(p);
+        }
     }
     let candidate_dirs = [
         "presets/factory",
@@ -3179,6 +3488,10 @@ fn handle_get_presets() -> (u16, &'static str, Vec<u8>) {
     (200, "application/json", body)
 }
 
+fn find_preset_file(id: &str) -> Option<std::path::PathBuf> {
+    find_preset_file_in(None, id)
+}
+
 fn handle_post_presets_load(
     body: &[u8],
     ctx: &ApiContext,
@@ -3193,7 +3506,7 @@ fn handle_post_presets_load(
         return (400, "application/json", b"{\"error\":\"invalid_preset_id\"}".to_vec());
     }
 
-    let Some(path) = find_preset_file(id) else {
+    let Some(path) = find_preset_file_in(ctx.custom_presets_dir.as_deref(), id) else {
         return (404, "application/json", b"{\"error\":\"preset_not_found\"}".to_vec());
     };
 
@@ -3263,6 +3576,7 @@ fn handle_post_presets_load(
 fn handle_post_presets_save(
     body: &[u8],
     app_state_clone: &Arc<Mutex<AppState>>,
+    custom_dir: Option<&std::path::Path>,
 ) -> (u16, &'static str, Vec<u8>) {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_json\"}".to_vec());
@@ -3275,7 +3589,10 @@ fn handle_post_presets_save(
     }
     let name = v.get("name").and_then(|n| n.as_str()).unwrap_or(id);
 
-    let save_dir = if let Ok(appdata) = std::env::var("APPDATA") {
+    let save_dir = if let Some(dir) = custom_dir {
+        let _ = std::fs::create_dir_all(dir);
+        dir.to_path_buf()
+    } else if let Ok(appdata) = std::env::var("APPDATA") {
         let p = std::path::PathBuf::from(appdata).join("SonixPro").join("presets");
         let _ = std::fs::create_dir_all(&p);
         p
@@ -3482,15 +3799,19 @@ fn handle_post_scenes_select(
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_json\"}".to_vec());
     };
-    let Some(scene) = v.get("scene").and_then(|s| s.as_str()) else {
+    let letters = ["A", "B", "C", "D", "E", "F", "G", "H"];
+    let (scene, scene_idx) = if let Some(s) = v.get("scene").and_then(|s| s.as_str()) {
+        let Some(idx) = letters.iter().position(|&l| l == s) else {
+            return (400, "application/json", b"{\"error\":\"invalid_scene\"}".to_vec());
+        };
+        (s.to_string(), idx)
+    } else if let Some(idx_u) = v.get("index").and_then(|x| x.as_u64()) {
+        if idx_u >= 8 {
+            return (400, "application/json", b"{\"error\":\"scene_index_out_of_range\"}".to_vec());
+        }
+        (letters[idx_u as usize].to_string(), idx_u as usize)
+    } else {
         return (400, "application/json", b"{\"error\":\"missing_scene\"}".to_vec());
-    };
-
-    let Some(scene_idx) = ["A", "B", "C", "D", "E", "F", "G", "H"]
-        .iter()
-        .position(|&s| s == scene)
-    else {
-        return (400, "application/json", b"{\"error\":\"invalid_scene\"}".to_vec());
     };
 
     let start = std::time::Instant::now();
@@ -3526,14 +3847,23 @@ fn handle_post_scenes_select(
         }
     }
 
-    if let Err(PresetApplyError::QueueFull) =
-        apply_preset_params_queued(&scene_params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain)
+    match apply_preset_params_queued(&scene_params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain)
     {
-        return (
-            503,
-            "application/json",
-            br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
-        );
+        Ok(()) => {}
+        Err(PresetApplyError::Validation(msg)) => {
+            return (
+                400,
+                "application/json",
+                serde_json::to_vec(&serde_json::json!({ "error": msg })).unwrap(),
+            );
+        }
+        Err(PresetApplyError::QueueFull) => {
+            return (
+                503,
+                "application/json",
+                br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+            );
+        }
     }
 
     let elapsed_ms = (start.elapsed().as_micros() as f32 / 1000.0).max(0.1);
@@ -3597,6 +3927,7 @@ fn validate_preset_param_kv(k: &str, v: &serde_json::Value) -> Result<(), String
             | "engine.oversampling"
             | "input.boost"
             | "input.source"
+            | "input.mode"
             | "drive.enabled"
             | "drive.model"
             | "drive.drive"
@@ -3701,6 +4032,8 @@ fn validate_preset_param_kv(k: &str, v: &serde_json::Value) -> Result<(), String
             | "pitch_1.scale"
             | "pitch_1.mix"
             | "pitch_1.mix_pct"
+            | "footswitch.mode"
+            | "modifiers"
     ) || (k.starts_with("eq_1.band") && (k.ends_with(".gain_db") || k.ends_with(".freq_hz") || k.ends_with(".q")));
 
     if !is_known {
@@ -3791,6 +4124,7 @@ pub fn apply_preset_params_queued(
                 "engine.oversampling" => if let Some(s) = v.as_str() { st.engine_oversampling = s.to_string(); },
                 "input.boost" => if let Some(n) = v.as_f64() { st.input_boost = n as f32; },
                 "input.source" => if let Some(s) = v.as_str() { st.input_source = s.to_string(); },
+                "input.mode" => if let Some(s) = v.as_str() { st.input_mode = s.to_string(); },
                 "drive.enabled" => if let Some(b) = v.as_bool() { st.drive_enabled = b; },
                 "drive.model" => if let Some(s) = v.as_str() { st.drive_model = s.to_string(); },
                 "drive.drive" => if let Some(n) = v.as_f64() { st.drive_drive = n as f32; },
@@ -3861,6 +4195,7 @@ pub fn apply_preset_params_queued(
                 "cab_2.enabled" => if let Some(b) = v.as_bool() { st.cab_2_enabled = b; },
                 "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() { st.cab_2_speaker = s.to_string(); },
                 "scene.active" => if let Some(s) = v.as_str() { st.scene_active = s.to_string(); },
+                "footswitch.mode" => if let Some(s) = v.as_str() { st.footswitch_mode = s.to_string(); },
                 "tuner.enabled" => if let Some(b) = v.as_bool() { st.tuner_enabled = b; },
                 "tuner.output" => if let Some(s) = v.as_str() { st.tuner_output = s.to_string(); },
                 "tuner.ref_hz" => if let Some(n) = v.as_f64() { st.tuner_ref_hz = n as f32; },
@@ -3966,14 +4301,17 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
             if let Ok(mut st) = ctx.app_state.lock() {
                 st.input_boost = result.proposed_boost;
                 st.gate_threshold_db = result.proposed_gate_threshold_db;
+                st.amp_standby = false;
             }
             if let Some(ref pq) = ctx.param_queue {
                 let _ = pq.push(DspParamUpdate::InputBoost(result.proposed_boost));
                 let _ = pq.push(DspParamUpdate::GateThreshold(result.proposed_gate_threshold_db));
+                let _ = pq.push(DspParamUpdate::AmpStandby(false));
             } else if let Some(ref dsp_ref) = ctx.dsp_chain {
                 if let Ok(mut dsp) = dsp_ref.try_lock() {
                     dsp.set_input_boost(result.proposed_boost);
                     dsp.set_gate_threshold_db(result.proposed_gate_threshold_db);
+                    dsp.set_amp_standby(false);
                 }
             }
             if let Some(ref store) = ctx.calibration_store {
@@ -3988,5 +4326,405 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
             "application/json",
             br#"{"error":"phase deve ser 'silence' ou 'strum'"}"#.to_vec(),
         ),
+    }
+}
+
+fn handle_post_reamp_run(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let val: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return (400, "application/json", br#"{"error":"JSON invalido"}"#.to_vec()),
+    };
+
+    let parse_f32_vec = |key: &str| -> Option<Vec<f32>> {
+        val.get(key)?
+            .as_array()?
+            .iter()
+            .map(|x| x.as_f64().map(|n| n as f32))
+            .collect()
+    };
+
+    let probe = parse_f32_vec("probe").unwrap_or_default();
+    let loopback_rec = parse_f32_vec("loopback_rec").unwrap_or_default();
+    let reamp_rec = parse_f32_vec("reamp_rec").unwrap_or_default();
+    let di_len = val
+        .get("di_len")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or_else(|| reamp_rec.len());
+    let di_source = val
+        .get("di_source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("di_buffer")
+        .to_string();
+
+    if probe.is_empty() || loopback_rec.is_empty() {
+        return (
+            400,
+            "application/json",
+            br#"{"error":"probe e loopback_rec obrigatorios para medir atraso de loopback"}"#.to_vec(),
+        );
+    }
+
+    let measured_delay_samples =
+        crate::reamp::measure_loopback_delay_samples(&probe, &loopback_rec);
+    let aligned =
+        crate::reamp::align_reamp_recording(&reamp_rec, measured_delay_samples, di_len);
+
+    let (backend, driver, sample_rate, buffer_size) = ctx
+        .audio_telemetry
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .map(|t| (t.backend, t.mode, t.sample_rate, t.output_period_frames))
+        .unwrap_or_else(|| ("wasapi".to_string(), "wasapi_shared".to_string(), 48000, 128));
+
+    let metadata = crate::reamp::ReampSessionMetadata {
+        measured_delay_samples,
+        backend,
+        driver,
+        sample_rate,
+        buffer_size,
+        di_source,
+    };
+
+    if let Some(path_str) = val.get("session_path").and_then(|v| v.as_str()) {
+        if let Err(e) = crate::reamp::save_reamp_session_metadata(std::path::Path::new(path_str), &metadata) {
+            return (
+                400,
+                "application/json",
+                serde_json::to_vec(&serde_json::json!({ "error": e })).unwrap(),
+            );
+        }
+    }
+
+    let resp = serde_json::json!({
+        "ok": true,
+        "measured_delay_samples": measured_delay_samples,
+        "aligned_samples": aligned,
+        "metadata": metadata,
+        "notice": "Normalmente é necessário um reamp box entre a saída de linha e a entrada do amplificador."
+    });
+    (200, "application/json", serde_json::to_vec(&resp).unwrap())
+}
+
+fn setlist_store_path(custom_dir: Option<&std::path::Path>) -> std::path::PathBuf {
+    if let Some(dir) = custom_dir {
+        dir.join("setlists.json")
+    } else if let Ok(appdata) = std::env::var("APPDATA") {
+        std::path::PathBuf::from(appdata).join("SonixPro").join("setlists.json")
+    } else {
+        std::path::PathBuf::from("presets/user/setlists.json")
+    }
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct SetlistStoreFile {
+    active_setlist_id: Option<String>,
+    setlists: Vec<SetlistDto>,
+}
+
+fn read_setlist_store(custom_dir: Option<&std::path::Path>) -> SetlistStoreFile {
+    let p = setlist_store_path(custom_dir);
+    std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn write_setlist_store(custom_dir: Option<&std::path::Path>, store: &SetlistStoreFile) -> Result<(), String> {
+    let p = setlist_store_path(custom_dir);
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
+    std::fs::write(&p, json).map_err(|e| e.to_string())
+}
+
+fn handle_get_setlist(ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let store = read_setlist_store(ctx.custom_presets_dir.as_deref());
+    let active = store
+        .active_setlist_id
+        .as_ref()
+        .and_then(|id| store.setlists.iter().find(|s| &s.id == id))
+        .or_else(|| store.setlists.first())
+        .cloned();
+    let active_idx = ctx.app_state.lock().map(|s| s.setlist_active_index).unwrap_or(0);
+    (
+        200,
+        "application/json",
+        serde_json::to_vec(&serde_json::json!({
+            "active_setlist": active,
+            "active_index": active_idx,
+            "setlists": store.setlists,
+        }))
+        .unwrap(),
+    )
+}
+
+fn handle_post_setlist(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let Ok(dto) = serde_json::from_slice::<SetlistDto>(body) else {
+        return (400, "application/json", b"{\"error\":\"invalid_setlist_json\"}".to_vec());
+    };
+    if dto.id.trim().is_empty() || dto.presets.is_empty() {
+        return (400, "application/json", b"{\"error\":\"setlist_id_ou_presets_vazios\"}".to_vec());
+    }
+    for pid in &dto.presets {
+        if find_preset_file_in(ctx.custom_presets_dir.as_deref(), pid).is_none() {
+            return (
+                400,
+                "application/json",
+                serde_json::to_vec(&serde_json::json!({
+                    "error": format!("Preset inexistente no setlist: {}", pid)
+                }))
+                .unwrap(),
+            );
+        }
+    }
+    let mut store = read_setlist_store(ctx.custom_presets_dir.as_deref());
+    if let Some(existing) = store.setlists.iter_mut().find(|s| s.id == dto.id) {
+        *existing = dto.clone();
+    } else {
+        store.setlists.push(dto.clone());
+    }
+    store.active_setlist_id = Some(dto.id.clone());
+    if let Err(e) = write_setlist_store(ctx.custom_presets_dir.as_deref(), &store) {
+        return (500, "application/json", serde_json::to_vec(&serde_json::json!({"error": e})).unwrap());
+    }
+    if let Ok(mut st) = ctx.app_state.lock() {
+        st.setlist_active_index = 0;
+    }
+    (200, "application/json", serde_json::to_vec(&serde_json::json!({"ok": true, "setlist": dto})).unwrap())
+}
+
+fn handle_post_setlist_step(delta: isize, ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let store = read_setlist_store(ctx.custom_presets_dir.as_deref());
+    let Some(active) = store
+        .active_setlist_id
+        .as_ref()
+        .and_then(|id| store.setlists.iter().find(|s| &s.id == id))
+        .or_else(|| store.setlists.first())
+    else {
+        return (404, "application/json", b"{\"error\":\"no_active_setlist\"}".to_vec());
+    };
+    if active.presets.is_empty() {
+        return (400, "application/json", b"{\"error\":\"empty_setlist\"}".to_vec());
+    }
+    let cur_idx = ctx.app_state.lock().map(|s| s.setlist_active_index).unwrap_or(0);
+    let len = active.presets.len() as isize;
+    let next_idx = ((cur_idx as isize + delta).rem_euclid(len)) as usize;
+    let preset_id = &active.presets[next_idx];
+    let load_body = serde_json::to_vec(&serde_json::json!({ "id": preset_id })).unwrap();
+    let (st, ct, resp) = handle_post_presets_load(&load_body, ctx);
+    if st != 200 {
+        return (st, ct, resp);
+    }
+    if let Ok(mut st_lock) = ctx.app_state.lock() {
+        st_lock.setlist_active_index = next_idx;
+    }
+    (
+        200,
+        "application/json",
+        serde_json::to_vec(&serde_json::json!({
+            "ok": true,
+            "index": next_idx,
+            "preset_id": preset_id,
+            "loaded": true,
+        }))
+        .unwrap(),
+    )
+}
+
+fn compile_and_push_modifiers(modifiers: &[ModifierBindingDto], ctx: &ApiContext) {
+    let mut table = crate::audio::CompiledModifierTable::empty();
+    for m in modifiers.iter().take(16) {
+        if let (Some((target, _, _)), Some(source)) = (
+            crate::audio::ModifierTargetParam::from_str_name(&m.target_param),
+            crate::audio::CompiledModifierSource::from_str_name(&m.source),
+        ) {
+            let idx = table.len;
+            table.bindings[idx] = crate::audio::CompiledModifierBinding {
+                active: true,
+                target,
+                source,
+                min_val: m.min_val,
+                max_val: m.max_val,
+                curve_slope: m.curve_slope,
+                damping_ms: m.damping_ms,
+            };
+            table.len += 1;
+        }
+    }
+    if let Some(ref rq) = ctx.resource_queue {
+        let _ = rq.push_modifiers(Box::new(table));
+    }
+}
+
+fn handle_get_modifiers(ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let mods = ctx
+        .app_state
+        .lock()
+        .map(|s| s.modifiers.clone())
+        .unwrap_or_default();
+    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "modifiers": mods })).unwrap())
+}
+
+fn handle_post_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let Ok(dto) = serde_json::from_slice::<ModifierBindingDto>(body) else {
+        return (400, "application/json", b"{\"error\":\"invalid_modifier_json\"}".to_vec());
+    };
+    let Some((_, min_bound, max_bound)) = crate::audio::ModifierTargetParam::from_str_name(&dto.target_param) else {
+        return (
+            400,
+            "application/json",
+            serde_json::to_vec(&serde_json::json!({
+                "error": format!("Parâmetro inválido ou discreto para Modifier: {}", dto.target_param)
+            }))
+            .unwrap(),
+        );
+    };
+    if crate::audio::CompiledModifierSource::from_str_name(&dto.source).is_none() {
+        return (400, "application/json", b"{\"error\":\"invalid_modifier_source\"}".to_vec());
+    }
+    if dto.min_val < min_bound || dto.max_val > max_bound || dto.min_val > dto.max_val {
+        return (
+            400,
+            "application/json",
+            serde_json::to_vec(&serde_json::json!({
+                "error": format!("min_val/max_val fora da faixa [{}, {}] de {}", min_bound, max_bound, dto.target_param)
+            }))
+            .unwrap(),
+        );
+    }
+    let snapshot = if let Ok(mut st) = ctx.app_state.lock() {
+        if let Some(existing) = st.modifiers.iter_mut().find(|m| m.id == dto.id) {
+            *existing = dto.clone();
+        } else {
+            st.modifiers.push(dto.clone());
+        }
+        st.modifiers.clone()
+    } else {
+        return (500, "application/json", b"{\"error\":\"lock_failed\"}".to_vec());
+    };
+    compile_and_push_modifiers(&snapshot, ctx);
+    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "ok": true, "modifiers": snapshot })).unwrap())
+}
+
+fn handle_delete_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return (400, "application/json", b"{\"error\":\"invalid_json\"}".to_vec());
+    };
+    let Some(id) = v.get("id").and_then(|x| x.as_str()) else {
+        return (400, "application/json", b"{\"error\":\"missing_id\"}".to_vec());
+    };
+    let snapshot = if let Ok(mut st) = ctx.app_state.lock() {
+        st.modifiers.retain(|m| m.id != id);
+        st.modifiers.clone()
+    } else {
+        return (500, "application/json", b"{\"error\":\"lock_failed\"}".to_vec());
+    };
+    compile_and_push_modifiers(&snapshot, ctx);
+    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "ok": true, "modifiers": snapshot })).unwrap())
+}
+
+fn handle_get_footswitch(ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let mode_str = ctx
+        .app_state
+        .lock()
+        .map(|s| s.footswitch_mode.clone())
+        .unwrap_or_else(|_| "HYBRID_STOMP_SCENE".to_string());
+    let mode = match mode_str.to_ascii_uppercase().as_str() {
+        "PRESET" => sonix_core::footswitch::FootswitchMode::Preset,
+        "SCENE" | "SCENES" => sonix_core::footswitch::FootswitchMode::Scene,
+        "STOMP" => sonix_core::footswitch::FootswitchMode::Stomp,
+        _ => sonix_core::footswitch::FootswitchMode::HybridStompScene,
+    };
+    let mut arr = sonix_core::footswitch::FootswitchArray::new();
+    arr.set_mode(mode);
+    let units: Vec<serde_json::Value> = (0..8usize)
+        .map(|i| {
+            let u = arr.unit(i);
+            serde_json::json!({
+                "id": u.id,
+                "oled_top_line": u.oled_top_line,
+                "oled_main_text": u.oled_main_text,
+                "color_hex": u.color_hex,
+            })
+        })
+        .collect();
+    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "mode": mode_str, "units": units })).unwrap())
+}
+
+fn handle_post_footswitch_press(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return (400, "application/json", b"{\"error\":\"invalid_json\"}".to_vec());
+    };
+    let Some(index) = v.get("index").and_then(|x| x.as_u64()) else {
+        return (400, "application/json", b"{\"error\":\"missing_index\"}".to_vec());
+    };
+    if !(1..=8).contains(&index) {
+        return (400, "application/json", b"{\"error\":\"footswitch_index_out_of_range\"}".to_vec());
+    }
+    let mode_str = ctx
+        .app_state
+        .lock()
+        .map(|s| s.footswitch_mode.clone())
+        .unwrap_or_else(|_| "HYBRID_STOMP_SCENE".to_string());
+    let mode_up = mode_str.to_ascii_uppercase();
+    let stomp_keys = [
+        "gate.enabled",
+        "drive.enabled",
+        "amp_1.enabled",
+        "cab_1.enabled",
+        "eq_1.enabled",
+        "comp_2.enabled",
+        "dly_1.enabled",
+        "rev_1.enabled",
+    ];
+    let scene_letters = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+    match mode_up.as_str() {
+        "PRESET" => {
+            if index % 2 == 1 {
+                handle_post_setlist_step(-1, ctx)
+            } else {
+                handle_post_setlist_step(1, ctx)
+            }
+        }
+        "SCENE" | "SCENES" => {
+            let letter = scene_letters[(index as usize) - 1];
+            let req = serde_json::to_vec(&serde_json::json!({ "scene": letter })).unwrap();
+            handle_post_scenes_select(&req, ctx)
+        }
+        "STOMP" => {
+            let key = stomp_keys[(index as usize) - 1];
+            let cur = ctx
+                .app_state
+                .lock()
+                .ok()
+                .and_then(|st| serde_json::to_value(&*st).ok())
+                .and_then(|val| val.get(key).and_then(|b| b.as_bool()))
+                .unwrap_or(false);
+            let patch = serde_json::to_vec(&serde_json::json!({ key: !cur })).unwrap();
+            dispatch(ctx, "/api/params", "POST", &patch)
+        }
+        _ => {
+            // HYBRID_STOMP_SCENE: FS1..4 = Stomps, FS5..8 = Scenes A..D
+            if index <= 4 {
+                let key = stomp_keys[(index as usize) - 1];
+                let cur = ctx
+                    .app_state
+                    .lock()
+                    .ok()
+                    .and_then(|st| serde_json::to_value(&*st).ok())
+                    .and_then(|val| val.get(key).and_then(|b| b.as_bool()))
+                    .unwrap_or(false);
+                let patch = serde_json::to_vec(&serde_json::json!({ key: !cur })).unwrap();
+                dispatch(ctx, "/api/params", "POST", &patch)
+            } else {
+                let letter = scene_letters[(index as usize) - 5];
+                let req = serde_json::to_vec(&serde_json::json!({ "scene": letter })).unwrap();
+                handle_post_scenes_select(&req, ctx)
+            }
+        }
     }
 }

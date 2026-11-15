@@ -1,7 +1,7 @@
 ---
 spec: 049
 titulo: Correções do review da entrega 034–048 e fechamento das pendências abertas (plugins VST3/CLAP, DAG 4×12, Setlists/Modifiers/footswitches)
-status: rascunho
+status: implementada (CA-36 e validadores externos VST3/CLAP pendentes)
 atualizado: 2026-11-15
 ---
 # 049 — Correções pós-review das Specs 034–048 e pendências abertas
@@ -178,6 +178,7 @@ O único "modifier" de produção é o mapeamento MIDI fixo de `midi.rs:130–14
 - **CA-37 (falha de ASIO não derruba o app):** Sem driver ASIO, ou se ele falhar ao abrir, `set_audio_device({mode:"asio"})` responde `mode_unavailable` com o motivo, e o WASAPI continua funcionando com a configuração anterior.
 - **CA-38 (modo instrumento/linha):** `input.mode = "instrument" | "line"` muda o alvo de calibração e o ganho de entrada, de modo que o mesmo sinal de -10 dBV num modo e de +4 dBu no outro chegue ao primeiro bloco no mesmo nível nominal (±1 dB). A UI informa que Hi-Z é uma propriedade elétrica da entrada da interface: o app não converte uma entrada de linha em Hi-Z por software.
 - **CA-39 (reamp):** O usuário escolhe uma DI (arquivo ou gravação), uma saída física e uma entrada de retorno. O app toca a DI, grava o retorno e alinha a gravação pelo atraso de ida e volta **medido** por loopback, com o erro de alinhamento contra a DI em no máximo 1 amostra. O atraso medido, o backend, o driver, a taxa e o buffer ficam registrados no arquivo da sessão. A UI avisa que normalmente é preciso um reamp box entre a saída de linha e a entrada do amplificador.
+- **CA-40 (Mod 2 ativo com split desligado):** Na topologia padrão com `split.enabled = false`, ligar `mod_2.enabled = true` (ex.: chorus) processa o sinal principal em série e altera a saída de forma mensurável em relação a `mod_2.enabled = false`.
 
 ### Parte E — não-regressão
 - **CA-35:**
@@ -213,17 +214,16 @@ O único "modifier" de produção é o mapeamento MIDI fixo de `midi.rs:130–14
   - O estado do plugin é o mesmo documento (CA-19).
 
 ## Testes que cobrem esta spec
-<Preenchido no fechamento. Arquivos previstos:>
-- `crates/sonix-desktop/tests/contract_049_scene_state_and_queues.rs` → CA-1, CA-2, CA-3, CA-7, CA-8, CA-9, CA-14
+- `crates/sonix-desktop/tests/contract_049_scene_state_and_queues.rs` → CA-1, CA-2, CA-3, CA-7, CA-8, CA-9, CA-14 (`10 passed; 0 failed`)
 - `apps/sonix-app/src-tauri/tests/contract_049_device_reconfigure.rs` → CA-4, CA-5, CA-6
-- `crates/sonix-desktop/tests/contract_049_midi_ranges.rs` → CA-11
-- `crates/ampforge-dsp/tests/contract_049_oversampler.rs` → CA-12, CA-13
+- `crates/sonix-desktop/tests/contract_049_midi_ranges.rs` → CA-11 (`1 passed; 0 failed`)
+- `crates/ampforge-dsp/tests/contract_049_oversampler.rs` → CA-12, CA-13 (`2 passed; 0 failed`)
 - `tests/contract/049-status-bar-honesta.test.js` → CA-10
-- `crates/sonix-desktop/tests/contract_044_sdd_integrity.rs` (estendido) → CA-15
-- `crates/sonix-plugin/tests/contract_049_plugins.rs` + script de validação (`clap-validator`, validador VST3) → CA-16..CA-22
-- `crates/sonix-desktop/tests/contract_049_live_dag.rs` → CA-23..CA-28
-- `crates/sonix-desktop/tests/contract_049_setlists_modifiers_footswitch.rs` + `tests/contract/049-modifier-matrix.test.js` → CA-29..CA-34 (inclui CA-30b)
-- `crates/sonix-desktop/tests/contract_049_asio_input_reamp.rs` → CA-36..CA-39 (CA-36 com hardware real registrado nas Notas)
+- `crates/sonix-desktop/tests/contract_044_sdd_integrity.rs` (estendido) → CA-15 (`7 passed; 0 failed`)
+- `crates/sonix-plugin/tests/contract_049_plugins.rs` + script de validação (`clap-validator`, validador VST3) → CA-16..CA-22 (`7 passed; 0 failed`)
+- `crates/sonix-desktop/tests/contract_049_live_dag.rs` → CA-23..CA-28, CA-40 (`8 passed; 0 failed`)
+- `crates/sonix-desktop/tests/contract_049_setlists_modifiers_footswitch.rs` + `tests/contract/049-modifier-matrix.test.js` → CA-29..CA-34 (inclui CA-30b) (`9 passed; 0 failed`)
+- `crates/sonix-desktop/tests/contract_049_asio_input_reamp.rs` → CA-36..CA-39 (CA-36 com hardware real registrado nas Notas) (`3 passed; 0 failed`)
 - Não-regressão → CA-35
 
 ## Notas
@@ -235,6 +235,7 @@ O único "modifier" de produção é o mapeamento MIDI fixo de `midi.rs:130–14
   5. **D**;
   6. **B**, por último: o VST3 é evolução futura nas decisões de produto, e a Parte B depende da topologia (C) e dos Modifiers (D) para o estado completo do CA-19.
 - **Arquitetura recomendada para o A1 (revisão de DSP, 2026-11-15):** blocos de tempo (looper, delay, reverb) devem ter **uma única instância**, fora do par ativa/sombra, como num rack real. A cena passa a controlar só o envio de entrada deles e os parâmetros com smoother. Com `spillover`, o envio fecha e a cauda continua; sem `spillover`, a saída do bloco faz fade. Só os blocos tonais e não lineares (amp, drive, EQ, cab) precisam de duas instâncias para o crossfade. Essa separação resolve CA-1, CA-2 e CA-3 de uma vez e reduz pela metade o custo de memória da sombra.
+  - **Interação CA-3 × CA-30b na troca de canal:** o "estado zerado" do `CA-30b` aplica-se aos blocos tonais/por canal (amp, drive, EQ, cab, modulador), não às instâncias únicas pós-merge de delay e reverb quando `spillover = true` (`dly_1`/`rev_1` só limpam a cauda na troca se `spillover = false`). O DC blocker de entrada (`dc_x1`/`dc_y1`/`dc_x2`/`dc_y2`) também é pré-canal e não é zerado no meio de um sinal ativo.
   O status pode ficar como `implementada (Parte B pendente)` enquanto uma parte não fecha.
 - **Licença do projeto (decisão do usuário, 2026-11-15):** o Sonix Pro é um projeto pessoal, sem fins comerciais, licenciado sob **GPL-3.0-or-later**. O texto oficial está em `LICENSE`, e o `Cargo.toml` do workspace declara `license = "GPL-3.0-or-later"` (antes, `"Proprietary"`). Situação das licenças de terceiros, conferida em 2026-11-15:
   - **SDK ASIO:** licença dupla desde outubro de 2025, acordo proprietário da Steinberg **ou** GPLv3. O projeto usa a **opção GPLv3**, sem precisar assinar o acordo proprietário.
@@ -250,3 +251,10 @@ O único "modifier" de produção é o mapeamento MIDI fixo de `midi.rs:130–14
 - **Parte B, decisão resolvida:** a pendência de licença foi fechada pela adoção da GPLv3, e **CLAP e VST3 entram juntos**, gerados do mesmo código por um framework que exporte os dois formatos (candidato: `nih-plug`), de modo que o CA-17 valha para os dois. A Parte B continua por último **por prioridade de produto**, já que plugin é evolução futura, e não mais por licença. Antes de codar o CA-16, confira de novo o `LICENSE` do framework e das bindings escolhidos e aplique a regra de versões do handoff (registro conferido e versão publicada há pelo menos duas semanas, registrada no Cortex).
 - **Raiz comum de A1 e A2:** estado com memória duplicado entre duas instâncias, sem dono único. Os testes da 045 e da 034 mediam o fluxo de sinal (RMS, taxa), não a **identidade** do estado. Os CAs 1, 2, 4 e 7 medem identidade de propósito.
 - **CA-13:** meça antes de otimizar e registre aqui o tempo atual e o novo, com CPU e build. Sem número medido, use `[medida pendente]`.
+  - **Medição em `--release` (Windows x86_64, `cargo test --release -p ampforge-dsp --test contract_049_oversampler -- --nocapture`):**
+    - Baseline (FIR 127 taps com deslocamento linear em todos os estágios): `stopband X2 = 112.27 dB`, `X4 = 112.41 dB`, `X8 = 112.77 dB`; aliasing 5 kHz `-6 dBFS` (8x) = `-27.23 dBc`; `WhiteBoxAmpProcessor` 1s@48kHz 8x = `188.81 ms`.
+    - Pós-otimização (FIR polifásico simétrico em ring buffer `103/43/27` taps, Kaiser `beta = 11.5`): `stopband X2 = 114.54 dB`, `X4 = 114.47 dB`, `X8 = 115.39 dB`; aliasing 5 kHz `-6 dBFS` (8x) = `-27.23 dBc`; `HalfBandOversampler` 1s@48kHz 8x (upsample + downsample) = `11.73 ms` (`CA-12` latência por impulso exata dentro de ±1 amostra em 2x/4x/8x).
+- **Build no Windows GNU (`windres`):** validado que `target-dir = "G:/Dev/.cargo-target/simulador-de-efeitos"` em `.cargo/config.toml` evita o erro de `windres` com espaços no caminho ao compilar `sonix-app`.
+- **CA-36 (ASIO real):** `[verificação pendente]` — feature opcional `asio` (`cpal/asio`) e `start_realtime_duplex_with_mode` implementadas em `sonix-desktop` e `sonix-app`, mas não há `CPAL_ASIO_DIR` / hardware ASIO de referência conectado nesta estação de build.
+- **CA-16 (validadores externos `clap-validator` e VST3 SDK `validator`):** `[verificação pendente de ferramenta externa]` — artefatos `sonix-pro.clap` e `sonix-pro.vst3` gerados via `nih_plug` (`nih_export_clap!` + `nih_export_vst3!`) e verificados em `crates/sonix-plugin/tests/contract_049_plugins.rs`; binários externos `clap-validator` e `validator.exe` não estão instalados nesta máquina.
+- **Correções pós-review (`docs/handoff/ANTIGRAVITY-050-pos-review.md`, R1–R9, 2026-11-15):** concluídas em `ampforge-dsp`, `sonix-desktop` e `docs/ui-desktop/inventario-controles.md`: `Mod2` com split desligado (CA-40), spillover/DC blocker sem step na troca de canal (CA-3/CA-30b), restauração de base dos Modifiers e sincronia LFO com `shadow` no crossfade (CA-32), drenagem cooperativa de `retired_queue` (CA-24), `clear_tail()`/`reset_state()` O(1) sem memset de 3 MB no callback RT (CA-2), e `latency_samples()` exato em 2x/4x/8x (CA-12).

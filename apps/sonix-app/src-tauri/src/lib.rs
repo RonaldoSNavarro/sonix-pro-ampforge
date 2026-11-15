@@ -4,7 +4,7 @@
 pub mod commands;
 pub mod streams;
 
-use commands::{AppRuntime, AudioRuntimeControl};
+use commands::{AppRuntime, AudioRuntimeControl, FallbackWorkerControl};
 use sonix_desktop::api::{ApiContext, AppState};
 use sonix_desktop::audio::{
     DesktopAudioHost, RealtimeDspChain, RealtimeDuplexAudioStreams, RealtimeDuplexEngine,
@@ -13,7 +13,7 @@ use sonix_desktop::audio::{
 use sonix_desktop::calibration::CalibrationStore;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::Duration;
 use streams::StreamCoordinator;
 use tauri::{Manager, WindowEvent};
@@ -40,16 +40,12 @@ pub fn ensure_single_audio_host(started_count: &AtomicUsize) -> bool {
 
 struct RuntimeKeepAlive {
     _streams: Arc<Mutex<Option<RealtimeDuplexAudioStreams>>>,
-    running: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    fallback: Arc<FallbackWorkerControl>,
 }
 
 impl Drop for RuntimeKeepAlive {
     fn drop(&mut self) {
-        self.running.store(false, Ordering::Relaxed);
-        if let Some(handle) = self.worker.take() {
-            let _ = handle.join();
-        }
+        self.fallback.stop_and_join();
         if let Ok(mut s) = self._streams.lock() {
             *s = None;
         }
@@ -58,6 +54,21 @@ impl Drop for RuntimeKeepAlive {
 }
 
 fn build_runtime() -> AppRuntime {
+    let calib_store = CalibrationStore::new();
+    let calib = calib_store.get("default");
+    build_runtime_with_calibration(calib_store, calib, true)
+}
+
+/// Constrói runtime para testes de contrato de inicialização sem abrir hardware WASAPI real (Spec 050, CA-2/CA-4).
+pub fn build_runtime_for_startup_test(calib: Option<(f32, f32)>) -> AppRuntime {
+    build_runtime_with_calibration(CalibrationStore::new(), calib, false)
+}
+
+fn build_runtime_with_calibration(
+    calib_store: CalibrationStore,
+    calib: Option<(f32, f32)>,
+    start_audio_host: bool,
+) -> AppRuntime {
     let audio_telemetry = Arc::new(Mutex::new(None));
     let duplex = Arc::new(RealtimeDuplexEngine::new(65536));
     let telemetry = Arc::new(TelemetryBuffer::new(512));
@@ -69,19 +80,24 @@ fn build_runtime() -> AppRuntime {
         .ok()
         .map(|chain| chain.param_queue());
 
-    let calib_store = CalibrationStore::new();
     let mut initial_state = AppState::default();
-    if let Some((boost, gate)) = calib_store.get("default") {
+    if let Some((boost, gate)) = calib {
         initial_state.input_boost = boost;
         initial_state.gate_threshold_db = gate;
         if let Ok(mut dsp) = dsp_chain.lock() {
             dsp.set_input_boost(boost);
             dsp.set_gate_threshold_db(gate);
         }
+    } else {
+        // Spec 050 CA-2: sem calibração prévia, inicia em Standby seguro para evitar chiado/microfonia imediata
+        initial_state.amp_standby = true;
+        if let Ok(mut dsp) = dsp_chain.lock() {
+            dsp.set_amp_standby(true);
+        }
     }
 
     let started_counter = AtomicUsize::new(0);
-    let (active_streams, running, fallback_worker) = if ensure_single_audio_host(&started_counter) {
+    let (active_streams, running, fallback_worker) = if start_audio_host && ensure_single_audio_host(&started_counter) {
         let streams = DesktopAudioHost::start_realtime_wasapi_duplex(
             duplex.clone(),
             dsp_chain.clone(),
@@ -106,7 +122,7 @@ fn build_runtime() -> AppRuntime {
                 let mut in_buf = vec![0.0f32; 4096];
                 let mut out_buf = vec![0.0f32; 4096];
                 while flag.load(Ordering::Relaxed) {
-                    thread::sleep(Duration::from_millis(3));
+                    thread::park_timeout(Duration::from_millis(3));
                     let period = duplex_clone.target_period().clamp(32, 4096);
                     duplex_clone.pop_samples_for_processing(&mut in_buf[..period]);
                     if let Ok(mut dsp) = dsp_clone.lock() {
@@ -133,10 +149,16 @@ fn build_runtime() -> AppRuntime {
         (Arc::new(Mutex::new(None)), Arc::new(AtomicBool::new(false)), None)
     };
 
+    let fallback_ctrl = Arc::new(FallbackWorkerControl {
+        running,
+        worker: Mutex::new(fallback_worker),
+    });
+
     let audio_ctrl = Arc::new(AudioRuntimeControl {
         duplex,
         dsp_chain: dsp_chain.clone(),
         active_streams: active_streams.clone(),
+        fallback: fallback_ctrl.clone(),
     });
 
     let mut api_ctx = ApiContext::new(
@@ -156,8 +178,7 @@ fn build_runtime() -> AppRuntime {
         audio_ctrl: Some(audio_ctrl),
         _keep_alive: Arc::new(RuntimeKeepAlive {
             _streams: active_streams,
-            running,
-            worker: fallback_worker,
+            fallback: fallback_ctrl,
         }),
     }
 }

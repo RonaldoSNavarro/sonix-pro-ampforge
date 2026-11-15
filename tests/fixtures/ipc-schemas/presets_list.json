@@ -19,6 +19,11 @@
       "id": "ac30",
       "name": "AC30 Top Boost",
       "type": "factory"
+    },
+    {
+      "id": "ca9_test",
+      "name": "ca9_test",
+      "type": "user"
     }
   ]
 }

@@ -1,3 +1,5 @@
+import { openModifierMatrixModal, type ModifierBindingView } from './ModifierMatrixModal.ts';
+
 export interface KnobOptions {
   controlId: string;
   label: string;
@@ -9,6 +11,8 @@ export interface KnobOptions {
   skinClass: string;
   sizePx: number;
   unit?: string;
+  modifier?: ModifierBindingView | null;
+  onModifierChange?: (binding: ModifierBindingView | null) => void;
   onChange: (val: number) => void;
   onDragState?: (dragging: boolean) => void;
 }
@@ -45,10 +49,11 @@ export class SonixKnobElement extends HTMLElement {
 
     if (!this.firstChild) {
       this.innerHTML =
-        '<span class="sh"></span><span class="rotor"><span class="a"></span><span class="b"></span><span class="p"></span></span>';
+        '<span class="sh"></span><svg class="modifier-range-arc" viewBox="0 0 36 36" aria-hidden="true"><path class="arc-span" d="" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg><span class="rotor"><span class="a"></span><span class="b"></span><span class="p"></span></span>';
       this.attachListeners();
     }
     this.updateRotor();
+    this.updateModifierArc();
   }
 
   private setValueDisplay(v: number): void {
@@ -125,6 +130,41 @@ export class SonixKnobElement extends HTMLElement {
       this.commit(this.opts.defaultValue);
     });
 
+    this.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!this.opts) return;
+      const currentOpts = this.opts;
+      openModifierMatrixModal({
+        targetParam: currentOpts.controlId,
+        label: currentOpts.label,
+        paramMin: currentOpts.min,
+        paramMax: currentOpts.max,
+        existing: currentOpts.modifier ?? null,
+        onSave: (binding) => {
+          currentOpts.modifier = binding;
+          this.updateModifierArc();
+          if (currentOpts.onModifierChange) {
+            currentOpts.onModifierChange(binding);
+          } else {
+            void fetch('/api/modifiers', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(binding),
+            }).catch(() => {});
+          }
+        },
+        onRemove: (id) => {
+          currentOpts.modifier = null;
+          this.updateModifierArc();
+          if (currentOpts.onModifierChange) {
+            currentOpts.onModifierChange(null);
+          } else {
+            void fetch(`/api/modifiers/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+          }
+        },
+      });
+    });
+
     this.addEventListener('keydown', (e: KeyboardEvent) => {
       if (!this.opts) return;
       const dir =
@@ -139,6 +179,32 @@ export class SonixKnobElement extends HTMLElement {
       const delta = span >= 2 ? 0.5 : (this.opts.step ?? 0.05);
       this.commit(this.opts.value + dir * delta);
     });
+  }
+
+  private updateModifierArc() {
+    const mod = this.opts?.modifier ?? null;
+    this.classList.toggle('has-modifier', Boolean(mod));
+    const pathEl = this.querySelector<SVGPathElement>('.modifier-range-arc .arc-span');
+    if (!pathEl || !this.opts) return;
+    if (!mod) {
+      pathEl.setAttribute('d', '');
+      return;
+    }
+    const span = Math.max(1e-6, this.opts.max - this.opts.min);
+    const nMin = Math.max(0, Math.min(1, (mod.min_val - this.opts.min) / span));
+    const nMax = Math.max(0, Math.min(1, (mod.max_val - this.opts.min) / span));
+    const degStart = -135 + Math.min(nMin, nMax) * 270;
+    const degEnd = -135 + Math.max(nMin, nMax) * 270;
+    const toRad = (d: number) => ((d - 90) * Math.PI) / 180;
+    const cx = 18;
+    const cy = 18;
+    const r = 15;
+    const x1 = cx + r * Math.cos(toRad(degStart));
+    const y1 = cy + r * Math.sin(toRad(degStart));
+    const x2 = cx + r * Math.cos(toRad(degEnd));
+    const y2 = cy + r * Math.sin(toRad(degEnd));
+    const largeArc = degEnd - degStart > 180 ? 1 : 0;
+    pathEl.setAttribute('d', `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
   }
 }
 

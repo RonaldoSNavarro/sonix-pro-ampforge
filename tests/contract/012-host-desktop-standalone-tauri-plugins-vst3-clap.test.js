@@ -9,7 +9,7 @@ import { execSync } from 'node:child_process';
 describe('Spec 012: Host Desktop Standalone (Tauri v2) e Plugins DAW (VST3/CLAP)', () => {
   test('Execução de testes de contrato Rust (CA-1 a CA-8)', () => {
     try {
-      const output = execSync('cargo test -p sonix-desktop --test contract_012_desktop_plugin -- --nocapture', {
+      const output = execSync('cargo test -p sonix-plugin --test contract_012_desktop_plugin -- --nocapture', {
         encoding: 'utf-8',
         env: { ...process.env, PATH: `${process.env.HOME}/.cargo/bin:${process.env.PATH}` }
       });

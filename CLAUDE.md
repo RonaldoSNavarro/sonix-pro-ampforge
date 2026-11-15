@@ -11,6 +11,8 @@ em andamento. O índice/changelog das specs está em [specs/README.md](specs/REA
 
 ## Comandos
 
+> **Nota (Windows GNU / `windres`):** o workspace tem espaços no caminho e o GNU `windres` falha ao compilar `sonix-app` se o `target/` ficar dentro do repositório. O arquivo `.cargo/config.toml` fixa `target-dir = "G:/Dev/.cargo-target/simulador-de-efeitos"` (sem espaços) para que `cargo check --workspace` e `cargo build -p sonix-app` funcionem diretamente.
+
 ```bash
 # Rust (workspace na raiz)
 cargo check --workspace
@@ -29,6 +31,7 @@ npm --prefix apps/sonix-app/ui run build    # tsc --noEmit + vite build → ui/d
 
 # App Tauri (crate sonix-app em apps/sonix-app/src-tauri)
 cargo build -p sonix-app
+cargo build --release -p sonix-app --features custom-protocol   # release com ui/dist embutido (sem localhost:1420)
 cargo test  -p sonix-app --test contract_033_desktop_shell
 
 # Host legado com servidor HTTP local (127.0.0.1:7890, servindo design-system/)

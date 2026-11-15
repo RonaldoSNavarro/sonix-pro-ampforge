@@ -313,27 +313,65 @@ fn test_ca_06_cpu_monitor_receives_real_callback_time() {
 fn test_ca_07_control_inventory_cites_existing_tests_and_marks_pending() {
     let root = workspace_root();
     let inv = fs::read_to_string(root.join("docs/ui-desktop/inventario-controles.md")).unwrap();
+    let index = fs::read_to_string(root.join("specs/README.md")).unwrap();
 
-    for pending_feature in [
-        "mic{1,2}",
-        "resonance_hz",
-        "set_audio_device",
-        "comp_2.ratio",
+    // Mapa Spec NNN -> coluna de status em specs/README.md (Spec 049 CA-15)
+    let mut implemented_specs: BTreeSet<String> = BTreeSet::new();
+    for line in index.lines() {
+        if !line.starts_with("| [") {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('|').collect();
+        if cols.len() < 4 {
+            continue;
+        }
+        let spec_num = cols[1]
+            .trim()
+            .trim_start_matches('[')
+            .split(']')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let status = cols[3].trim().to_ascii_lowercase();
+        if status.starts_with("implementada") {
+            implemented_specs.insert(spec_num);
+        }
+    }
+
+    // Spec 049 CA-15: nenhum `pendente — Spec NNN` pode apontar para uma spec já marcada `implementada` no índice.
+    for line in inv.lines() {
+        if !line.starts_with('|') {
+            continue;
+        }
+        let mut search_from = 0usize;
+        while let Some(pos) = line[search_from..].find("pendente — Spec ") {
+            let abs = search_from + pos + "pendente — Spec ".len();
+            let digits: String = line[abs..].chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !digits.is_empty() {
+                assert!(
+                    !implemented_specs.contains(&digits),
+                    "CA-7 / Spec 049 CA-15: inventário marca `pendente — Spec {}` mas a Spec {} já está Implementada em specs/README.md (linha: {})",
+                    digits,
+                    digits,
+                    line
+                );
+            }
+            search_from = abs;
+        }
+    }
+
+    // Spec 049 CA-15: Notas das Specs 002, 009 e 012 apontam para Spec 049 onde havia pendência anterior.
+    for spec_rel in [
+        "specs/002-matriz-roteamento-sinal-dag-4x12.md",
+        "specs/009-cenas-gapless-canais-modifiers-footswitches.md",
+        "specs/012-host-desktop-standalone-tauri-plugins-vst3-clap.md",
     ] {
-        let matching_lines: Vec<&str> = inv
-            .lines()
-            .filter(|l| l.starts_with('|') && l.contains(pending_feature))
-            .collect();
+        let content = fs::read_to_string(root.join(spec_rel)).unwrap();
         assert!(
-            !matching_lines.is_empty(),
-            "CA-7: '{}' precisa aparecer no inventário de controles",
-            pending_feature
-        );
-        assert!(
-            matching_lines.iter().any(|l| l.contains("pendente — Spec 0")),
-            "CA-7: '{}' ainda não tem implementação real de efeito em produção e deve estar marcado como `pendente — Spec 0NN`, encontrado: {:?}",
-            pending_feature,
-            matching_lines
+            content.contains("Spec 049"),
+            "Spec 049 CA-15: {} deve referenciar Spec 049 nas Notas",
+            spec_rel
         );
     }
 
