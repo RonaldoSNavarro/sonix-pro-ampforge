@@ -30,6 +30,18 @@ Nada commitado. Além da entrega 034–048 ainda não commitada, o working tree 
 - `Cargo.toml` do workspace com `license = "GPL-3.0-or-later"` (antes `"Proprietary"`) e `license.workspace = true` nos cinco crates;
 - `README.md` com a seção "Licença".
 
+## 2.1 Pré-requisito de build: `windres` com espaços no caminho (faça antes da Parte A)
+**Sintoma:** `cargo check -p sonix-app` (ou `--workspace`) falha no build script do `sonix-app`:
+`cc1.exe: fatal error: de\: No such file or directory` … `windres: preprocessing failed` (pânico em `tauri-winres-0.3.7/src/lib.rs:543`). Os demais crates compilam (`cargo check --workspace --exclude sonix-app` passa).
+
+**Causa:** a toolchain é GNU (`x86_64-pc-windows-gnu`, Rust do Chocolatey, sem `rustup`/MSVC). O `embed-resource 3.0.12` chama o `windres` do PATH com `--include-dir <OUT_DIR>`; o GNU `windres` 2.47 repassa esse caminho **sem aspas** ao pré-processador, e o `OUT_DIR` fica dentro de `…\Simulador de efeitos\target`, que tem espaços. No Windows GNU o `embed-resource` ignora `RC`/`RC_<target>`, então não dá para trocar o compilador por variável.
+
+**Correção a validar (hipótese, ainda não confirmada — o build de teste foi interrompido):** compilar com um `target-dir` sem espaços.
+1. Rode `CARGO_TARGET_DIR="G:/Dev/.cargo-target/simulador-de-efeitos" cargo check -p sonix-app` (primeiro build é do zero e demora: Tauri + WebView2).
+2. Se o build script passar e gerar `libresource.a`, fixe em `.cargo/config.toml` na raiz: `[build]` `target-dir = "G:/Dev/.cargo-target/simulador-de-efeitos"`. Isso é específico desta máquina (projeto pessoal, uma máquina só) — registre na Spec 049 (Notas) e no `CLAUDE.md` (seção Comandos).
+3. Se não passar, alternativas: renomear a pasta do projeto para um nome sem espaços (exige atualizar `~/.cortex/config.yaml`), ou instalar `rustup` com a toolchain MSVC (usa `rc.exe`). **Pergunte ao usuário antes** de qualquer uma das duas.
+4. Gate: `cargo check --workspace` e `cargo test --workspace` verdes antes de começar a Parte A. Registre o resultado no Cortex como `gotcha`.
+
 ## 3. Partes e gates
 Ordem obrigatória: **A → A′ → F → C → D → B**. Cada parte termina com `cargo test --workspace` e `npm test` verdes e relatório no formato da §5. Não comece a parte seguinte com a anterior vermelha.
 
@@ -91,4 +103,4 @@ Não-regressão de toda a suíte ao fim.
 - "Nada commitado (aguardando autorização)."
 
 ## 6. Cortex
-Projeto: `simulador-de-efeitos`. Ao começar, rode `handoff` com `target_agent: "antigravity"` e leia a página da Spec 049 registrada em 2026-11-15 (review, ordem, licenças). Ao fim de cada parte: `capture` de decisões, gotchas e fatos; `consolidate` e `write_page`; `promote_rules` se surgir regra nova.
+Projeto: `simulador-de-efeitos`. Ao começar, rode `handoff` com `target_agent: "antigravity"` e leia a página `20261115-005128-spec-049-1d74` (decision: review, ordem, licenças e o gotcha do `windres`). Ao fim de cada parte: `capture` de decisões, gotchas e fatos; `consolidate` e `write_page`; `promote_rules` se surgir regra nova.
