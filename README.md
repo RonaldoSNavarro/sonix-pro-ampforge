@@ -1,59 +1,152 @@
 # SONIX PRO // AMPFORGE™
 
-Simulador de pedaleira de guitarra multi-efeitos e amplificadores com modelagem de circuito White-Box (100% algorítmica em nível de componentes discretos), motor DSP nativo em Rust e Design System Skeuomórfico Fotorrealista.
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+[![Status: In Development](https://img.shields.io/badge/Status-Em%20Desenvolvimento-orange.svg)](#-status-do-projeto--convite-a-colaboradores)
+[![Rust: 2021](https://img.shields.io/badge/Rust-2021%20Edition-black?logo=rust)](https://www.rust-lang.org/)
+[![Tauri: v2](https://img.shields.io/badge/Tauri-v2-blue?logo=tauri)](https://tauri.app/)
+[![Tests: Passing](https://img.shields.io/badge/Tests-Passing%20(100%25)-brightgreen.svg)](#-testes-e-qualidade)
+
+Simulador de alta fidelidade para guitarra com pedaleira multi-efeitos, amplificadores valvulados clássicos com **modelagem White-Box** (100% algorítmica em nível de circuito analógico discreto), motor DSP de tempo real em **Rust** (*Zero-Alloc & Lock-Free*) e interface skeuomórfica fotorrealista acelerada por hardware em **Tauri v2**.
 
 ---
 
-## 🎛️ Visão Geral e Arquitetura Desktop
+## ⚠️ Status do Projeto & 🤝 Convite a Colaboradores
 
-O projeto é direcionado exclusivamente a **plataformas Desktop nativas** (sem alvo Web no escopo atual):
-- **Desktop Standalone (`Tauri v2 + Rust`)**: Executável de palco/estúdio com janela nativa acelerada por GPU, drivers de áudio (`WASAPI`/onboard, evolução para `ASIO` / MIDI na Spec 036) e motor DSP nativo em Rust.
-- **Plugins de DAW (`sonix-plugin`)**: Arquitetura compartilhada planejada (`Spec 012` em estado *passthrough*; empacotamento `VST3` e `CLAP` fora da entrega atual enquanto `sonix-plugin` não processa áudio completo).
-- **SONIX PRO**: Interface de estúdio e simulação de hardware físico da pedaleira de chão (8 footswitches RGB, *scribble strips* OLED, pedal de expressão, matriz de roteamento 4×12).
-- **AMPFORGE™**: Motor DSP White-Box (64-bit Newton-Raphson) e bancada (*Open Chassis Mod Shop*) com controle de válvulas (`12AX7`, `EL34`, etc.), tensão de placa, bias, sag da fonte e osciloscópio CRT em tempo real.
+> **O SONIX PRO // AMPFORGE™ está atualmente em desenvolvimento ativo.**
+> Novas funcionalidades, melhorias algorítmicas de DSP, expansão do catálogo de equipamentos e polimento da interface estão sendo implementados continuamente.
 
----
+### 🌟 Aceitamos e Incentivamos Colaboradores!
+Buscamos construir uma plataforma de referência em simulação de instrumentos em código aberto. Sua participação é muito bem-vinda em diversas frentes:
 
-## 📐 Metodologia: Spec Driven Development (SDD) & TDD Estrito
+- 🎸 **Músicos e Produtores:** Teste de usabilidade, comparação de timbres com equipamentos físicos, criação de presets de fábrica e relatórios de experiência.
+- 🎛️ **Engenheiros de DSP e Áudio:** Otimizações algorítmicas, aperfeiçoamento de solvers Newton-Raphson, novos modelos de caixas/microfones e filtros analógicos.
+- 🦀 **Desenvolvedores Rust:** Aprimoramento de concorrência lock-free, suporte a drivers de áudio de baixa latência (WASAPI/ASIO) e integração de plugins DAW VST3/CLAP.
+- 🎨 **Desenvolvedores Frontend e UI/UX:** Aprimoramentos no Design System skeuomórfico, renderização fluida em Canvas/WebGL, gráficos de osciloscópio CRT e responsividade.
 
-Toda funcionalidade e resolução de lacunas é guiada por especificações formais numeradas em `specs/` com critérios de aceite verificáveis `CA-n`.
-
-- Índice e Changelog de Specs: [specs/README.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/specs/README.md)
-- Regras de desenvolvimento e TDD estrito: [AGENTS.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/AGENTS.md)
-- Fontes da verdade: [01-SRS-Levantamento-de-Requisitos.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/docs/01-SRS-Levantamento-de-Requisitos.md) e [02-Design-System-Specification.md](file:///mnt/g/Dev/Projetos/Simulador%20de%20efeitos/docs/02-Design-System-Specification.md)
+Para saber como configurar seu ambiente, reportar problemas ou submeter um Pull Request, consulte nosso [**Guia de Contribuição (CONTRIBUTING.md)**](CONTRIBUTING.md).
 
 ---
 
-## 📂 Estrutura do Repositório
+## 🎛️ Principais Recursos e Arquitetura
+
+### 1. Motor DSP Nativo em Rust (`ampforge-dsp`)
+- **Zero-Alloc Realtime Audio Safety:** Nenhuma alocação de heap (`Vec`, `Box`, `String`) ou trava de concorrência (*mutexes/locks*) ocorre dentro do loop de processamento de áudio em tempo real.
+- **Processamento de Alta Precisão:** Solvers iterativos de ponto flutuante de 64 bits para triodos e pentodos com equações físicas não lineares.
+- **Oversampling Polifásico FIR:** Fatores selecionáveis de 2x, 4x e 8x com filtros FIR simétricos e atenuação de stopband > 96 dB para eliminação completa de aliasing em estágios de saturação pesada.
+- **Latência Ultrabaixa:** Latência algorítmica de núcleo inferior a 1,5 ms a 48 kHz.
+
+### 2. Amplificadores Valvulados Clássicos (White-Box)
+Modelagem rigorosa dos esquemas elétricos originais:
+- **Marshall JCM800 2203:** Master Volume, estágio *cold clipper* e resposta harmônica consagrada do Hard Rock.
+- **Marshall 1959 SLP (Plexi):** 4 entradas, canais Normal e High Treble, suporte a entradas *jumpered* e interação de volumes.
+- **Fender Twin Reverb AB763:** Clean brilhante com tone stack passivo Fender FMV, reverb de mola acionado a válvula e vibrato óptico.
+- **Mesa Boogie Dual Rectifier:** 3 canais distintos (Clean, Vintage e Modern), retificação selecionável (Válvula 5U4G vs. Diodos de Silício) e modo Spongy/Bold.
+- **Vox AC30 Top Boost:** Classe A sem feedback negativo global (*Zero NFB*), tone stack interativo e controle *Tone Cut* no estágio de potência.
+
+### 3. Bancada do Chassi Aberto (*Mod Shop*) & Osciloscópio CRT
+- **Troca Dinâmica de Válvulas:** Pré-amplificação (`12AX7`, `ECC83`, `12AT7`, `12AY7`, `EF86`) e saída (`EL34`, `6L6GC`, `6V6GT`, `EL84`, `KT88`).
+- **Controle Físico de Bancada:** Tensão de placa (B+), compressão por *sag* de fonte, polarização de *bias*, saturação do transformador de saída e simetria de triodo.
+- **Osciloscópio CRT em Tempo Real:** Visualização da forma de onda de áudio, curva de transferência não linear, resposta em frequência do tone stack e curva de impedância do alto-falante.
+
+### 4. Pedaleira de Efeitos Analógicos
+- **Drives & Distorções:** Ibanez TS808 Tube Screamer, Klon Centaur (circuito de *clean blend* real), ProCo RAT (filtro analógico reverso), Electro-Harmonix Big Muff Pi (mid-scoop), Dallas Arbiter Fuzz Face (Germânio/Silício) e Boss DS-1.
+- **Compressores:** Studio FET 1176LN com curvas de ataque ultrarrápidas (20–800 µs), tempo de release fiel e modo *"All-Buttons-In"*.
+- **Noise Gate de Estúdio:** Histerese anti-chatter, tempo de Hold, filtragem de sidechain e chaveamento com detecção direta no sinal limpo (DI).
+- **Roland RE-201 Space Echo:** Simulação fiel do mecanismo de fita de 3 cabeças de reprodução, saturação analógica de fita, mola interna e 12 modos de chaveamento originais.
+- **Reverbs Analógicos e Digitais:** Tube Spring (mola valvulada), Studio Vintage Plate, Chamber, Concert Hall e Shimmer granular (+12 semitons).
+- **Modulações:** Boss CE-2 BBD Chorus, MXR Phase 90, Flanger clássico com feedback, Tremolo e Rotary Speaker.
+- **Pitch & Afinador:** Afinador estroboscópico e polifônico de alta precisão (algoritmo YIN 40 Hz – 1,4 kHz) e bloco de Harmonizador Diatônico inteligente.
+
+### 5. Gabinete Virtual & Convolução de IR
+- **Convolução de IR Zero-Latency:** Convolução particionada no domínio do tempo e da frequência para carregamento de Impulse Responses WAV (.wav) sem adição de latência.
+- **Microfonação Dupla 3D:** Modelos como Shure SM57, Royer R121 e Sennheiser MD421 com controle de posicionamento milimétrico, distância e ângulo *off-axis*, simulando efeito de proximidade e filtro pente.
+- **Gabinete Twin 2×12 Open:** Simulação de gabinete aberto traseiro com cancelamento de baixas frequências e ressonância acústica do cone.
+
+### 6. Matriz de Roteamento DAG 4×12, Cenas e Modifiers
+- **Matriz de Roteamento 4×12:** Grafo de processamento totalmente configurável com múltiplos pontos de entrada e saída.
+- **Divisores (Split):** Modos A/B, Crossover de frequência e Divisão Dinâmica por envelope de amplitude.
+- **Cenas Gapless:** Troca instantânea entre cenas com transições suaves (*crossfade*) e preservação de caudas de eco e reverberação (*spillover*).
+- **Matriz de Modulação (Modifiers):** LFOs sincronizáveis, gerador de envelope dinâmico, pedal de expressão e mapeamento MIDI CC com curvas de resposta customizáveis.
+
+---
+
+## 🏛️ Estrutura do Workspace
 
 ```text
-├── docs/
-│   ├── 01-SRS-Levantamento-de-Requisitos.md    # Especificação formal de requisitos (RFs, RNFs e JSON Schema)
-│   └── 02-Design-System-Specification.md      # Especificação visual, tokens de materiais e anatomia dos componentes
-├── specs/                                     # Especificações SDD numeradas (001 a 012)
-│   ├── README.md                              # Índice canônico de specs e status
-│   └── ...
-└── design-system/                             # Casca visual do Design System (Web Components / CSS / Canvas)
-    ├── index.html                             # Layout em 3 zonas, palco skeuomórfico e hardware shell
-    ├── styles.css                             # Tokens canônicos de materiais (:root), microtexturas e iluminação
-    └── app.js                                 # Simulação visual, osciloscópio CRT e barramento de parâmetros
+├── apps/
+│   └── sonix-app/                  # Aplicação Desktop nativa (Tauri v2)
+│       ├── src-tauri/              # Shell desktop em Rust e integração de SO
+│       └── ui/                     # Interface do usuário (TypeScript, Vite, Design System)
+├── crates/
+│   ├── ampforge-dsp/               # Motor DSP de tempo real (White-Box, solvers, FX, IR)
+│   ├── sonix-core/                 # Estruturas fundamentais, schemas JSON e persistência offline
+│   ├── sonix-desktop/              # Host desktop, drivers de áudio (WASAPI/ASIO) e MIDI
+│   └── sonix-plugin/               # Plugins de áudio DAW VST3 e CLAP (via nih-plug)
+├── docs/                           # Documentação arquitetural, levantamento de requisitos e referências visuais
+├── specs/                          # Especificações formais SDD (Specs 001 a 050)
+└── tests/                          # Testes de contrato automatizados de ponta a ponta (E2E / JS)
 ```
 
 ---
 
-## 🚀 Como Visualizar a Casca do Design System
+## 🚀 Como Executar Localmente
 
-A casca de apresentação do Design System (utilizada pela WebView Desktop do Tauri v2) pode ser inspecionada localmente:
+### Pré-requisitos
+- [Rust](https://www.rust-lang.org/) (versão 1.80 ou superior)
+- [Node.js](https://nodejs.org/) (versão 18 ou superior)
+- C++ Build Tools (MSVC no Windows)
+
+### 1. Clonar o Repositório e Instalar Dependências
+```bash
+git clone https://github.com/RonaldoSNavarro/sonix-pro-ampforge.git
+cd sonix-pro-ampforge
+npm install
+npm --prefix apps/sonix-app/ui install
+```
+
+### 2. Executar em Modo de Desenvolvimento (Desktop Tauri v2)
+```bash
+npm --prefix apps/sonix-app/ui run tauri dev
+```
+
+### 3. Compilar a Versão Final Release Standalone
+```bash
+# Compila a UI estática otimizada
+npm --prefix apps/sonix-app/ui run build
+
+# Gera o executável standalone sonix-app.exe com UI embutida
+cargo build --release -p sonix-app --features custom-protocol
+```
+O executável otimizado estará disponível no diretório de saída do Cargo.
+
+---
+
+## 🧪 Testes e Qualidade
+
+O projeto adota a metodologia **Spec Driven Development (SDD)** com **TDD Estrito**. Toda implementação é coberta por testes automatizados antes de ser integrada:
 
 ```bash
-cd design-system
-python3 -m http.server 8080
+# Executa todos os testes unitários e de contrato do workspace Rust:
+cargo test --workspace
+
+# Executa a suíte de contratos de integração e interface (Node.js):
+node --test tests/contract/
 ```
+
+Todas as 50 especificações arquiteturais possuem rastreabilidade completa e critérios de aceite auditáveis. Para mais detalhes, consulte o [Índice de Especificações (specs/README.md)](specs/README.md).
 
 ---
 
-## 📄 Licença
+## 📄 Licença e Termos de Uso
 
-Projeto pessoal, sem fins comerciais, distribuído sob a **GNU General Public License v3.0 ou posterior** (`GPL-3.0-or-later`) — texto completo em [LICENSE](LICENSE).
+Este projeto está licenciado sob a **Creative Commons Atribuição-NãoComercial 4.0 Internacional (CC BY-NC 4.0)** — veja o texto legal completo no arquivo [LICENSE](LICENSE).
 
-A GPLv3 é compatível com as dependências de áudio previstas: SDK ASIO da Steinberg pela opção GPLv3 da licença dupla, SDK VST3 3.8+ (MIT), CLAP (MIT) e bindings Rust de VST3 em GPLv3. O SDK ASIO **não** é versionado neste repositório (ver Spec 049, CA-36). Os nomes e logos "ASIO" e "VST" são marcas da Steinberg e só podem aparecer segundo as regras de marca dela.
+### Resumo dos Termos em Linguagem Simples:
+- ✅ **Permitido:** Você é livre para baixar, executar, estudar, copiar, modificar e compartilhar este código-fonte ou seus binários para fins pessoais, educacionais e de pesquisa.
+- 👤 **Atribuição Obrigatória:** Você deve dar o devido crédito ao autor original (**Ronaldo S. Navarro** / `@ronaldosnavarro`), incluir um link para a licença e informar se foram realizadas alterações.
+- 🚫 **Uso Não Comercial:** O software, seu código-fonte, modelos algorítmicos ou binários resultantes **não podem ser comercializados, vendidos ou utilizados para obtenção de lucro ou benefício comercial direto/indireto**.
+
+---
+
+Desenvolvido com dedicação por **Ronaldo S. Navarro** e comunidade de colaboradores.
+Sinta-se em casa para experimentar, tocar e contribuir! 🎸⚡

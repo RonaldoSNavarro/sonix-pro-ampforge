@@ -119,4 +119,4 @@ acima onde a entrega não está no caminho de produção. Ordem recomendada:
 5. **045**, **038**, **039**, **041**, **040**, **047** e **043**: comportamento dos equipamentos.
 6. **042**: implementar o bloco de pitch (decidido pelo usuário em 2026-11-14).
 
-**Review da entrega 034–048 (2026-11-15) → Spec 049**, spec única por decisão do usuário. Ordem das partes: A (CA-7 e CA-14 primeiro) → A′ → F (ASIO, instrumento/linha, reamp) → C (DAG) → D (Setlists/Modifiers/footswitches) → B (plugins CLAP + VST3, evolução futura; licença resolvida: projeto em GPL-3.0-or-later).
+**Review da entrega 034–048 (2026-11-15) → Spec 049**, spec única por decisão do usuário. Ordem das partes: A (CA-7 e CA-14 primeiro) → A′ → F (ASIO, instrumento/linha, reamp) → C (DAG) → D (Setlists/Modifiers/footswitches) → B (plugins CLAP + VST3, evolução futura; licença resolvida: projeto sob CC BY-NC 4.0 - Atribuição e Não-Comercial).

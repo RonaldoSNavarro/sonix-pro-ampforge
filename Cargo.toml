@@ -11,8 +11,8 @@ members = [
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
-authors = ["SONIX PRO // AMPFORGE Team"]
-license = "GPL-3.0-or-later"
+authors = ["Ronaldo S. Navarro <navarro.silva@terra.com.br>"]
+license = "CC-BY-NC-4.0"
 
 [profile.release]
 opt-level = 3
