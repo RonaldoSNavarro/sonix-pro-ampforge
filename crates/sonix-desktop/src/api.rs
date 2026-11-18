@@ -67,6 +67,9 @@ fn default_zero_str() -> String { "0".to_string() }
 fn default_a4_hz() -> f32 { 440.0 }
 fn default_looper_pos() -> String { "post".to_string() }
 fn default_looper_action() -> String { "stop".to_string() }
+fn default_cab_resonance() -> f32 { 90.0 }
+fn default_cab_hicut() -> f32 { 9.0 }
+fn default_exp_1() -> f32 { 62.0 }
 fn default_hundred() -> f32 { 100.0 }
 fn default_pitch_model() -> String { "whammy".to_string() }
 fn default_pitch_key() -> String { "C".to_string() }
@@ -366,6 +369,18 @@ pub struct AppState {
     pub cab_2_enabled: bool,
     #[serde(default = "default_alnico", rename = "cab_2.speaker")]
     pub cab_2_speaker: String,
+    #[serde(default = "default_cab_resonance", rename = "cab_2.resonance_hz")]
+    pub cab_2_resonance_hz: f32,
+    #[serde(default = "default_cab_hicut", rename = "cab_2.hicut_khz")]
+    pub cab_2_hicut_khz: f32,
+    #[serde(default, rename = "master.level_db")]
+    pub master_level_db: f32,
+    #[serde(default, rename = "looper.reverse")]
+    pub looper_reverse: bool,
+    #[serde(default, rename = "looper.half_speed")]
+    pub looper_half_speed: bool,
+    #[serde(default = "default_exp_1", rename = "palco.exp_1")]
+    pub palco_exp_1: f32,
     #[serde(rename = "preset.active", default = "default_preset_active")]
     pub active_preset_id: String,
     #[serde(rename = "preset.name", default = "default_preset_name")]
@@ -516,7 +531,7 @@ impl Default for AppState {
             amp_volume_2: 0.0,
             amp_cut: 5.0,
             amp_model: "jcm800_2203".to_string(),
-            engine_oversampling: "8x".to_string(),
+            engine_oversampling: "4x".to_string(),
             input_boost: 2.5,
             gate_threshold_db: -65.0,
             input_source: "device".to_string(),
@@ -625,6 +640,12 @@ impl Default for AppState {
             amp_2_model: "twin_ab763".to_string(),
             cab_2_enabled: false,
             cab_2_speaker: "alnico_blue_2x12".to_string(),
+            cab_2_resonance_hz: 90.0,
+            cab_2_hicut_khz: 9.0,
+            master_level_db: 0.0,
+            looper_reverse: false,
+            looper_half_speed: false,
+            palco_exp_1: 62.0,
             active_preset_id: "brit800".to_string(),
             active_preset_name: "Brit 800 Crunch".to_string(),
             scene_active: "A".to_string(),
@@ -784,7 +805,17 @@ pub fn dispatch(
                 .shared_algo_latency_samples
                 .as_ref()
                 .map(|a| a.load(Ordering::Relaxed))
-                .unwrap_or(16);
+                .unwrap_or_else(|| {
+                    ctx.app_state
+                        .lock()
+                        .ok()
+                        .map(|st| match st.engine_oversampling.as_str() {
+                            "2x" => 4,
+                            "4x" => 8,
+                            _ => 16,
+                        })
+                        .unwrap_or(8)
+                });
             let contention_silences = ctx.telemetry.dsp_contention_silence_blocks();
             let live_underruns = ctx.duplex_engine.as_ref().map(|d| d.underruns());
             let live_overruns = ctx.duplex_engine.as_ref().map(|d| d.overruns());
@@ -870,6 +901,15 @@ pub fn dispatch(
             };
 
             if let Some(obj) = val.as_object_mut() {
+                let ov_mode = ctx
+                    .app_state
+                    .lock()
+                    .map(|st| st.engine_oversampling.clone())
+                    .unwrap_or_else(|_| "4x".to_string());
+                obj.insert(
+                    "oversampling".to_string(),
+                    serde_json::json!(ov_mode),
+                );
                 obj.insert(
                     "dsp_contention_silence_blocks".to_string(),
                     serde_json::json!(contention_silences),
@@ -929,13 +969,13 @@ pub fn dispatch(
                         if let Ok(mut session) = ctx.calibration_session.lock() {
                             let sr = ring.sample_rate();
                             session.tuner_processor.set_sample_rate(sr);
-                            let min_pos = session.tuner_enabled_at;
                             let CalibrationSession {
                                 ref mut tuner_processor,
                                 ref mut tuner_scratch,
                                 ..
                             } = *session;
-                            let n = ring.read_latest_since(min_pos, tuner_scratch);
+                            // Lê a janela mais recente do ring buffer para responder mesmo se tuner.enabled foi ligado antes da chegada do áudio
+                            let n = ring.read_latest_since(0, tuner_scratch);
                             if n >= 1024 {
                                 tuner_processor.detect_pitch(&tuner_scratch[..n])
                             } else {
@@ -1576,12 +1616,14 @@ fn parse_eq_mode(s: &str) -> Option<EqMode> {
 
 fn parse_looper_action(s: &str) -> Option<LooperActionCmd> {
     match s {
-        "record" => Some(LooperActionCmd::Record),
+        "record" | "rec" => Some(LooperActionCmd::Record),
         "play" => Some(LooperActionCmd::Play),
         "overdub" => Some(LooperActionCmd::Overdub),
         "stop" => Some(LooperActionCmd::Stop),
         "undo" => Some(LooperActionCmd::Undo),
         "redo" => Some(LooperActionCmd::Redo),
+        "reverse" => Some(LooperActionCmd::Reverse),
+        "half_speed" => Some(LooperActionCmd::HalfSpeed),
         "clear" => Some(LooperActionCmd::Clear),
         _ => None,
     }
@@ -1621,11 +1663,7 @@ fn parse_mic_model(s: &str) -> Option<MicModel> {
 }
 
 fn parse_preamp_tube(s: &str) -> PreampTube {
-    match s {
-        "12at7" => PreampTube::At7,
-        "ef86_variant" | "ef86" => PreampTube::Ef86,
-        _ => PreampTube::Ax7A,
-    }
+    PreampTube::from_str_name(s).unwrap_or(PreampTube::Ax7A)
 }
 
 fn parse_power_tube(s: &str) -> PowerTube {
@@ -1839,6 +1877,13 @@ fn json_kv_to_dsp_updates(k: &str, v: &serde_json::Value, out: &mut Vec<DspParam
             if let Some(spk) = parse_speaker_model(s) {
                 out.push(DspParamUpdate::Cab2Speaker(spk));
             }
+        },
+        "cab_2.resonance_hz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Cab2ResonanceHz(num as f32)); },
+        "cab_2.hicut_khz" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Cab2HicutKhz(num as f32)); },
+        "master.level_db" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::MasterLevelDb(num as f32)); },
+        "palco.exp_1" => if let Some(num) = v.as_f64() {
+            let norm = if num > 10.0 { (num as f32) / 100.0 } else { (num as f32) / 10.0 };
+            out.push(DspParamUpdate::Exp1Value(norm.clamp(0.0, 1.0)));
         },
         "tuner.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::TunerEnabled(b)); },
         "tuner.output" => if let Some(s) = v.as_str() {
@@ -2370,7 +2415,7 @@ pub fn handle_post_params(
                     }
                     "amp_1.preamp_tube" => {
                         if let Some(s) = v.as_str() {
-                            if ["12ax7", "12at7", "ef86_variant"].contains(&s) {
+                            if PreampTube::from_str_name(s).is_some() {
                                 applied.push(k.clone());
                             } else {
                                 validation_error = Some("amp_1.preamp_tube inválido".to_string());
@@ -2886,6 +2931,58 @@ pub fn handle_post_params(
                             break;
                         }
                     }
+                    "cab_2.resonance_hz" => {
+                        if let Some(num) = v.as_f64() {
+                            if (50.0..=160.0).contains(&num) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("cab_2.resonance_hz fora da faixa 50..160".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("cab_2.resonance_hz deve ser número".to_string());
+                            break;
+                        }
+                    }
+                    "cab_2.hicut_khz" => {
+                        if let Some(num) = v.as_f64() {
+                            if (2.0..=20.0).contains(&num) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("cab_2.hicut_khz fora da faixa 2.0..20.0".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("cab_2.hicut_khz deve ser número".to_string());
+                            break;
+                        }
+                    }
+                    "master.level_db" => {
+                        if let Some(num) = v.as_f64() {
+                            if (-60.0..=12.0).contains(&num) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("master.level_db fora da faixa -60..12".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("master.level_db deve ser número".to_string());
+                            break;
+                        }
+                    }
+                    "palco.exp_1" => {
+                        if let Some(num) = v.as_f64() {
+                            if (0.0..=100.0).contains(&num) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("palco.exp_1 fora da faixa 0..100".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("palco.exp_1 deve ser número".to_string());
+                            break;
+                        }
+                    }
                     k if k.starts_with("eq_1.band") => {
                         let rest = &k["eq_1.band".len()..];
                         let mut parts = rest.split('.');
@@ -3245,13 +3342,25 @@ pub fn handle_post_params(
                             "amp_2.model" => st.amp_2_model = v.as_str().unwrap().to_string(),
                             "cab_2.enabled" => st.cab_2_enabled = v.as_bool().unwrap(),
                             "cab_2.speaker" | "cab_2.model" => st.cab_2_speaker = v.as_str().unwrap().to_string(),
+                            "cab_2.resonance_hz" => st.cab_2_resonance_hz = v.as_f64().unwrap() as f32,
+                            "cab_2.hicut_khz" => st.cab_2_hicut_khz = v.as_f64().unwrap() as f32,
+                            "master.level_db" => st.master_level_db = v.as_f64().unwrap() as f32,
+                            "palco.exp_1" => st.palco_exp_1 = v.as_f64().unwrap() as f32,
                             "scene.active" => st.scene_active = v.as_str().unwrap().to_string(),
                             "footswitch.mode" => st.footswitch_mode = v.as_str().unwrap().to_string(),
                             "tuner.enabled" => st.tuner_enabled = v.as_bool().unwrap(),
                             "tuner.output" => st.tuner_output = v.as_str().unwrap().to_string(),
                             "tuner.ref_hz" => st.tuner_ref_hz = v.as_f64().unwrap() as f32,
                             "looper.position" => st.looper_position = v.as_str().unwrap().to_string(),
-                            "looper.action" => st.looper_action = v.as_str().unwrap().to_string(),
+                            "looper.action" => {
+                                let act = v.as_str().unwrap();
+                                match act {
+                                    "reverse" => st.looper_reverse = !st.looper_reverse,
+                                    "half_speed" => st.looper_half_speed = !st.looper_half_speed,
+                                    "rec" => st.looper_action = "record".to_string(),
+                                    other => st.looper_action = other.to_string(),
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -3408,6 +3517,21 @@ pub fn is_valid_preset_id(id: &str) -> bool {
         .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
 }
 
+const EMBEDDED_FACTORY_PRESETS: &[(&str, &str, &str)] = &[
+    ("brit800", "Brit 800 Crunch", include_str!("../../../presets/factory/brit800.sonixpreset")),
+    ("usdeluxe", "US Deluxe Clean", include_str!("../../../presets/factory/usdeluxe.sonixpreset")),
+    ("recto", "Recto High Gain", include_str!("../../../presets/factory/recto.sonixpreset")),
+    ("ac30", "AC30 Top Boost", include_str!("../../../presets/factory/ac30.sonixpreset")),
+];
+
+fn embedded_factory_preset_content(id: &str) -> Option<&'static str> {
+    let clean_id = id.trim_end_matches(".sonixpreset");
+    EMBEDDED_FACTORY_PRESETS
+        .iter()
+        .find(|(fid, _, _)| *fid == clean_id)
+        .map(|(_, _, content)| *content)
+}
+
 fn find_preset_file_in(custom_dir: Option<&std::path::Path>, id: &str) -> Option<std::path::PathBuf> {
     let clean_id = id.trim_end_matches(".sonixpreset");
     if !is_valid_preset_id(clean_id) {
@@ -3447,13 +3571,7 @@ fn find_preset_file_in(custom_dir: Option<&std::path::Path>, id: &str) -> Option
 
 fn handle_get_presets() -> (u16, &'static str, Vec<u8>) {
     let mut list = Vec::new();
-    let factory_defs = [
-        ("brit800", "Brit 800 Crunch"),
-        ("usdeluxe", "US Deluxe Clean"),
-        ("recto", "Recto High Gain"),
-        ("ac30", "AC30 Top Boost"),
-    ];
-    for (id, name) in factory_defs {
+    for &(id, name, _) in EMBEDDED_FACTORY_PRESETS {
         list.push(serde_json::json!({
             "id": id,
             "name": name,
@@ -3467,7 +3585,7 @@ fn handle_get_presets() -> (u16, &'static str, Vec<u8>) {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("sonixpreset") {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        if !factory_defs.iter().any(|(fid, _)| *fid == stem) {
+                        if !EMBEDDED_FACTORY_PRESETS.iter().any(|(fid, _, _)| *fid == stem) {
                             list.push(serde_json::json!({
                                 "id": stem,
                                 "name": stem,
@@ -3492,6 +3610,10 @@ fn find_preset_file(id: &str) -> Option<std::path::PathBuf> {
     find_preset_file_in(None, id)
 }
 
+fn preset_exists_in(custom_dir: Option<&std::path::Path>, id: &str) -> bool {
+    find_preset_file_in(custom_dir, id).is_some() || embedded_factory_preset_content(id).is_some()
+}
+
 fn handle_post_presets_load(
     body: &[u8],
     ctx: &ApiContext,
@@ -3506,12 +3628,15 @@ fn handle_post_presets_load(
         return (400, "application/json", b"{\"error\":\"invalid_preset_id\"}".to_vec());
     }
 
-    let Some(path) = find_preset_file_in(ctx.custom_presets_dir.as_deref(), id) else {
+    let content: String = if let Some(path) = find_preset_file_in(ctx.custom_presets_dir.as_deref(), id) {
+        let Ok(c) = std::fs::read_to_string(&path) else {
+            return (500, "application/json", b"{\"error\":\"failed_to_read_preset\"}".to_vec());
+        };
+        c
+    } else if let Some(embedded) = embedded_factory_preset_content(id) {
+        embedded.to_string()
+    } else {
         return (404, "application/json", b"{\"error\":\"preset_not_found\"}".to_vec());
-    };
-
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return (500, "application/json", b"{\"error\":\"failed_to_read_preset\"}".to_vec());
     };
 
     let Ok(doc) = sonix_core::persistence::SonixPresetDoc::from_json_str(&content) else {
@@ -3867,6 +3992,12 @@ fn handle_post_scenes_select(
     }
 
     let elapsed_ms = (start.elapsed().as_micros() as f32 / 1000.0).max(0.1);
+    let state_json = ctx
+        .app_state
+        .lock()
+        .ok()
+        .and_then(|st| serde_json::to_value(&*st).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
 
     (
         200,
@@ -3874,6 +4005,7 @@ fn handle_post_scenes_select(
         serde_json::to_vec(&serde_json::json!({
             "status": "ok",
             "scene": scene,
+            "state": state_json,
             "transition_ms": (elapsed_ms * 10.0).round() / 10.0
         }))
         .unwrap(),
@@ -4017,6 +4149,10 @@ fn validate_preset_param_kv(k: &str, v: &serde_json::Value) -> Result<(), String
             | "cab_2.enabled"
             | "cab_2.speaker"
             | "cab_2.model"
+            | "cab_2.resonance_hz"
+            | "cab_2.hicut_khz"
+            | "master.level_db"
+            | "palco.exp_1"
             | "preset.active"
             | "preset.name"
             | "scene.active"
@@ -4025,6 +4161,8 @@ fn validate_preset_param_kv(k: &str, v: &serde_json::Value) -> Result<(), String
             | "tuner.ref_hz"
             | "looper.position"
             | "looper.action"
+            | "looper.reverse"
+            | "looper.half_speed"
             | "pitch_1.enabled"
             | "pitch_1.model"
             | "pitch_1.semitones"
@@ -4194,6 +4332,10 @@ pub fn apply_preset_params_queued(
                 "amp_2.model" => if let Some(s) = v.as_str() { st.amp_2_model = s.to_string(); },
                 "cab_2.enabled" => if let Some(b) = v.as_bool() { st.cab_2_enabled = b; },
                 "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() { st.cab_2_speaker = s.to_string(); },
+                "cab_2.resonance_hz" => if let Some(n) = v.as_f64() { st.cab_2_resonance_hz = n as f32; },
+                "cab_2.hicut_khz" => if let Some(n) = v.as_f64() { st.cab_2_hicut_khz = n as f32; },
+                "master.level_db" => if let Some(n) = v.as_f64() { st.master_level_db = n as f32; },
+                "palco.exp_1" => if let Some(n) = v.as_f64() { st.palco_exp_1 = n as f32; },
                 "scene.active" => if let Some(s) = v.as_str() { st.scene_active = s.to_string(); },
                 "footswitch.mode" => if let Some(s) = v.as_str() { st.footswitch_mode = s.to_string(); },
                 "tuner.enabled" => if let Some(b) = v.as_bool() { st.tuner_enabled = b; },
@@ -4254,6 +4396,18 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
         .unwrap_or(48000.0);
 
     match phase {
+        // Spec 051 T-01: marca o início da captura do assistente (descarta o que veio antes).
+        "begin" => {
+            let mut sess = ctx.calibration_session.lock().unwrap();
+            sess.noise_samples.clear();
+            sess.cursor_pos = ctx
+                .clean_input_ring
+                .as_ref()
+                .map(|r| r.total_written())
+                .unwrap_or(0);
+            let resp = serde_json::json!({ "phase": "begin", "cursor": sess.cursor_pos });
+            (200, "application/json", serde_json::to_vec(&resp).unwrap())
+        }
         "silence" => {
             let samples = if let Some(ref ring) = ctx.clean_input_ring {
                 let mut sess = ctx.calibration_session.lock().unwrap();
@@ -4324,7 +4478,7 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
         _ => (
             400,
             "application/json",
-            br#"{"error":"phase deve ser 'silence' ou 'strum'"}"#.to_vec(),
+            br#"{"error":"phase deve ser 'begin', 'silence' ou 'strum'"}"#.to_vec(),
         ),
     }
 }
@@ -4469,7 +4623,7 @@ fn handle_post_setlist(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec
         return (400, "application/json", b"{\"error\":\"setlist_id_ou_presets_vazios\"}".to_vec());
     }
     for pid in &dto.presets {
-        if find_preset_file_in(ctx.custom_presets_dir.as_deref(), pid).is_none() {
+        if !preset_exists_in(ctx.custom_presets_dir.as_deref(), pid) {
             return (
                 400,
                 "application/json",

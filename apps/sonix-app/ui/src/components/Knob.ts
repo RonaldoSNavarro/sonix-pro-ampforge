@@ -56,6 +56,17 @@ export class SonixKnobElement extends HTMLElement {
     this.updateModifierArc();
   }
 
+  /** Sincroniza o valor exibido externamente (ex.: quando o slider do inspetor muda o mesmo parâmetro) sem disparar onChange. */
+  syncExternalValue(v: number): void {
+    if (!this.opts || this.dragState) return;
+    const step = this.opts.step ?? 0.1;
+    const clamped = clampStep(v, this.opts.min, this.opts.max, step);
+    if (clamped === this.opts.value) return;
+    this.opts.value = clamped;
+    this.setValueDisplay(clamped);
+    this.updateRotor();
+  }
+
   private setValueDisplay(v: number): void {
     if (!this.opts) return;
     const txt = `${v.toFixed(this.opts.step && this.opts.step >= 1 ? 0 : 1)}${this.opts.unit ? ' ' + this.opts.unit : ''}`;
@@ -268,14 +279,18 @@ export function createHSliderRow(opts: HSliderOptions): HTMLElement {
     opts.format ? opts.format(v) : `${v.toFixed(opts.step >= 1 ? 0 : 1)}${opts.unit ? ' ' + opts.unit : ''}`;
   readout.textContent = formatVal(opts.value);
 
-  const updateUi = (v: number) => {
+  const updateUi = (v: number, emit = true) => {
     const clamped = clampStep(v, opts.min, opts.max, opts.step);
     const nextPct = Math.max(0, Math.min(100, ((clamped - opts.min) / (opts.max - opts.min)) * 100));
     fill.style.width = `${nextPct.toFixed(1)}%`;
     thumb.style.left = `${nextPct.toFixed(1)}%`;
     track.setAttribute('aria-valuenow', String(clamped));
     readout.textContent = formatVal(clamped);
-    opts.onChange(clamped);
+    if (emit) opts.onChange(clamped);
+  };
+  (track as unknown as { __syncSliderValue?: (v: number) => void }).__syncSliderValue = (v: number) => {
+    if (dragging) return;
+    updateUi(v, false);
   };
 
   let dragging = false;

@@ -54,7 +54,7 @@ const GRID_BLOCKS: GridBlockDef[] = [
   { id: 'drive', row: 1, col: 3, tag: 'DRIVE', title: 'PEDAL DRIVE', dotColor: '#ff8a3d', chTag: 'B', enableKey: 'drive.enabled', bypassControlId: 'drive.enabled', subText: (s) => DRIVE_LABELS[str(s, 'drive.model', 'ts808')] ?? 'Screamer 808' },
   { id: 'split', row: 1, col: 4, tag: 'SPLIT', title: 'SPLIT A / B', dotColor: '#3dd8ff', chTag: '-', enableKey: 'split.enabled', bypassControlId: 'split.enabled', subText: () => 'Split A/B' },
   { id: 'amp', row: 1, col: 5, tag: 'AMP 1', title: 'AMPLIFICADOR 1', dotColor: '#ff8a3d', chTag: 'D', enableKey: 'amp_1.enabled', bypassControlId: 'amp.enabled', subText: (s) => (AMP_LABELS[str(s, 'amp_1.model', 'dual_rect')]?.full.split(' · ')[0] ?? 'CALI RECTO') },
-  { id: 'cab', row: 1, col: 6, tag: 'CAB 1', title: 'GABINETE 1', dotColor: '#ffd166', chTag: 'A', enableKey: 'cab_1.enabled', bypassControlId: 'cab.enabled', subText: (s) => CAB_LABELS[str(s, 'cab_1.model', 'v30_4x12')] ?? '4×12 V30' },
+  { id: 'cab', row: 1, col: 6, tag: 'CAB 1', title: 'GABINETE 1', dotColor: '#ffd166', chTag: 'A', enableKey: 'cab_1.enabled', bypassControlId: 'cab.enabled', subText: (s) => CAB_LABELS[str(s, 'cab_1.speaker', str(s, 'cab_1.model', 'v30_4x12'))] ?? '4×12 V30' },
   { id: 'eq', row: 1, col: 7, tag: 'EQ', title: '10 BAND EQ', dotColor: '#4ee680', chTag: 'A', enableKey: 'eq_1.enabled', bypassControlId: 'eq_1.enabled', subText: () => '10 Band EQ' },
   { id: 'merge', row: 1, col: 8, tag: 'MERGE', title: 'MERGE A + B', dotColor: '#3dd8ff', chTag: '-', subText: () => 'Mix A+B' },
   { id: 'delay', row: 1, col: 9, tag: 'DELAY', title: 'TAPE ECHO RE-201', dotColor: '#3dd8ff', chTag: 'B', enableKey: 'dly_1.enabled', bypassControlId: 'dly_1.enabled', subText: () => 'Tape Echo 201' },
@@ -62,7 +62,7 @@ const GRID_BLOCKS: GridBlockDef[] = [
   { id: 'out', row: 1, col: 11, tag: 'OUT', title: 'SAÍDA 1 / 2', dotColor: '#3dd8ff', chTag: '-', subText: () => 'Saída 1/2' },
   { id: 'comp', row: 2, col: 4, tag: 'COMP', title: 'FET 76 COMPRESSOR', dotColor: '#6f7785', chTag: 'A', enableKey: 'comp_2.enabled', bypassControlId: 'comp_2.enabled', subText: () => 'FET 76' },
   { id: 'amp2', row: 2, col: 5, tag: 'AMP 2', title: 'AMP PARALELO 2', dotColor: '#ff8a3d', chTag: 'A', enableKey: 'amp_2.enabled', bypassControlId: 'amp_2.enabled', subText: (s) => (str(s, 'amp_2.model', 'twin_ab763') === 'twin_ab763' ? 'US Twin' : (AMP_LABELS[str(s, 'amp_2.model', 'twin_ab763')]?.short ?? 'US Twin')) },
-  { id: 'cab2', row: 2, col: 6, tag: 'CAB 2', title: 'CAB PARALELO 2', dotColor: '#ffd166', chTag: 'A', enableKey: 'cab_2.enabled', bypassControlId: 'cab_2.enabled', subText: (s) => CAB_LABELS[str(s, 'cab_2.model', 'alnico_blue_2x12')] ?? '2×12 Alnico' },
+  { id: 'cab2', row: 2, col: 6, tag: 'CAB 2', title: 'CAB PARALELO 2', dotColor: '#ffd166', chTag: 'A', enableKey: 'cab_2.enabled', bypassControlId: 'cab_2.enabled', subText: (s) => CAB_LABELS[str(s, 'cab_2.speaker', str(s, 'cab_2.model', 'alnico_blue_2x12'))] ?? '2×12 Alnico' },
   { id: 'chorus', row: 2, col: 7, tag: 'MOD', title: 'CHORUS-2', dotColor: '#9c7cff', chTag: 'A', enableKey: 'mod_2.enabled', bypassControlId: 'mod_2.enabled', subText: () => 'Chorus-2' },
 ];
 
@@ -145,7 +145,9 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
       gr,
       makeControlSlider(store, 'gate.threshold_db', 'gate.threshold_db', 'Threshold', -65, (v) => `${v.toFixed(0)} dB`),
       makeControlSlider(store, 'gate.release_ms', 'gate.release_ms', 'Decay / Release', 80, (v) => `${v.toFixed(0)} ms`),
-      makeControlSlider(store, 'gate.hysteresis_db', 'gate.hysteresis_db', 'Hysteresis', 4.0, (v) => `${v.toFixed(1)} dB`)
+      makeControlSlider(store, 'gate.hysteresis_db', 'gate.hysteresis_db', 'Hysteresis', 4.0, (v) => `${v.toFixed(1)} dB`),
+      makeControlSlider(store, 'gate.hold_ms', 'gate.hold_ms', 'Hold', 35, (v) => `${v.toFixed(0)} ms`),
+      makeControlSlider(store, 'gate.range_db', 'gate.range_db', 'Range', -70, (v) => `${v.toFixed(0)} dB`)
     );
     return;
   }
@@ -202,16 +204,22 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
 
   if (blk === 'cab' || blk === 'cab2') {
     const isB = blk === 'cab2';
+    const spkKey = isB ? 'cab_2.speaker' : 'cab_1.speaker';
+    const ctrlId = isB ? 'cab_2.speaker' : 'cab.speaker';
+    const resId = isB ? 'cab_2.resonance_hz' : 'cab.resonance_hz';
+    const resKey = isB ? 'cab_2.resonance_hz' : 'cab_1.resonance_hz';
+    const hcId = isB ? 'cab_2.hicut_khz' : 'cab.hicut_khz';
+    const hcKey = isB ? 'cab_2.hicut_khz' : 'cab_1.hicut_khz';
     const chips = document.createElement('div');
     chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
-    const cur = str(store, isB ? 'cab_2.model' : 'cab_1.model', isB ? 'alnico_blue_2x12' : 'v30_4x12');
+    const cur = str(store, spkKey, isB ? 'alnico_blue_2x12' : 'v30_4x12');
     for (const [val, lbl] of Object.entries(CAB_LABELS)) {
-      chips.appendChild(makeChipButton(isB ? 'cab_2.speaker' : 'cab.speaker', lbl, cur === val, () => void store.setControl(isB ? 'cab_2.speaker' : 'cab.speaker', val)));
+      chips.appendChild(makeChipButton(ctrlId, lbl, cur === val, () => void store.setControl(ctrlId, val)));
     }
     container.append(
       chips,
-      makeControlSlider(store, 'cab.resonance_hz', 'cab_1.resonance_hz', 'Ressonância', 92, (v) => `${v.toFixed(0)} Hz`),
-      makeControlSlider(store, 'cab.hicut_khz', 'cab_1.hicut_khz', 'Hi-Cut', 7.5, (v) => `${v.toFixed(1)} kHz`)
+      makeControlSlider(store, resId, resKey, 'Ressonância', 92, (v) => `${v.toFixed(0)} Hz`),
+      makeControlSlider(store, hcId, hcKey, 'Hi-Cut', 7.5, (v) => `${v.toFixed(1)} kHz`)
     );
     const navCab = makeChipButton('ui.nav_screen', 'Sala de microfonação ›', false, () => store.setScreen('gabinete'));
     container.appendChild(navCab);
@@ -246,7 +254,7 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
       chips,
       makeControlSlider(store, 'mod_2.rate_hz', 'mod_2.rate_hz', 'Rate', 1.0, (v) => `${v.toFixed(2)} Hz`),
       makeControlSlider(store, 'mod_2.depth', 'mod_2.depth', 'Depth', 5.0),
-      makeControlSlider(store, 'mod_2.mix', 'mod_2.mix', 'Mix', 0.5, (v) => `${Math.round(v * 100)}%`)
+      makeControlSlider(store, 'mod_2.mix', 'mod_2.mix', 'Mix', 50, (v) => `${Math.round(v)}%`)
     );
     return;
   }
@@ -288,7 +296,7 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
       makeControlSlider(store, 'rev_1.decay_s', 'rev_1.decay_s', 'Decay', 2.4, (v) => `${v.toFixed(1)} s`),
       makeControlSlider(store, 'rev_1.predelay_ms', 'rev_1.predelay_ms', 'Pre-Delay', 18, (v) => `${v.toFixed(0)} ms`),
       makeControlSlider(store, 'rev_1.damping', 'rev_1.damping', 'Damping', 0.45),
-      makeControlSlider(store, 'rev_1.mix', 'rev_1.mix', 'Mix', 0.28, (v) => `${Math.round(v * 100)}%`)
+      makeControlSlider(store, 'rev_1.mix', 'rev_1.mix', 'Mix', 28, (v) => `${Math.round(v)}%`)
     );
     return;
   }
@@ -347,15 +355,16 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
     container.append(
       outChips,
       warn,
-      makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Master', 0, (v) => `${v.toFixed(1)} dB`),
-      makeToggleRow(store, 'merge.row_1_phase_invert', 'merge.row_1_phase_invert', 'Inverter Fase', false, '180°', '0°')
+      makeControlSlider(store, 'master.level_db', 'master.level_db', 'Nível Master', 0, (v) => `${v.toFixed(1)} dB`),
+      makeToggleRow(store, 'merge.row_1_phase_invert', 'merge.row_1_phase_invert', 'Inverter Fase B', false, '180°', '0°')
     );
     return;
   }
 
+  // Bloco MERGE A + B
   container.append(
-    makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Master', 0, (v) => `${v.toFixed(1)} dB`),
-    makeToggleRow(store, 'merge.row_1_phase_invert', 'merge.row_1_phase_invert', 'Inverter Fase', false, '180°', '0°')
+    makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Linha B (Merge)', -6, (v) => `${v.toFixed(1)} dB`),
+    makeToggleRow(store, 'merge.row_1_phase_invert', 'merge.row_1_phase_invert', 'Inverter Fase B', false, '180°', '0°')
   );
 }
 
@@ -516,19 +525,28 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   tunerBtn.type = 'button';
   tunerBtn.className = 'm-btn';
   tunerBtn.dataset.controlId = 'ui.nav_screen';
+  tunerBtn.dataset.navTarget = 'tuner';
   tunerBtn.style.cssText = 'width:64px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
   tunerBtn.innerHTML =
     '<svg width="18" height="12" viewBox="0 0 18 12" fill="none"><path d="M2 11A7 7 0 0 1 16 11" stroke="#3dd8ff" stroke-width="1.6"/><path d="M9 11L11.5 4" stroke="#29c46a" stroke-width="2" stroke-linecap="round"/></svg><span style="font-size:9px;color:#a3abb4;">AFINADOR</span>';
-  tunerBtn.addEventListener('click', () => store.setScreen('palco'));
+  tunerBtn.addEventListener('click', () => {
+    store.palcoMode = 'tuner';
+    store.setControl('tuner.enabled', true);
+    store.setScreen('palco');
+  });
 
   const palcoBtn = document.createElement('button');
   palcoBtn.type = 'button';
   palcoBtn.className = 'm-btn';
   palcoBtn.dataset.controlId = 'ui.nav_screen';
+  palcoBtn.dataset.navTarget = 'palco';
   palcoBtn.style.cssText = 'width:64px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
   palcoBtn.innerHTML =
     '<svg width="16" height="12" viewBox="0 0 16 12" fill="none"><rect x="1" y="1" width="14" height="10" rx="1.5" stroke="#ff8a3d" stroke-width="1.4"/><path d="M4 8h8" stroke="#ff8a3d" stroke-width="1.4"/></svg><span style="font-size:9px;color:#a3abb4;">PALCO</span>';
-  palcoBtn.addEventListener('click', () => store.setScreen('palco'));
+  palcoBtn.addEventListener('click', () => {
+    store.palcoMode = 'stage';
+    store.setScreen('palco');
+  });
 
   const gearBtn = document.createElement('button');
   gearBtn.type = 'button';
@@ -726,9 +744,24 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   const pedalsRow = document.createElement('div');
   pedalsRow.style.cssText = 'flex:1;min-height:0;display:flex;align-items:flex-end;justify-content:center;gap:0;padding:0;overflow:hidden;';
 
-  const wrapScaledPedal = (el: HTMLElement, scale: number, origW: number, origH: number, marginBottom = 0) => {
+  const wrapScaledPedal = (
+    el: HTMLElement,
+    scale: number,
+    origW: number,
+    origH: number,
+    marginBottom = 0,
+    blkId?: BlockId,
+    enabledKey?: string
+  ) => {
     const slot = document.createElement('div');
-    slot.style.cssText = `width:${Math.round(origW * scale)}px;height:${Math.round(origH * scale)}px;position:relative;flex:none;${marginBottom ? `margin-bottom:${marginBottom}px;` : ''}`;
+    const isOn = enabledKey ? bool(store, enabledKey, true) : true;
+    const isSelected = blkId ? store.selectedBlock === blkId : false;
+    slot.style.cssText = `width:${Math.round(origW * scale)}px;height:${Math.round(origH * scale)}px;position:relative;flex:none;opacity:${isOn ? 1 : 0.62};outline:${isSelected ? '1px solid rgba(255,138,61,.65)' : 'none'};border-radius:10px;${marginBottom ? `margin-bottom:${marginBottom}px;` : ''}`;
+    if (blkId) {
+      slot.addEventListener('click', () => {
+        if (store.selectedBlock !== blkId) store.selectBlock(blkId);
+      });
+    }
     const inner = document.createElement('div');
     inner.style.cssText = `transform:scale(${scale});transform-origin:top left;`;
     inner.appendChild(el);
@@ -767,13 +800,13 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   splitJoin.append(cLeft, divider, cRight);
 
   pedalsRow.append(
-    wrapScaledPedal(createPedalElement('ns2', store), 1.0, 104, 184),
+    wrapScaledPedal(createPedalElement('ns2', store), 1.0, 104, 184, 0, 'gate', 'gate.enabled'),
     makeCable(16, 150),
-    wrapScaledPedal(createPedalElement(driveModel, store), 1.0, dw, dh),
+    wrapScaledPedal(createPedalElement(driveModel, store), 1.0, dw, dh, 0, 'drive', 'drive.enabled'),
     splitJoin,
-    wrapScaledPedal(createPedalElement('ce2', store), 1.0, 104, 184),
+    wrapScaledPedal(createPedalElement('ce2', store), 1.0, 104, 184, 0, 'chorus', 'mod_2.enabled'),
     makeCable(16, 110),
-    wrapScaledPedal(createPedalElement('mxr10', store), 1.0, 232, 150, 0)
+    wrapScaledPedal(createPedalElement('mxr10', store), 1.0, 232, 150, 0, 'eq', 'eq_1.enabled')
   );
   board.append(boardRail, boardTopLabels, pedalsRow);
 
@@ -786,14 +819,19 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   rackHdr.textContent = 'Rack · loop / pós-amp';
   rack.appendChild(rackHdr);
 
-  for (const [rmodel, origH, slotH] of [
-    ['comp1176', 130, 74],
-    ['re201', 190, 107],
-    ['plate', 110, 62],
+  for (const [rmodel, origH, slotH, rBlk] of [
+    ['comp1176', 130, 74, 'comp'],
+    ['re201', 190, 107, 'delay'],
+    ['plate', 110, 62, 'reverb'],
   ] as const) {
     const scale = 0.56;
     const slot = document.createElement('div');
-    slot.style.cssText = `width:314px;height:${slotH}px;position:relative;flex:none;`;
+    slot.dataset.rackSlot = rmodel;
+    slot.style.cssText = `width:314px;height:${slotH}px;position:relative;flex:none;cursor:pointer;`;
+    slot.title = `Clique para selecionar e editar o bloco ${rBlk.toUpperCase()} no Inspetor`;
+    slot.addEventListener('click', () => {
+      if (store.selectedBlock !== rBlk) store.selectBlock(rBlk);
+    });
     const inner = document.createElement('div');
     inner.style.cssText = `position:absolute;left:0;top:0;width:560px;height:${origH}px;transform:scale(${scale});transform-origin:0 0;`;
     inner.appendChild(createRackElement(rmodel, store));
@@ -858,6 +896,9 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   for (const ch of ['A', 'B', 'C', 'D'] as const) {
     const cb = makeChipButton('ui.inspector_channel', ch, store.activeInspectorCh === ch, () => {
       store.activeInspectorCh = ch;
+      if (store.selectedBlock === 'amp' && store.ampChannelModels[ch]) {
+        void store.setControl('amp.model', store.ampChannelModels[ch]);
+      }
       store.emit('full');
     });
     cb.className = 'm-chip m-osw';
@@ -867,6 +908,7 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   const chHint = document.createElement('span');
   chHint.style.cssText = 'font-size:10px;color:#9aa3ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
   chHint.textContent = 'cada canal guarda um modelo';
+  chHint.title = 'Quatro ajustes independentes para este bloco (trocáveis por Cena A–H).';
   chRow.appendChild(chHint);
 
   inspTopSec.append(inspHdr, refSub);
@@ -890,37 +932,53 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
     'margin-top:auto;border-radius:6px;padding:9px 10px;background:#0b0c0e;border:1px solid #1f242b;display:flex;flex-direction:column;gap:6px;';
   const modTop = document.createElement('div');
   modTop.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const modTargetLabel =
+    store.selectedBlock === 'amp'
+      ? 'GAIN'
+      : store.selectedBlock === 'drive'
+        ? 'DRIVE'
+        : store.selectedBlock === 'delay'
+          ? 'ECHO VOL'
+          : store.selectedBlock === 'reverb'
+            ? 'MIX'
+            : store.selectedBlock === 'chorus'
+              ? 'DEPTH'
+              : curDef.tag;
   const modTitle = document.createElement('span');
   modTitle.className = 'm-lbl';
   modTitle.style.cssText = 'font-size:9px;flex:1;';
-  modTitle.textContent = `Modifier · ${store.selectedBlock === 'amp' ? 'GAIN' : curDef.tag}`;
-  const modBtn = document.createElement('button');
-  modBtn.type = 'button';
-  modBtn.className = 'm-chip';
-  modBtn.dataset.controlId = 'modifier.toggle';
-  modBtn.disabled = true;
-  modBtn.title = 'em implementação — Spec 045';
+  modTitle.textContent = `Modifier · ${modTargetLabel}`;
+  const modBtn = makeChipButton('modifier.toggle', store.modifierOn ? 'ATIVO' : 'OFF', store.modifierOn, () => {
+    store.modifierOn = !store.modifierOn;
+    store.emit('full');
+  });
+  modBtn.title = 'Ativa ou desativa a modulação contínua sobre o parâmetro principal do bloco';
   modBtn.style.height = '20px';
-  modBtn.textContent = 'OFF';
   modTop.append(modTitle, modBtn);
 
   const modSources = document.createElement('div');
   modSources.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
   for (const sLblText of ['EXP 1', 'EXP 2', 'LFO 1', 'ENV', 'MIDI CC']) {
-    const sb = document.createElement('button');
-    sb.type = 'button';
+    const activeSrc = store.modifierSource === sLblText;
+    const sb = makeChipButton('modifier.source', sLblText, activeSrc, () => {
+      store.modifierSource = sLblText;
+      store.modifierOn = true;
+      store.emit('full');
+    });
     sb.className = 'm-chip m-mono';
-    sb.dataset.controlId = 'modifier.source';
-    sb.disabled = true;
-    sb.title = 'em implementação — Spec 045';
+    sb.title = `Controlar ${modTargetLabel} via ${sLblText}`;
     sb.style.cssText = 'height:20px;padding:0 5px;font-size:9.5px;';
-    sb.textContent = sLblText;
     modSources.appendChild(sb);
   }
   const modFoot = document.createElement('div');
   modFoot.className = 'm-mono';
   modFoot.style.cssText = 'font-size:9.5px;color:#9aa3ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-  modFoot.textContent = 'EXP 1 → faixa 20–80 % · Spec 045';
+  modFoot.textContent = store.modifierOn
+    ? `${store.modifierSource} → faixa 20–80 %`
+    : 'EXP 1 → faixa 20–80 %';
+  modFoot.title = store.modifierOn
+    ? `${store.modifierSource} controla ${modTargetLabel} (faixa 20–80%) · clique direito num knob para configurar`
+    : 'Controle em tempo real por pedal de expressão, LFO, envelope ou MIDI CC';
   modBox.append(modTop, modSources, modFoot);
 
   inspBotSec.append(paramsHdr, paramsBody, modBox);

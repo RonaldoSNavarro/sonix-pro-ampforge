@@ -68,10 +68,62 @@ function showMenuPopover(anchor: HTMLElement, store: AppStore, items: { label: s
   window.setTimeout(() => window.addEventListener('mousedown', closeOnOutside), 0);
 }
 
+function showEngineStatusModal(store: AppStore): void {
+  document.querySelectorAll('#sonix-engine-status-modal').forEach((el) => el.remove());
+  const overlay = document.createElement('div');
+  overlay.id = 'sonix-engine-status-modal';
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:990;background:rgba(0,0,0,0.72);display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.className = 'm-metal';
+  card.style.cssText =
+    'width:440px;border-radius:10px;border:1px solid #2b313a;padding:18px;color:#e8eaed;display:flex;flex-direction:column;gap:12px;box-shadow:0 16px 36px rgba(0,0,0,.85);';
+  const s = store.audioStatus;
+  const rtl = s.measured_roundtrip_ms ?? s.estimated_roundtrip_ms ?? 5.3;
+  const rtlKind = s.measured_roundtrip_ms != null ? 'medida (loopback)' : 'estimada (driver + DSP)';
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #22262c;padding-bottom:8px;">
+      <span class="m-osw" style="font-size:16px;font-weight:700;letter-spacing:.06em;">STATUS DO MOTOR DSP</span>
+      <span class="m-mono" style="font-size:11px;color:${s.connected !== false ? '#4ee680' : '#ff7b7b'};">${s.connected !== false ? 'ATIVO · ZERO-ALLOC RT' : 'DESCONECTADO'}</span>
+    </div>
+    <div class="m-mono" style="display:grid;grid-template-columns:160px 1fr;gap:6px 12px;font-size:11.5px;color:#c9ced4;">
+      <span style="color:#8a939e;">Backend / Modo:</span><span>${escHtml((s.backend || 'wasapi').toUpperCase())} (${escHtml(s.mode || 'wasapi_shared')})</span>
+      <span style="color:#8a939e;">Dispositivo Entrada:</span><span>${escHtml(s.input_device || 'Padrão do sistema')}</span>
+      <span style="color:#8a939e;">Dispositivo Saída:</span><span>${escHtml(s.output_device || 'Padrão do sistema')}</span>
+      <span style="color:#8a939e;">Taxa de Amostragem:</span><span>${s.sample_rate || 48000} Hz</span>
+      <span style="color:#8a939e;">Período (In / Out):</span><span>${s.input_period_frames || 128} / ${s.output_period_frames || 128} frames</span>
+      <span style="color:#8a939e;">Latência Ida-e-Volta:</span><span>${rtl.toFixed(2)} ms · ${rtlKind}</span>
+      <span style="color:#8a939e;">Uso médio de CPU:</span><span>${(store.telemetry.cpu_usage_pct ?? s.cpu_avg_pct ?? 0).toFixed(1)} %</span>
+      <span style="color:#8a939e;">Underruns / Overruns:</span><span>${s.underruns ?? 0} / ${s.overruns ?? 0}</span>
+      <span style="color:#8a939e;">Clips de Conversor:</span><span>${s.adc_clips ?? 0}</span>
+    </div>
+  `;
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:4px;';
+  const cfgBtn = document.createElement('button');
+  cfgBtn.type = 'button';
+  cfgBtn.className = 'm-chip';
+  cfgBtn.textContent = 'Configurações de Áudio…';
+  cfgBtn.addEventListener('click', () => {
+    overlay.remove();
+    store.setScreen('audio');
+  });
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'm-chip';
+  closeBtn.textContent = 'Fechar';
+  closeBtn.addEventListener('click', () => overlay.remove());
+  btnRow.append(cfgBtn, closeBtn);
+  card.appendChild(btnRow);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+}
+
 export function buildShell(appRoot: HTMLElement, store: AppStore): {
   titlebar: HTMLElement;
   menubar: HTMLElement;
   banner: HTMLElement;
+  toast: HTMLElement;
   host: HTMLElement;
   statusbar: HTMLElement;
   contextSpan: HTMLElement;
@@ -168,7 +220,21 @@ export function buildShell(appRoot: HTMLElement, store: AppStore): {
         { label: 'Estúdio (Ctrl+1)', screen: 'main' },
         { label: 'Chassi / Mod Shop (Ctrl+2)', screen: 'chassi' },
         { label: 'Sala de Microfonação (Ctrl+3)', screen: 'gabinete' },
-        { label: 'Palco / Afinador (Ctrl+4)', screen: 'palco' },
+        {
+          label: 'Palco · Cenas & Looper (Ctrl+4)',
+          action: () => {
+            store.palcoMode = 'stage';
+            store.setScreen('palco');
+          },
+        },
+        {
+          label: 'Afinador Cromático',
+          action: () => {
+            store.palcoMode = 'tuner';
+            store.setControl('tuner.enabled', true);
+            store.setScreen('palco');
+          },
+        },
         { label: 'Biblioteca & IRs (Ctrl+5)', screen: 'biblioteca' },
       ],
     },
@@ -189,15 +255,21 @@ export function buildShell(appRoot: HTMLElement, store: AppStore): {
     {
       label: 'Janela',
       items: [
-        { label: 'Modo Palco / Tela Cheia (F11)', screen: 'palco' },
+        {
+          label: 'Modo Palco / Tela Cheia (F11)',
+          action: () => {
+            store.palcoMode = 'stage';
+            store.setScreen('palco');
+          },
+        },
         { label: 'Alternar Maximizar', action: () => void store.transport.toggleMaximizeWindow() },
       ],
     },
     {
       label: 'Ajuda',
       items: [
-        { label: 'Inventário de controles (Spec 033)', screen: 'biblioteca' },
-        { label: 'Status do Motor Áudio', screen: 'audio' },
+        { label: 'Catálogo de Equipamentos & Fontes', screen: 'biblioteca' },
+        { label: 'Status do Motor de Áudio', action: () => showEngineStatusModal(store) },
       ],
     },
   ];
@@ -219,11 +291,19 @@ export function buildShell(appRoot: HTMLElement, store: AppStore): {
   bridgeStatusEl.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:10.5px;font-family:"JetBrains Mono",monospace;';
   menubar.append(menuLeft, bridgeStatusEl);
 
-  // 3. Disconnected Banner
+  // 3. Disconnected Banner (only for real IPC / device disconnect)
   const banner = document.createElement('div');
   banner.className = 'disconnect-banner';
+  banner.dataset.live = 'disconnect-banner';
   banner.style.display = 'none';
   banner.textContent = 'Motor DSP desconectado — tentando reconectar via IPC nativo...';
+
+  // 3b. Non-blocking Toast for validation / engine notices (CA-2)
+  const toast = document.createElement('div');
+  toast.className = 'sonix-notice-toast';
+  toast.dataset.toast = 'notice';
+  toast.style.cssText =
+    'display:none;position:fixed;bottom:34px;right:16px;z-index:950;max-width:420px;padding:8px 14px;border-radius:6px;background:#1c2128;border:1px solid #d49b38;color:#f3d28c;font-size:11.5px;box-shadow:0 8px 24px rgba(0,0,0,.65);pointer-events:none;';
 
   // 4. Screen Host
   const host = document.createElement('main');
@@ -234,8 +314,8 @@ export function buildShell(appRoot: HTMLElement, store: AppStore): {
   const statusbar = document.createElement('footer');
   statusbar.className = 'sonix-statusbar';
 
-  appRoot.append(titlebar, menubar, banner, host, statusbar);
-  return { titlebar, menubar, banner, host, statusbar, contextSpan, bridgeStatusEl };
+  appRoot.append(titlebar, menubar, banner, toast, host, statusbar);
+  return { titlebar, menubar, banner, toast, host, statusbar, contextSpan, bridgeStatusEl };
 }
 
 function renderActiveScreen(host: HTMLElement, store: AppStore): void {
@@ -320,6 +400,7 @@ function updateLiveReadouts(
     titlebar: HTMLElement;
     menubar: HTMLElement;
     banner: HTMLElement;
+    toast: HTMLElement;
     statusbar: HTMLElement;
     contextSpan: HTMLElement;
     bridgeStatusEl: HTMLElement;
@@ -348,6 +429,15 @@ function updateLiveReadouts(
     refs.banner.style.display = 'none';
   }
 
+  if (store.notice) {
+    refs.toast.style.display = 'block';
+    refs.toast.dataset.noticeKind = store.notice.kind;
+    refs.toast.textContent = store.notice.text;
+  } else {
+    refs.toast.style.display = 'none';
+    refs.toast.textContent = '';
+  }
+
   const cpuPct = store.telemetry.cpu_usage_pct ?? 0;
   appRoot.querySelectorAll<HTMLElement>('[data-live="cpu-pct"]').forEach((el) => {
     el.textContent = `${cpuPct.toFixed(1)}%`;
@@ -360,6 +450,28 @@ function updateLiveReadouts(
   const gateGrDb = store.telemetry.gate_gr_db ?? (gateOpen ? 0 : -18.2);
   appRoot.querySelectorAll<HTMLElement>('[data-live="gate-gr"]').forEach((el) => {
     el.textContent = `GR ${gateGrDb.toFixed(1)} dB`;
+  });
+
+  // Sincroniza knobs e sliders de parâmetros contínuos sem desmontar o DOM (Spec 051, CA-8 / CA-10).
+  appRoot.querySelectorAll<HTMLElement>('sonix-knob[data-control-id]').forEach((el) => {
+    const cid = el.getAttribute('data-control-id');
+    if (!cid) return;
+    const desc = store.getDescriptor(cid);
+    const key = desc?.backendKey ?? cid;
+    const val = store.params[key];
+    if (typeof val === 'number' && Number.isFinite(val)) {
+      (el as unknown as { syncExternalValue?: (v: number) => void }).syncExternalValue?.(val);
+    }
+  });
+  appRoot.querySelectorAll<HTMLElement>('.m-track[data-control-id]').forEach((el) => {
+    const cid = el.getAttribute('data-control-id');
+    if (!cid) return;
+    const desc = store.getDescriptor(cid);
+    const key = desc?.backendKey ?? cid;
+    const val = store.params[key];
+    if (typeof val === 'number' && Number.isFinite(val)) {
+      (el as unknown as { __syncSliderValue?: (v: number) => void }).__syncSliderValue?.(val);
+    }
   });
 
   const inDb = store.telemetry.input_peak_db ?? -60;
@@ -399,14 +511,25 @@ function updateLiveReadouts(
           ? ' low-latency'
           : '';
     const backendLabel = `${escHtml((store.audioStatus.backend || 'WASAPI').toUpperCase())}${modeSuffix}`;
-    const deviceLabel = escHtml(store.audioStatus.output_device || 'sem dispositivo');
+    const inDev = store.audioStatus.input_device;
+    const outDev = store.audioStatus.output_device || 'sem dispositivo';
+    const deviceLabel =
+      inDev && inDev !== outDev
+        ? `${escHtml(inDev)} → ${escHtml(outDev)}`
+        : escHtml(outDev);
     const gateTxt = gateOpen ? 'aberto' : 'fechado';
     const peakStr = inDb <= -100 ? '—' : inDb.toFixed(1);
     const xruns = store.audioStatus.underruns ?? 0;
     const streamRunning = Boolean(store.audioStatus.connected && store.audioStatus.output_device);
     const motorLabel = streamRunning ? 'Motor ativo' : 'Motor parado';
     const motorColor = streamRunning ? '#29c46a' : '#6c7580';
-    const calLabel = store.calibrationWizard.phase === 'done' ? 'entrada calibrada' : 'não calibrada';
+    const isCalibrated = store.calibrationWizard.phase === 'done';
+    const isLowSignal = !isCalibrated && inDb > -99 && inDb < -24;
+    const calLabel = isCalibrated
+      ? 'entrada calibrada'
+      : isLowSignal
+        ? '<b style="color:#ffae42;">sinal baixo — calibre a entrada</b>'
+        : 'não calibrada';
 
     refs.statusbar.style.paddingBottom = '2px';
     refs.statusbar.innerHTML = `

@@ -8,8 +8,8 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "node --test tests/contract/*.test.js",
-    "test:contract": "node --test tests/contract/*.test.js",
+    "test": "node --test tests/contract/",
+    "test:contract": "node --test tests/contract/",
     "cargo:test": "cargo test --workspace",
     "cargo:check": "cargo check --workspace"
   },

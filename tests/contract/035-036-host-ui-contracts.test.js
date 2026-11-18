@@ -294,8 +294,8 @@ test('Spec 035 CA-7 & Spec 036 CA-4, CA-7, CA-9: Audio.ts com lista vazia, modos
   assert.ok(asioOpt, 'Opção ASIO deve existir no seletor de modo/driver');
   assert.equal(asioOpt.disabled, true, 'Spec 036 CA-7: modo ASIO não suportado deve estar disabled');
   assert.ok(
-    (asioOpt.title || '').includes('Spec 036'),
-    'Spec 036 CA-7: opção desabilitada deve conter dica referenciando Spec 036'
+    (asioOpt.title || '').includes('indisponível') || (asioOpt.title || '').includes('driver ASIO'),
+    'Spec 036 CA-7 / Spec 051 CA-24: opção desabilitada deve conter dica clara em português sem jargão Spec 0NN'
   );
 });
 

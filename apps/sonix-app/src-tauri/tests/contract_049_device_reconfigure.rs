@@ -138,12 +138,18 @@ fn ca5_fallback_worker_stops_and_joins_within_50ms_on_set_audio_device() {
 
     // 1. Mede diretamente stop_and_join() <= 50 ms
     let running1 = Arc::new(AtomicBool::new(true));
+    let started1 = Arc::new(AtomicBool::new(false));
     let r1 = running1.clone();
+    let s1 = started1.clone();
     let h1 = thread::spawn(move || {
+        s1.store(true, Ordering::SeqCst);
         while r1.load(Ordering::Relaxed) {
             thread::park_timeout(Duration::from_millis(3));
         }
     });
+    while !started1.load(Ordering::SeqCst) {
+        thread::yield_now();
+    }
     let fb1 = FallbackWorkerControl {
         running: running1.clone(),
         worker: Mutex::new(Some(h1)),

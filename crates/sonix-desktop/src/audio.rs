@@ -2188,6 +2188,10 @@ pub enum DspParamUpdate {
     Pitch1Mix(f32),
     LooperPosition(LooperPosition),
     LooperAction(LooperActionCmd),
+    MasterLevelDb(f32),
+    Cab2ResonanceHz(f32),
+    Cab2HicutKhz(f32),
+    Exp1Value(f32),
     BeginPresetCrossfade,
     TriggerPresetCrossfade,
 }
@@ -2201,6 +2205,8 @@ pub enum LooperActionCmd {
     Stop,
     Undo,
     Redo,
+    Reverse,
+    HalfSpeed,
     Clear,
 }
 
@@ -2527,6 +2533,7 @@ pub struct RealtimeDspChain {
     merge: MixerNode,
     merge_row_1_level_db: f32,
     merge_row_1_phase_invert: bool,
+    master_level_db: f32,
     dly_1: DelayProcessor,
     dly_1_enabled: bool,
     rev_1: ReverbProcessor,
@@ -2769,6 +2776,7 @@ impl RealtimeDspChain {
             merge,
             merge_row_1_level_db: -6.0,
             merge_row_1_phase_invert: false,
+            master_level_db: 0.0,
             dly_1,
             dly_1_enabled: false,
             rev_1,
@@ -3388,6 +3396,26 @@ impl RealtimeDspChain {
                 self.shared_algo_latency_samples
                     .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
             }
+            DspParamUpdate::MasterLevelDb(db) => {
+                if db.is_finite() {
+                    self.master_level_db = db.clamp(-60.0, 12.0);
+                }
+            }
+            DspParamUpdate::Cab2ResonanceHz(hz) => {
+                if hz.is_finite() {
+                    self.cab_2.set_resonance_hz(hz);
+                }
+            }
+            DspParamUpdate::Cab2HicutKhz(khz) => {
+                if khz.is_finite() {
+                    self.cab_2.set_hicut_khz(khz);
+                }
+            }
+            DspParamUpdate::Exp1Value(norm) => {
+                if norm.is_finite() {
+                    self.modifier_exp1 = norm.clamp(0.0, 1.0);
+                }
+            }
             DspParamUpdate::BeginPresetCrossfade | DspParamUpdate::TriggerPresetCrossfade => {}
         }
     }
@@ -3426,6 +3454,7 @@ impl RealtimeDspChain {
         std::mem::swap(&mut self.merge, &mut other.merge);
         std::mem::swap(&mut self.merge_row_1_level_db, &mut other.merge_row_1_level_db);
         std::mem::swap(&mut self.merge_row_1_phase_invert, &mut other.merge_row_1_phase_invert);
+        std::mem::swap(&mut self.master_level_db, &mut other.master_level_db);
         std::mem::swap(&mut self.pitch_1, &mut other.pitch_1);
         std::mem::swap(&mut self.pitch_1_enabled, &mut other.pitch_1_enabled);
         std::mem::swap(&mut self.modifier_base_values, &mut other.modifier_base_values);
@@ -4264,18 +4293,22 @@ impl RealtimeDspChain {
             LooperActionCmd::Stop => self.looper.stop(),
             LooperActionCmd::Undo => self.looper.undo(),
             LooperActionCmd::Redo => self.looper.redo(),
+            LooperActionCmd::Reverse => self.looper.set_reverse(!self.looper.is_reverse()),
+            LooperActionCmd::HalfSpeed => self.looper.set_half_speed(!self.looper.is_half_speed()),
             LooperActionCmd::Clear => self.looper.clear(),
         }
     }
 
     pub fn trigger_looper_action(&mut self, action: &str) {
         let cmd = match action {
-            "record" => Some(LooperActionCmd::Record),
+            "record" | "rec" => Some(LooperActionCmd::Record),
             "play" => Some(LooperActionCmd::Play),
             "overdub" => Some(LooperActionCmd::Overdub),
             "stop" => Some(LooperActionCmd::Stop),
             "undo" => Some(LooperActionCmd::Undo),
             "redo" => Some(LooperActionCmd::Redo),
+            "reverse" => Some(LooperActionCmd::Reverse),
+            "half_speed" => Some(LooperActionCmd::HalfSpeed),
             "clear" => Some(LooperActionCmd::Clear),
             _ => None,
         };
@@ -4483,6 +4516,18 @@ impl RealtimeDspChain {
                 .process(&self.temp_reverb_buf[..len], &mut output[..len]);
         } else {
             output[..len].copy_from_slice(&self.temp_reverb_buf[..len]);
+        }
+
+        // 8b. Trim de Nível Master de saída (Spec 051, CA-11)
+        if self.master_level_db.abs() > 1e-4 {
+            let master_gain = if self.master_level_db <= -59.9 {
+                0.0
+            } else {
+                10.0f32.powf(self.master_level_db / 20.0)
+            };
+            for s in output[..len].iter_mut() {
+                *s *= master_gain;
+            }
         }
 
         // 9. Limitador de Saída Segura + defesa NaN/Inf

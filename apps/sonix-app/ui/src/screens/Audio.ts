@@ -114,10 +114,10 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     driverSel.style.cssText = selStyle;
     driverSel.dataset.controlId = 'audio.device_apply';
     const drivers: Array<[string, string, boolean, string]> = [
-      ['wasapi_shared', 'WASAPI Shared', Boolean(caps.wasapi_shared), ''],
-      ['wasapi_shared_low_latency', 'WASAPI Shared Low-Latency', Boolean(caps.wasapi_shared_low_latency), ''],
-      ['wasapi_exclusive', 'WASAPI Exclusive (Spec 036)', Boolean(caps.wasapi_exclusive), 'Indisponível (Spec 036)'],
-      ['asio', 'ASIO (Driver Nativo)', Boolean(caps.asio), 'Indisponível (Spec 036 / Spec 049 CA-36)'],
+      ['wasapi_shared', 'WASAPI Compartilhado', Boolean(caps.wasapi_shared), ''],
+      ['wasapi_shared_low_latency', 'WASAPI Compartilhado (Baixa Latência)', Boolean(caps.wasapi_shared_low_latency), ''],
+      ['wasapi_exclusive', 'WASAPI Exclusivo', Boolean(caps.wasapi_exclusive), 'Indisponível para este dispositivo'],
+      ['asio', 'ASIO (Driver Nativo)', Boolean(caps.asio), 'Indisponível — requer interface e driver ASIO instalado'],
     ];
     for (const [val, text, supported, titleHint] of drivers) {
       const opt = document.createElement('option');
@@ -339,44 +339,75 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     topCard.append(srcCol, boostCol, lvlCol);
     pane.appendChild(topCard);
 
-    // Bottom Card: Assistente de Calibracao
+    // Bottom Card: Assistente de Calibracao (Spec 051, CA-1: fluxo real begin → silence → strum)
+    const wiz = store.calibrationWizard;
     const calCard = document.createElement('div');
     calCard.style.cssText = `${aPanelCss}padding:16px 18px;display:flex;flex-direction:column;gap:14px;`;
+    const barOn = (n: number) =>
+      wiz.phase === 'done' || (wiz.phase === 'running' && wiz.step >= n) ? '#57ffb0' : '#1a1d22';
+    const stepTxt = (n: number) => (wiz.phase !== 'idle' && wiz.step === n ? '#e8eaed' : '#a3abb4');
+    const stepNow = wiz.phase === 'idle' ? 1 : wiz.step;
     calCard.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px">
         <span class="m-osw" style="font-size:16px;font-weight:600;letter-spacing:.06em;flex:1">ASSISTENTE DE CALIBRAÇÃO</span>
-        <span class="m-mono" style="font-size:11px;color:#a3abb4">passo 1 de 3</span>
+        <span class="m-mono" style="font-size:11px;color:#a3abb4">passo ${stepNow} de 3</span>
       </div>
       <div style="display:flex;gap:8px">
-        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:#3a404a"></div><span style="font-size:11px;font-weight:600;color:#e8eaed">1 · Silêncio (3 s)</span></div>
-        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:#1a1d22"></div><span style="font-size:11px;font-weight:600;color:#a3abb4">2 · Tocar forte (5 s)</span></div>
-        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:#1a1d22"></div><span style="font-size:11px;font-weight:600;color:#a3abb4">3 · Resultado</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:${barOn(1)}"></div><span style="font-size:11px;font-weight:600;color:${stepTxt(1)}">1 · Silêncio (3 s)</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:${barOn(2)}"></div><span style="font-size:11px;font-weight:600;color:${stepTxt(2)}">2 · Tocar forte (5 s)</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:${wiz.phase === 'done' ? '#57ffb0' : '#1a1d22'}"></div><span style="font-size:11px;font-weight:600;color:${wiz.phase === 'done' ? '#e8eaed' : '#a3abb4'}">3 · Resultado</span></div>
       </div>
     `;
+
+    let ringBig = '—';
+    let title = 'Pronto para calibrar';
+    let desc =
+      'Guitarra ligada, volume no máximo. O assistente mede 3 s de silêncio (piso de ruído e hum) e 5 s tocando forte (pico), e ajusta o boost de entrada e o gate.';
+    if (wiz.phase === 'running' && wiz.step === 1) {
+      ringBig = '1';
+      title = 'Silêncio: abafe as cordas';
+      desc = 'Medindo piso de ruído e hum (50/60 Hz) durante 3 s…';
+    } else if (wiz.phase === 'running' && wiz.step === 2) {
+      ringBig = '2';
+      title = 'Toque forte, todas as cordas';
+      desc = `Capturando o pico do sinal durante 5 s…${wiz.noiseFloorDb !== null ? ` (piso medido: ${wiz.noiseFloorDb.toFixed(1)} dB)` : ''}`;
+    } else if (wiz.phase === 'done' && wiz.result) {
+      const r = wiz.result as Record<string, unknown>;
+      ringBig = '✓';
+      title = 'Calibração concluída e aplicada';
+      const f = (v: unknown, d = 1) => (typeof v === 'number' ? v.toFixed(d) : '—');
+      desc = `Boost ${f(r.proposed_boost, 2)}× · gate ${f(r.proposed_gate_threshold_db)} dB · pico bruto ${f(r.raw_peak_db)} dBFS · piso ${f(r.noise_floor_rms_db)} dB · diagnóstico: ${String(r.diagnostic ?? 'ok')}`;
+    }
+    if (wiz.error) {
+      ringBig = '!';
+      title = 'A calibração não pôde ser concluída';
+      desc = wiz.error;
+    }
 
     const calStepBox = document.createElement('div');
     calStepBox.style.cssText = 'display:flex;align-items:center;gap:18px;';
     calStepBox.innerHTML = `
-      <div style="width:92px;height:92px;border-radius:50%;background:conic-gradient(#57ffb0 0deg,#1a1d22 0);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <div style="width:92px;height:92px;border-radius:50%;background:conic-gradient(${wiz.error ? '#ff5e5e' : '#57ffb0'} ${wiz.phase === 'done' || wiz.error ? 360 : wiz.phase === 'running' ? (wiz.step === 1 ? 120 : 240) : 0}deg,#1a1d22 0);display:flex;align-items:center;justify-content:center;flex-shrink:0">
         <div style="width:74px;height:74px;border-radius:50%;background:#0d0f12;display:flex;align-items:center;justify-content:center">
-          <span class="m-mono" style="font-size:22px;font-weight:700;color:#57ffb0">—</span>
+          <span class="m-mono" style="font-size:22px;font-weight:700;color:${wiz.error ? '#ff7b7b' : '#57ffb0'}">${ringBig}</span>
         </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;flex:1">
-        <span style="font-size:15px;font-weight:600">Silêncio: abafe as cordas</span>
-        <span style="font-size:12px;color:#a3abb4;line-height:1.5">Guitarra ligada, volume no máximo, sem tocar — medindo piso de ruído e hum (50/60 Hz).</span>
+        <span data-calib-title style="font-size:15px;font-weight:600">${title}</span>
+        <span data-calib-desc style="font-size:12px;color:${wiz.error ? '#ff9b9b' : '#a3abb4'};line-height:1.5"></span>
       </div>
     `;
-    const calBtn = makeChipButton('audio.calibrate_input', 'Iniciar', false, async () => {
-      try {
-        await store.transport.calibrateInput({ action: 'start' });
-        const st = await store.transport.getAudioStatus();
-        if (st && typeof st === 'object') Object.assign(store.audioStatus, st);
-        store.emit('status');
-      } catch {
-        store.emit('status');
-      }
-    });
+    (calStepBox.querySelector('[data-calib-desc]') as HTMLElement).textContent = desc;
+    const running = wiz.phase === 'running';
+    const calBtn = makeChipButton(
+      'audio.calibrate_input',
+      running ? 'Medindo…' : wiz.phase === 'done' || wiz.error ? 'Refazer' : 'Iniciar',
+      false,
+      () => {
+        void store.runCalibrationWizard();
+      },
+    );
+    calBtn.disabled = running;
     calBtn.style.cssText =
       'height:40px;padding:0 18px;border-radius:6px;background:linear-gradient(180deg,#ffa25c,#e46d1f);border:1px solid #6b2c05;color:#1a0b01;font-weight:700;font-size:12px;cursor:pointer;';
     calStepBox.appendChild(calBtn);
@@ -394,19 +425,64 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       'border-radius:8px;background:#121417;border:1px solid #1f242b;padding:16px;display:flex;flex-direction:column;gap:12px;';
     perfCard.innerHTML = '<span class="m-lbl" style="font-size:10px;letter-spacing:.12em">DESEMPENHO &amp; OVERSAMPLING DSP</span>';
     const curOs = str(store, 'engine.oversampling', '4x');
+    const osMeta: Record<string, { label: string; desc: string }> = {
+      '2x': { label: '2X · Econômico (96 kHz)', desc: 'Latência algorítmica: 4 amostras (0,08 ms @ 48 kHz) · menor uso de CPU.' },
+      '4x': { label: '4X · Equilibrado (192 kHz · Padrão)', desc: 'Latência algorítmica: 8 amostras (0,17 ms @ 48 kHz) · recomendado ao vivo.' },
+      '8x': { label: '8X · Ultra Qualidade (384 kHz)', desc: 'Latência algorítmica: 16 amostras (0,33 ms @ 48 kHz) · máxima supressão de aliasing em alto ganho.' },
+    };
     const osRow = document.createElement('div');
-    osRow.style.cssText = 'display:flex;gap:6px;';
-    for (const os of ['2x', '4x', '8x']) {
-      osRow.appendChild(makeChipButton('topbar.oversampling', os.toUpperCase(), curOs === os, () => store.setControl('topbar.oversampling', os)));
+    osRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+    for (const os of ['2x', '4x', '8x'] as const) {
+      const b = makeChipButton('topbar.oversampling', osMeta[os].label, curOs === os, () => store.setControl('topbar.oversampling', os));
+      b.style.cssText += ';height:32px;padding:0 12px;font-size:11px;';
+      osRow.appendChild(b);
     }
+    const osDesc = document.createElement('div');
+    osDesc.className = 'm-mono';
+    osDesc.style.cssText = 'font-size:11px;color:#a3abb4;line-height:1.5;';
+    osDesc.textContent = osMeta[curOs]?.desc ?? osMeta['4x'].desc;
+
+    const diCard = document.createElement('div');
+    diCard.style.cssText =
+      'border-radius:8px;background:#121417;border:1px solid #1f242b;padding:16px;display:flex;flex-direction:column;gap:10px;';
+    diCard.innerHTML = `
+      <span class="m-lbl" style="font-size:10px;letter-spacing:.12em">ARQUIVO WAV DI (REAMP / TESTE)</span>
+      <span style="font-size:11px;color:#a3abb4;line-height:1.4">Carrega uma gravação DI limpa (.wav) para alimentar a entrada do rig em loop contínuo.</span>
+    `;
     const loadIrDi = makeChipButton('cab.ir_load', 'Abrir Arquivo WAV DI...', false, async () => {
+      try {
+        const path = await store.transport.openFileDialog([{ name: 'WAV Audio', extensions: ['wav'] }]);
+        if (path) {
+          const bytes = await store.transport.readFileBytes(path);
+          await store.transport.setInputDi({ path, bytes });
+          store.setControl('main.input_source', 'di_file');
+          store.pushNotice('Arquivo WAV DI carregado e ativado na entrada.', 'info');
+          return;
+        }
+      } catch {
+        // fallback input file
+      }
       const inp = document.createElement('input');
       inp.type = 'file';
       inp.accept = '.wav';
+      inp.onchange = async () => {
+        const f = inp.files?.[0];
+        if (!f) return;
+        try {
+          await store.transport.setInputDi({ name: f.name });
+          store.setControl('main.input_source', 'di_file');
+          store.pushNotice(`Arquivo DI “${f.name}” ativado.`, 'info');
+        } catch {
+          store.emit('status');
+        }
+      };
       inp.click();
     });
-    perfCard.append(osRow, loadIrDi);
-    pane.appendChild(perfCard);
+    loadIrDi.style.cssText += ';align-self:flex-start;height:32px;padding:0 14px;font-size:11.5px;';
+    diCard.appendChild(loadIrDi);
+
+    perfCard.append(osRow, osDesc);
+    pane.append(perfCard, diCard);
   }
 
   body.append(sidebar, pane);

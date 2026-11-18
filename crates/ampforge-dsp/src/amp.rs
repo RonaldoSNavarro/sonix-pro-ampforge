@@ -1309,9 +1309,11 @@ impl WhiteBoxAmpProcessor {
         let tube_alpha = (1.0 / (fs_base * 0.008)).clamp(0.0005, 0.05);
         let v1_headroom = ((self.mod_settings.preamp_plate_v as f64 / 250.0) * variac_scale).max(0.1);
         let asym = self.mod_settings.triode_asym as f64;
-        let bias_deficit = ((28.0 - self.mod_settings.bias_ma as f64) / 8.0).clamp(0.0, 1.0);
-        let crossover_depth = bias_deficit * 0.70;
-        let crossover_width = 0.025;
+        let bias_ma_f = self.mod_settings.bias_ma as f64;
+        let bias_deficit = ((32.0 - bias_ma_f) / 12.0).clamp(0.0, 1.0);
+        let crossover_depth = bias_deficit * 0.72;
+        let crossover_width = 0.18;
+        let bias_warm_drive = 1.0 + ((bias_ma_f - 40.0).max(0.0) / 24.0).min(0.25);
 
         // Sample-rate-invariant coefficients for base-rate filters (Spec 039 CA-4)
         let alpha_bright = (1.0 - (-2.0 * std::f64::consts::PI * 1200.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
@@ -1568,7 +1570,7 @@ impl WhiteBoxAmpProcessor {
                 };
 
                 // 4. Power Amp / Phase Inverter Stage with Bias Crossover, Tremolo & ADAA tanh
-                let power_in_raw = v_post_cut * power_saturation_drive * trem_mod;
+                let power_in_raw = v_post_cut * power_saturation_drive * bias_warm_drive * trem_mod;
                 let power_in = if crossover_depth > 1e-4 {
                     let dip = (-0.5 * (power_in_raw / crossover_width).powi(2)).exp();
                     power_in_raw * (1.0 - crossover_depth * dip)

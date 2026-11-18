@@ -11,7 +11,7 @@ specs** (que é o changelog do projeto) estão em `specs/README.md` — leia-o a
 - **Regime SDD + TDD estrito:** cada `CA-n` vira um teste que falha antes da implementação (*red → green*).
 - Spec e implementação são revisadas no **mesmo PR**.
 
-> **Estado atual (2026-11-15):** Specs 001–050 implementadas, incluindo todas as correções pós-review R1–R9 (Spec 049) e S1–S7 (Spec 050) de `docs/handoff/ANTIGRAVITY-050-pos-review.md` (handoff encerrado). Workspace Rust (`cargo test --workspace`) e suíte JS (`node --test tests/contract/`: 93/93) verdes, além de build release `sonix-app --features custom-protocol` verificado. Restam apenas `CA-36` (ASIO hardware/SDK `CPAL_ASIO_DIR`) e validadores externos `clap-validator`/VST3 SDK `validator` como `[verificação pendente]` nesta estação. Design de referência em `docs/ui-desktop/canvas/`, renderizado em `docs/ui-desktop/referencia/`.
+> **Estado atual (2026-11-17):** Specs 001–051 implementadas (Spec 052 aprovada aguardando autorização de implementação), incluindo todas as correções T-00 a T-26 do teste manual de 2026-11-16 (`docs/handoff/ANTIGRAVITY-051-teste-manual-2026-11-16.md`). Workspace Rust (`cargo test --workspace`) e suíte JS (`npm test`: 116/116 testes em 29 suítes) verdes, além de build release `sonix-app --features custom-protocol` verificado. Restam apenas `CA-36` (ASIO hardware/SDK `CPAL_ASIO_DIR`), medição física por cabo loopback (`T-25`) e validadores externos `clap-validator`/VST3 SDK `validator` como `[verificação pendente]` nesta estação. Design de referência em `docs/ui-desktop/canvas/`, renderizado em `docs/ui-desktop/referencia/`.
 
 
 

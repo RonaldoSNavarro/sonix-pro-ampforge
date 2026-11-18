@@ -81,7 +81,9 @@ fn response_to_result(resp: CommandResponse) -> Result<Value, String> {
             .and_then(|v| v.as_str())
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("IPC status {}: {}", resp.status, resp.body));
-        Err(msg)
+        // Spec 051 T-02: o IPC respondeu; a UI precisa distinguir rejeição de queda do IPC.
+        let prefix = if resp.status < 500 { "E_VALIDATION:" } else { "E_ENGINE:" };
+        Err(format!("{prefix}{msg}"))
     } else {
         Ok(parsed)
     }

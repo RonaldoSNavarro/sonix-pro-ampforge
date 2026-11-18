@@ -1,0 +1,531 @@
+{
+  "enum_options": [
+    {
+      "key": "scene.active",
+      "options": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H"
+      ]
+    },
+    {
+      "key": "engine.oversampling",
+      "options": [
+        "2x",
+        "4x",
+        "8x"
+      ]
+    },
+    {
+      "key": "input.source",
+      "options": [
+        "device",
+        "test_riff",
+        "di_file"
+      ]
+    },
+    {
+      "key": "input.mode",
+      "options": [
+        "instrument",
+        "line"
+      ]
+    },
+    {
+      "key": "amp_1.model",
+      "options": [
+        "plexi_1959",
+        "jcm800_2203",
+        "twin_ab763",
+        "dual_rect",
+        "ac30_tb"
+      ]
+    },
+    {
+      "key": "amp_1.input_jack",
+      "options": [
+        "high",
+        "low",
+        "high1",
+        "low1",
+        "high2",
+        "low2",
+        "jumpered",
+        "normal_high",
+        "normal_low",
+        "brilliant_high",
+        "brilliant_low",
+        "normal",
+        "vibrato"
+      ]
+    },
+    {
+      "key": "amp_1.channel_mode",
+      "options": [
+        "clean",
+        "pushed",
+        "vintage",
+        "modern"
+      ]
+    },
+    {
+      "key": "amp_1.preamp_tube",
+      "options": [
+        "12ax7",
+        "ecc83",
+        "12at7",
+        "12ay7",
+        "ef86",
+        "ef86_variant"
+      ]
+    },
+    {
+      "key": "amp_1.power_tube",
+      "options": [
+        "el34",
+        "6l6gc",
+        "kt88",
+        "el84_variant"
+      ]
+    },
+    {
+      "key": "amp_1.rectifier",
+      "options": [
+        "diode",
+        "gz34",
+        "5u4gb"
+      ]
+    },
+    {
+      "key": "amp_1.impedance_ohms",
+      "options": [
+        "4",
+        "8",
+        "16"
+      ]
+    },
+    {
+      "key": "amp_1.tonestack",
+      "options": [
+        "model",
+        "marshall",
+        "fender",
+        "vox",
+        "baxandall"
+      ]
+    },
+    {
+      "key": "gate.mode",
+      "options": [
+        "natural",
+        "classic"
+      ]
+    },
+    {
+      "key": "drive.model",
+      "options": [
+        "ts808",
+        "klon",
+        "rat",
+        "muff",
+        "fuzzface",
+        "ds1"
+      ]
+    },
+    {
+      "key": "mod_2.model",
+      "options": [
+        "AnalogBbdChorus",
+        "StereoTriChorus",
+        "ThroughZeroFlanger",
+        "Orange90Phaser",
+        "OpticalBiasTremolo",
+        "PhotocellUnivibe",
+        "RotarySpeaker"
+      ]
+    },
+    {
+      "key": "pitch_1.model",
+      "options": [
+        "whammy",
+        "drop_capo",
+        "harmonizer",
+        "micro_detune"
+      ]
+    },
+    {
+      "key": "pitch_1.key",
+      "options": [
+        "C",
+        "C#",
+        "D",
+        "D#",
+        "E",
+        "F",
+        "F#",
+        "G",
+        "G#",
+        "A",
+        "A#",
+        "B"
+      ]
+    },
+    {
+      "key": "pitch_1.scale",
+      "options": [
+        "major",
+        "natural_minor",
+        "harmonic_minor",
+        "melodic_minor",
+        "dorian",
+        "phrygian",
+        "lydian",
+        "mixolydian",
+        "locrian"
+      ]
+    },
+    {
+      "key": "eq_1.mode",
+      "options": [
+        "eight_band",
+        "graphic_5_boogie",
+        "mxr_10band"
+      ]
+    },
+    {
+      "key": "comp_2.ratio",
+      "options": [
+        "4",
+        "8",
+        "12",
+        "20",
+        "all"
+      ]
+    },
+    {
+      "key": "dly_1.mode",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12"
+      ]
+    },
+    {
+      "key": "split.mode",
+      "options": [
+        "ab",
+        "crossover",
+        "dynamic_split"
+      ]
+    },
+    {
+      "key": "cab_1.speaker",
+      "options": [
+        "greenback_4x12",
+        "v30_4x12",
+        "alnico_blue_2x12",
+        "twin_2x12_open"
+      ]
+    },
+    {
+      "key": "cab_1.mic1.model",
+      "options": [
+        "sm57",
+        "md421",
+        "m88",
+        "r121",
+        "m160",
+        "u87",
+        "c414"
+      ]
+    },
+    {
+      "key": "cab_1.mic1.angle_deg",
+      "options": [
+        "0",
+        "45"
+      ]
+    },
+    {
+      "key": "cab_1.mic2.model",
+      "options": [
+        "sm57",
+        "md421",
+        "m88",
+        "r121",
+        "m160",
+        "u87",
+        "c414"
+      ]
+    },
+    {
+      "key": "cab_1.mic2.angle_deg",
+      "options": [
+        "0",
+        "45"
+      ]
+    },
+    {
+      "key": "tuner.output",
+      "options": [
+        "mute",
+        "bypass"
+      ]
+    },
+    {
+      "key": "looper.action",
+      "options": [
+        "record",
+        "play",
+        "overdub",
+        "stop",
+        "undo",
+        "redo",
+        "reverse",
+        "half_speed",
+        "clear"
+      ]
+    },
+    {
+      "key": "looper.position",
+      "options": [
+        "pre",
+        "post"
+      ]
+    },
+    {
+      "key": "amp_2.model",
+      "options": [
+        "plexi_1959",
+        "jcm800_2203",
+        "twin_ab763",
+        "dual_rect",
+        "ac30_tb"
+      ]
+    },
+    {
+      "key": "cab_2.speaker",
+      "options": [
+        "greenback_4x12",
+        "v30_4x12",
+        "alnico_blue_2x12",
+        "twin_2x12_open"
+      ]
+    }
+  ],
+  "param_writes": [
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.model",
+      "value": "plexi_1959"
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.jumpered",
+      "value": false
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.input_jack",
+      "value": "high1"
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.jumpered",
+      "value": false
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.input_jack",
+      "value": "high2"
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.jumpered",
+      "value": false
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.input_jack",
+      "value": "low1"
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.jumpered",
+      "value": false
+    },
+    {
+      "source": "AmpHead:plexi_1959",
+      "key": "amp_1.input_jack",
+      "value": "low2"
+    },
+    {
+      "source": "AmpHead:jcm800_2203",
+      "key": "amp_1.model",
+      "value": "jcm800_2203"
+    },
+    {
+      "source": "AmpHead:jcm800_2203",
+      "key": "amp_1.input_jack",
+      "value": "high"
+    },
+    {
+      "source": "AmpHead:jcm800_2203",
+      "key": "amp_1.input_jack",
+      "value": "low"
+    },
+    {
+      "source": "AmpHead:twin_ab763",
+      "key": "amp_1.model",
+      "value": "twin_ab763"
+    },
+    {
+      "source": "AmpHead:twin_ab763",
+      "key": "amp_1.input_jack",
+      "value": "normal"
+    },
+    {
+      "source": "AmpHead:twin_ab763",
+      "key": "amp_1.input_jack",
+      "value": "vibrato"
+    },
+    {
+      "source": "AmpHead:dual_rect",
+      "key": "amp_1.model",
+      "value": "dual_rect"
+    },
+    {
+      "source": "AmpHead:ac30_tb",
+      "key": "amp_1.model",
+      "value": "ac30_tb"
+    },
+    {
+      "source": "AmpHead:ac30_tb",
+      "key": "amp_1.input_jack",
+      "value": "vibrato"
+    },
+    {
+      "source": "AmpHead:ac30_tb",
+      "key": "amp_1.input_jack",
+      "value": "normal"
+    },
+    {
+      "source": "Bancada:circuit",
+      "key": "amp_1.tonestack",
+      "value": "model"
+    },
+    {
+      "source": "Bancada:circuit",
+      "key": "amp_1.tonestack",
+      "value": "baxandall"
+    },
+    {
+      "source": "Bancada:circuit",
+      "key": "amp_1.tonestack",
+      "value": "fender"
+    },
+    {
+      "source": "Bancada:circuit",
+      "key": "amp_1.tonestack",
+      "value": "marshall"
+    },
+    {
+      "source": "Bancada:circuit",
+      "key": "amp_1.tonestack",
+      "value": "vox"
+    }
+  ],
+  "commands": [
+    {
+      "source": "store.selectScene(A)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "A"
+      }
+    },
+    {
+      "source": "store.selectScene(B)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "B"
+      }
+    },
+    {
+      "source": "store.selectScene(C)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "C"
+      }
+    },
+    {
+      "source": "store.selectScene(D)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "D"
+      }
+    },
+    {
+      "source": "store.selectScene(E)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "E"
+      }
+    },
+    {
+      "source": "store.selectScene(F)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "F"
+      }
+    },
+    {
+      "source": "store.selectScene(G)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "G"
+      }
+    },
+    {
+      "source": "store.selectScene(H)",
+      "cmd": "select_scene",
+      "payload": {
+        "scene": "H"
+      }
+    },
+    {
+      "source": "Audio:calibrar",
+      "cmd": "calibrate_input",
+      "payload": {
+        "phase": "begin"
+      }
+    },
+    {
+      "source": "Audio:calibrar",
+      "cmd": "calibrate_input",
+      "payload": {
+        "phase": "silence"
+      }
+    },
+    {
+      "source": "Audio:calibrar",
+      "cmd": "calibrate_input",
+      "payload": {
+        "phase": "strum"
+      }
+    }
+  ]
+}

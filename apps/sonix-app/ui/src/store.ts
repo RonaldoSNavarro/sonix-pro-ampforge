@@ -1,6 +1,8 @@
 import { CONTROLS_REGISTRY, type ControlDescriptor } from './controls.registry.ts';
 import {
   SonixTransport,
+  classifyBridgeError,
+  type BridgeFaultKind,
   type ScopeFrame,
   type TelemetryFrame,
   type TunerFrame,
@@ -126,11 +128,13 @@ export class AppStore {
   cabSpeakerIdx = 0;
   palcoFsMode: 'preset' | 'scene' | 'stomp' | 'hybrid' = 'hybrid';
   palcoTunerView: 'strobe' | 'poly' = 'strobe';
+  palcoMode: 'stage' | 'tuner' = 'stage';
+  engineStatusModalOpen = false;
   audioTab: 'dev' | 'in' | 'perf' = 'dev';
   libraryTab: 'amps' | 'pedals' = 'amps';
   vuMode: 'GR' | '+8' | '+4' | 'OFF' = 'GR';
   fullscreen = false;
-  modifierOn = true;
+  modifierOn = false;
   modifierSource = 'EXP 1';
   lastSavedStatus = '';
   bridgeError: string | null = null;
@@ -202,7 +206,24 @@ export class AppStore {
   calibrationWizard: {
     phase: 'idle' | 'running' | 'done';
     result: Record<string, unknown> | null;
-  } = { phase: 'idle', result: null };
+    /** 1 = silêncio, 2 = tocar forte, 3 = resultado (Spec 051, CA-1). */
+    step: 1 | 2 | 3;
+    noiseFloorDb: number | null;
+    error: string | null;
+    /** Instante (ms) em que a captura do passo atual termina, para a barra de progresso. */
+    stepEndsAt: number | null;
+  } = { phase: 'idle', result: null, step: 1, noiseFloorDb: null, error: null, stepEndsAt: null };
+
+  /** Espera do assistente de calibração; substituível nos testes (a UI real espera 3 s / 5 s). */
+  calibrationWait: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+
+  /** Aviso não bloqueante (rejeição do motor), diferente de `bridgeError` (queda do IPC). */
+  notice: { text: string; kind: BridgeFaultKind | 'info'; at: number } | null = null;
+  noticeTtlMs = 6000;
+  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   private listeners = new Set<StoreListener>();
 
@@ -221,7 +242,35 @@ export class AppStore {
             this.emit('status');
           }
         },
+        onNotice: (msg, kind) => this.pushNotice(msg, kind),
       });
+  }
+
+  /** Mostra um aviso em português claro, sem nome de chave interna; some sozinho (Spec 051, CA-2). */
+  pushNotice(raw: string, kind: BridgeFaultKind | 'info' = 'validation'): void {
+    this.notice = { text: this.friendlyMessage(raw), kind, at: Date.now() };
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => {
+      this.notice = null;
+      this.noticeTimer = null;
+      this.emit('status');
+    }, this.noticeTtlMs);
+    (this.noticeTimer as { unref?: () => void }).unref?.();
+    this.emit('status');
+  }
+
+  /** Troca chaves internas (`amp_1.input_jack`) pelo rótulo do controle e traduz códigos do backend. */
+  friendlyMessage(raw: string): string {
+    const known: Record<string, string> = {
+      missing_scene: 'Cena não informada.',
+      invalid_scene: 'Cena inválida.',
+      preset_not_found: 'Preset não encontrado.',
+    };
+    if (known[raw]) return known[raw];
+    return raw.replace(/\b[a-z]+(?:_\d+)?(?:\.[a-z0-9_]+)+\b/g, (key) => {
+      const desc = CONTROLS_REGISTRY.find((c) => c.backendKey === key);
+      return desc ? `“${desc.label}”` : 'um controle';
+    });
   }
 
   subscribe(fn: StoreListener): () => void {
@@ -262,8 +311,20 @@ export class AppStore {
         normalized = Math.max(lo, Math.min(hi, value));
       }
       this.params[desc.backendKey] = normalized;
+      if (desc.backendKey === 'amp_1.model' && typeof normalized === 'string') {
+        const defaultPwr: Record<string, string> = {
+          jcm800_2203: 'el34',
+          plexi_1959: 'el34',
+          twin_ab763: '6l6gc',
+          dual_rect: '6l6gc',
+          ac30_tb: 'el84_variant',
+        };
+        if (defaultPwr[normalized]) {
+          this.params['amp_1.power_tube'] = defaultPwr[normalized];
+        }
+      }
       this.transport.setParam(desc.backendKey, normalized);
-      const isContinuous = desc.kind === 'knob' || desc.kind === 'slider' || this.isDraggingKnob;
+      const isContinuous = desc.kind === 'knob' || desc.kind === 'slider' || desc.kind === 'pad' || this.isDraggingKnob;
       this.emit(isContinuous ? 'param' : 'full');
     }
   }
@@ -484,39 +545,90 @@ export class AppStore {
     }
   }
 
-  async loadPreset(id: string): Promise<void> {
-    this.params['preset.active'] = id;
+  /** Carrega um preset; devolve `true` só quando o backend aceitou (Spec 051, CA-5). */
+  async loadPreset(id: string): Promise<boolean> {
+    let ok = false;
     try {
       const res = await this.transport.loadPreset({ id });
+      ok = true;
+      this.params['preset.active'] = id;
       if (res && typeof res.state === 'object' && res.state !== null) {
         Object.assign(this.params, res.state);
       }
     } catch {
-      // handled by transport bridgeError
+      const name = this.presets.find((p) => p.id === id)?.name ?? id;
+      this.pushNotice(`Não foi possível carregar o preset “${name}”.`, 'validation');
     }
     this.emit('full');
+    return ok;
   }
 
   async selectScene(sceneId: string): Promise<void> {
-    this.params['scene.active'] = sceneId;
     try {
-      const res = await this.transport.selectScene({ scene_id: sceneId });
+      // O backend lê `scene` (letra A–H) ou `index` (Spec 051, CA-3).
+      const res = await this.transport.selectScene({ scene: sceneId });
+      this.params['scene.active'] = sceneId;
       if (res && typeof res.state === 'object' && res.state !== null) {
         Object.assign(this.params, res.state);
-      } else {
-        this.transport.setParam('scene.active', sceneId);
       }
     } catch {
-      this.transport.setParam('scene.active', sceneId);
+      // A cena ativa só muda quando o backend aceita; o aviso já foi emitido pelo transporte.
     }
     this.emit('full');
   }
 
   async loadPresetAt(index: number): Promise<void> {
     if (this.presets.length === 0) return;
-    this.presetIdx = ((index % this.presets.length) + this.presets.length) % this.presets.length;
-    const item = this.presets[this.presetIdx];
-    await this.loadPreset(item.id);
+    const target = ((index % this.presets.length) + this.presets.length) % this.presets.length;
+    const item = this.presets[target];
+    // O índice (e o nome exibido) só avança depois do carregamento bem-sucedido.
+    if (await this.loadPreset(item.id)) {
+      this.presetIdx = target;
+      this.emit('full');
+    }
+  }
+
+  /** Assistente de calibração: begin → silêncio (3 s) → palhetada (5 s) → resultado (Spec 051, CA-1). */
+  async runCalibrationWizard(): Promise<void> {
+    const w = this.calibrationWizard;
+    if (w.phase === 'running') return;
+    w.phase = 'running';
+    w.step = 1;
+    w.error = null;
+    w.result = null;
+    w.noiseFloorDb = null;
+    w.stepEndsAt = Date.now() + 3000;
+    this.emit('full');
+    try {
+      await this.transport.calibrateInput({ phase: 'begin' });
+      await this.calibrationWait(3000);
+      const sil = await this.transport.calibrateInput({ phase: 'silence' });
+      if (typeof sil?.noise_floor_rms_db === 'number') w.noiseFloorDb = sil.noise_floor_rms_db;
+      w.step = 2;
+      w.stepEndsAt = Date.now() + 5000;
+      this.emit('full');
+      await this.calibrationWait(5000);
+      const res = await this.transport.calibrateInput({ phase: 'strum' });
+      w.result = res;
+      w.step = 3;
+      w.phase = 'done';
+      w.stepEndsAt = null;
+      // O backend já aplicou boost e gate ao DSP; refletimos o estado real na tela.
+      try {
+        const st = await this.transport.getState();
+        if (st && typeof st === 'object') Object.assign(this.params, st);
+        const aud = await this.transport.getAudioStatus();
+        if (aud && typeof aud === 'object') Object.assign(this.audioStatus, aud);
+      } catch {
+        // atualização opcional
+      }
+    } catch (err) {
+      w.phase = 'idle';
+      w.stepEndsAt = null;
+      const raw = err instanceof Error ? err.message : String(err);
+      w.error = this.friendlyMessage(classifyBridgeError(raw).message);
+    }
+    this.emit('full');
   }
 
   async saveActivePreset(): Promise<void> {
@@ -539,6 +651,14 @@ export class AppStore {
     this.emit('full');
   }
 
+  applyTapBpm(bpmRaw: number): void {
+    const bpm = Math.max(40, Math.min(240, Math.round(bpmRaw)));
+    this.bpm = bpm;
+    // BPM maior = delay mais curto = velocidade da fita (repeat_rate) maior (Spec 051, CA-18).
+    const rate = Math.max(0, Math.min(10, Number((((bpm - 40) / 200) * 10).toFixed(1))));
+    this.setParamByKey('dly_1.repeat_rate', rate);
+  }
+
   tapTempo(): void {
     const now = performance.now();
     this.tapTimestamps = this.tapTimestamps.filter((t) => now - t < 2500);
@@ -550,9 +670,7 @@ export class AppStore {
       }
       const avgMs = sum / (this.tapTimestamps.length - 1);
       const bpm = Math.max(40, Math.min(240, Math.round(60000 / avgMs)));
-      this.bpm = bpm;
-      const rate = Math.max(0, Math.min(10, Number((((240 - bpm) / 200) * 10).toFixed(1))));
-      this.setParamByKey('dly_1.repeat_rate', rate);
+      this.applyTapBpm(bpm);
     } else {
       this.emit();
     }

@@ -67,9 +67,9 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
       { controlId: 'drive.level', label: 'OUTPUT', min: 0, max: 10, step: 0.1, def: 6.0, x: 96, y: 28, px: 30, cls: 'p-black', ink: '#3a2a0c' },
     ],
     rat: [
-      { controlId: 'drive.drive', label: 'DISTORTION', min: 0, max: 10, step: 0.1, def: 4.5, x: 24, y: 16, px: 28, cls: 'p-black', ink: '#ededed' },
-      { controlId: 'drive.tone', label: 'FILTER', min: 0, max: 10, step: 0.1, def: 5.5, x: 58, y: 16, px: 28, cls: 'p-black', ink: '#ededed' },
-      { controlId: 'drive.level', label: 'VOLUME', min: 0, max: 10, step: 0.1, def: 6.0, x: 92, y: 16, px: 28, cls: 'p-black', ink: '#ededed' },
+      { controlId: 'drive.drive', label: 'DISTORTION', min: 0, max: 10, step: 0.1, def: 4.5, x: 22, y: 16, px: 28, cls: 'p-black', ink: '#ededed', fs: 5.5 },
+      { controlId: 'drive.tone', label: 'FILTER', min: 0, max: 10, step: 0.1, def: 5.5, x: 58, y: 16, px: 28, cls: 'p-black', ink: '#ededed', fs: 5.5 },
+      { controlId: 'drive.level', label: 'VOLUME', min: 0, max: 10, step: 0.1, def: 6.0, x: 94, y: 16, px: 28, cls: 'p-black', ink: '#ededed', fs: 5.5 },
     ],
     muff: [
       { controlId: 'drive.level', label: 'VOLUME', min: 0, max: 10, step: 0.1, def: 6.0, x: 34, y: 14, px: 30, cls: 'p-black', ink: '#111' },
@@ -87,9 +87,9 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
       { controlId: 'drive.drive', label: 'DIST', min: 0, max: 10, step: 0.1, def: 4.5, x: 82, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6.5 },
     ],
     ns2: [
-      { controlId: 'gate.threshold_db', label: 'THRESHOLD', min: -90, max: 0, step: 1, def: -65, x: 22, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
+      { controlId: 'gate.threshold_db', label: 'THRESH', min: -90, max: 0, step: 1, def: -65, x: 22, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
       { controlId: 'gate.release_ms', label: 'DECAY', min: 5, max: 1000, step: 5, def: 80, x: 52, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
-      { controlId: 'gate.hysteresis_db', label: 'MODE', min: 0, max: 12, step: 0.5, def: 4, x: 82, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
+      { controlId: 'gate.hysteresis_db', label: 'HYST', min: 0, max: 12, step: 0.5, def: 4, x: 82, y: 12, px: 26, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6 },
     ],
     ce2: [
       { controlId: 'mod_2.rate_hz', label: 'RATE', min: 0.05, max: 10, step: 0.05, def: 1.0, x: 34, y: 12, px: 28, cls: 'p-boss', ink: '#111', dir: 'column-reverse', fs: 6.5 },

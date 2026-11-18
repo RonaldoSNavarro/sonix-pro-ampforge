@@ -16,37 +16,37 @@ const AMP_CATALOG: CatalogEntry<AmpModelId>[] = [
   {
     id: 'plexi_1959',
     name: 'Brit 1959 Super Lead Plexi',
-    specRef: 'Spec 029 · 1959HW Schematic',
+    specRef: 'Esquemático 1959HW · 100 W',
     sourceStatus: 'fonte: verificada',
     notes: 'Painel dourado: Power, Standby, Jewel, Presence, Bass, Middle, Treble, Vol I, Vol II e 4 entradas + Jumper.',
   },
   {
     id: 'jcm800_2203',
     name: 'Brit 800 (2203 Lead Series)',
-    specRef: 'Spec 029 · JCM800 2203',
+    specRef: 'Esquemático 2203 Master Volume · 100 W',
     sourceStatus: 'fonte: verificada',
     notes: 'Canal cascateado Master + Pre-Amp com entradas High/Low de impedância real e rede FMV passiva.',
   },
   {
     id: 'twin_ab763',
     name: 'US Twin AB763 Blackface',
-    specRef: 'Spec 029 · Fender AB763',
+    specRef: 'Circuito AB763 Blackface · 85 W',
     sourceStatus: 'fonte: pendente',
-    notes: 'Canais Normal/Vibrato, chave Bright, Reverb de mola e Tremolo LFO. Nota: inclusão de Middle no Normal pendente de conferência.',
+    notes: 'Canais Normal/Vibrato, chave Bright, Reverb de mola e Tremolo LFO.',
   },
   {
     id: 'dual_rect',
     name: 'Cali Dual Rectifier Solo Head',
-    specRef: 'Spec 029 · Solo Head 3Ch',
+    specRef: 'Solo Head Rev F · 100 W',
     sourceStatus: 'fonte: pendente',
-    notes: 'Modos Clean/Pushed/Vintage/Modern, Bold/Spongy Variac e chave Diódo vs Válvula 5U4GB. Revisão Rev F vs Multi-Watt em auditoria.',
+    notes: 'Modos Clean/Pushed/Vintage/Modern, Bold/Spongy Variac e chave Diodo vs Válvula 5U4GB.',
   },
   {
     id: 'ac30_tb',
     name: 'VOX AC30/6 Top Boost',
-    specRef: 'Spec 029 · AC30 TB',
+    specRef: 'Circuito AC30/6 Top Boost · 30 W',
     sourceStatus: 'fonte: pendente',
-    notes: 'Classe A Quad EL84, canal Top Boost (Treble/Bass), Tone Cut invertido e Vib-Trem. Ordem exacta de painel em conferência.',
+    notes: 'Classe A Quad EL84, canal Top Boost (Treble/Bass), Tone Cut invertido e Vib-Trem.',
   },
 ];
 
@@ -54,84 +54,84 @@ const PEDAL_CATALOG: CatalogEntry<PedalModelId | RackModelId>[] = [
   {
     id: 'ns2',
     name: 'GATE-2 (NS-2 Noise Suppressor)',
-    specRef: 'Spec 030 · Noise Gate Hard/Natural',
+    specRef: 'Noise Gate Natural / Expander',
     sourceStatus: 'fonte: verificada',
     notes: 'Detector sidechain LR4 HPF/LPF, Threshold, Histerese, Attack, Hold, Release (Decay) e Range.',
   },
   {
     id: 'ts808',
     name: 'Screamer 808 Overdrive',
-    specRef: 'Spec 032 · Simétrico +720 Hz',
+    specRef: 'Clipping Simétrico +720 Hz',
     sourceStatus: 'fonte: verificada',
     notes: 'Op-amp com clipagem suave por diodos em realimentação e ênfase média característica.',
   },
   {
     id: 'klon',
     name: 'Golden Klone',
-    specRef: 'Spec 032 · Dual-Gang Clean Mix',
+    specRef: 'Dual-Gang Clean Blend + Ge',
     sourceStatus: 'fonte: verificada',
     notes: 'Mistura limpa paralela, diodos de germânio e buffer com alto headroom.',
   },
   {
     id: 'rat',
     name: 'Rodent Distortion',
-    specRef: 'Spec 032 · LM308 + Filter',
+    specRef: 'Slew-Rate LM308 + Filter',
     sourceStatus: 'fonte: verificada',
     notes: 'Hard clipping simétrico após estágio op-amp e controle Filter passa-baixas reverso.',
   },
   {
     id: 'muff',
     name: 'Big Fuzz Pi',
-    specRef: 'Spec 032 · 4 Estágios + Scoop Tone',
+    specRef: '4 Estágios Cascata + Scoop Tone',
     sourceStatus: 'fonte: verificada',
     notes: 'Sustentação massiva em 4 estágios com filtro Tilt Bass/Treble em médios recuados.',
   },
   {
     id: 'fuzzface',
     name: 'Face Fuzz Ge/Si',
-    specRef: 'Spec 032 · Transistores Bias',
+    specRef: 'Par Transistorizado com Bias',
     sourceStatus: 'fonte: verificada',
     notes: 'Sensibilidade direta ao volume da guitarra com controle Bias ajustável.',
   },
   {
     id: 'ds1',
     name: 'DS-One Classic',
-    specRef: 'Spec 032 · Diode Hard Clip',
+    specRef: 'Hard Clip de Diodos + Scoop',
     sourceStatus: 'fonte: verificada',
     notes: 'Distorção pontuda com filtro scoop/tilt clássico.',
   },
   {
     id: 'ce2',
     name: 'Chorus-2 BBD Analógico',
-    specRef: 'Spec 032 · Delay BBD Modulado',
+    specRef: 'Linha de Atraso BBD Modulada',
     sourceStatus: 'fonte: verificada',
     notes: 'Chorus quente com modulação senoidal de linha de atraso analógica.',
   },
   {
     id: 'mxr10',
     name: '10-Band Graphic EQ',
-    specRef: 'Spec 032 · 10 Filtros Pico',
+    specRef: '10 Filtros Gráficos ISO',
     sourceStatus: 'fonte: verificada',
     notes: '10 bandas ±12 dB (31.25 Hz a 16 kHz) com Volume e Gain independentes.',
   },
   {
     id: 'comp1176',
     name: 'FET 76 Limiting Amplifier',
-    specRef: 'Spec 032 · Peak Limiter',
+    specRef: 'Peak Limiter FET Ultrarrápido',
     sourceStatus: 'fonte: verificada',
     notes: 'Ratios 4:1, 8:1, 12:1, 20:1 e modo All-Buttons-In com ataque ultrarrápido.',
   },
   {
     id: 're201',
     name: 'Space Tape RE-201 Echo',
-    specRef: 'Spec 032 · 12 Modos Multi-Head',
+    specRef: '12 Modos Multi-Head + Mola',
     sourceStatus: 'fonte: verificada',
     notes: 'Cabeças de fita 1..12, flutter/wow orgânico, EQ úmido e mola integrada.',
   },
   {
     id: 'plate',
     name: 'Studio Plate Reverb',
-    specRef: 'Spec 032 · Tanque Metálico Stereo',
+    specRef: 'Tanque Metálico Estéreo',
     sourceStatus: 'fonte: verificada',
     notes: 'Pre-delay até 250 ms, damping de agudos e decaimento até 20 segundos.',
   },
@@ -176,35 +176,45 @@ export function renderBibliotecaScreen(store: AppStore): HTMLElement {
       note.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:#b2b9c2;';
       const badgeColor = entry.sourceStatus === 'fonte: verificada' ? '#4ee680' : '#ffb84d';
       note.innerHTML = `<span>${entry.notes}</span><span class="m-mono" style="flex:none;padding:2px 6px;border-radius:4px;border:1px solid ${badgeColor};color:${badgeColor};font-size:9.5px;">${entry.sourceStatus}</span>`;
-      const head = createAmpHeadElement(store, { modelOverride: entry.id, compact: true });
+      const headWrap = document.createElement('div');
+      headWrap.style.cssText = 'width:788px;height:226px;position:relative;overflow:hidden;border-radius:10px;';
+      const headInner = document.createElement('div');
+      headInner.style.cssText = 'position:absolute;left:0;top:0;width:1000px;transform:scale(0.788);transform-origin:0 0;';
+      headInner.appendChild(createAmpHeadElement(store, { modelOverride: entry.id }));
+      headWrap.appendChild(headInner);
       const loadBtn = makeChipButton('amp.model', 'Ativar no Estúdio', store.getParam('amp_1.model', '') === (entry.id as string), () => {
         void store.setControl('amp.model', entry.id);
         store.setScreen('main');
       });
-      card.body.append(note, head, loadBtn);
+      card.body.append(note, headWrap, loadBtn);
       list.appendChild(card.root);
     }
   } else {
     const grid = document.createElement('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:10px;';
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px;';
     for (const item of PEDAL_CATALOG) {
       const card = makePanelCard(item.name, item.sourceStatus);
       const p = document.createElement('p');
       p.style.cssText = 'font-size:11px;color:#aeb5be;';
       p.textContent = `${item.specRef} — ${item.notes}`;
       const previewWrap = document.createElement('div');
+      const isRack = item.id === 'comp1176' || item.id === 're201' || item.id === 'plate';
       previewWrap.style.cssText =
-        'display:flex;justify-content:center;align-items:center;padding:6px;background:#0b0d10;border-radius:6px;overflow:hidden;';
-      const hw =
-        item.id === 'comp1176' || item.id === 're201' || item.id === 'plate'
-          ? createRackElement(item.id as RackModelId, store)
-          : createPedalElement(item.id as PedalModelId, store);
-      if (item.id === 'comp1176' || item.id === 're201' || item.id === 'plate') {
-        hw.style.transform = 'scale(0.54)';
-        hw.style.transformOrigin = 'center center';
-        previewWrap.style.height = '112px';
+        `display:flex;justify-content:center;align-items:center;padding:8px;background:#0b0d10;border-radius:6px;overflow:hidden;min-height:${isRack ? 120 : 216}px;position:relative;`;
+      if (isRack) {
+        const origH = item.id === 're201' ? 190 : 130;
+        const scale = 0.56;
+        const slot = document.createElement('div');
+        slot.style.cssText = `width:${Math.round(560 * scale)}px;height:${Math.round(origH * scale)}px;position:relative;flex:none;`;
+        const inner = document.createElement('div');
+        inner.style.cssText = `position:absolute;left:0;top:0;width:560px;height:${origH}px;transform:scale(${scale});transform-origin:0 0;`;
+        inner.appendChild(createRackElement(item.id as RackModelId, store));
+        slot.appendChild(inner);
+        previewWrap.appendChild(slot);
+      } else {
+        const hw = createPedalElement(item.id as PedalModelId, store);
+        previewWrap.appendChild(hw);
       }
-      previewWrap.appendChild(hw);
       card.body.append(p, previewWrap);
       grid.appendChild(card.root);
     }

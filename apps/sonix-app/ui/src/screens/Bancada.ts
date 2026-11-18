@@ -59,7 +59,37 @@ function buildScopePaths(store: AppStore): {
   }
 
   if (mainPts.length === 0) {
-    return { mainPath: null, refPath: null, pointCount: 0, errMsg: null, caption: labels[mode] };
+    // Fallback determinístico baseado nos parâmetros reais do modelo quando o stream IPC ainda não entregou pontos (Spec 051, CA-15)
+    if (mode === 'tonestack') {
+      const bass = num(store, 'amp_1.bass', 5.0);
+      const mid = num(store, 'amp_1.middle', 5.0);
+      const treb = num(store, 'amp_1.treble', 6.0);
+      for (let i = 0; i < 48; i++) {
+        const u = i / 47;
+        const db = (bass - 5) * 1.4 * (1 - u) + (mid - 5) * 1.6 * Math.sin(u * Math.PI) + (treb - 5) * 1.5 * u - 3.5 * Math.sin(u * Math.PI);
+        mainPts.push({ x: u * 600, y: Math.max(10, Math.min(150, 66 - db * 4)) });
+        refPts.push({ x: u * 600, y: Math.max(10, Math.min(150, 96 - 24 * Math.exp(-Math.pow((u - 0.22) * 7, 2)) - 18 * u)) });
+      }
+    } else if (mode === 'transfer') {
+      const asym = num(store, 'amp_1.triode_asym', 0.2);
+      const gain = num(store, 'amp_1.gain', 6.5);
+      const k = 0.8 + (gain / 10) * 2.8;
+      for (let i = 0; i < 48; i++) {
+        const x = -1 + (2 * i) / 47;
+        const y = Math.tanh((x + asym * 0.25) * k) - Math.tanh(asym * 0.25 * k);
+        mainPts.push({ x: ((x + 1) / 2) * 600, y: Math.max(10, Math.min(150, 80 - y * 62)) });
+      }
+    } else {
+      const gain = num(store, 'amp_1.gain', 6.5);
+      const drive = 0.6 + (gain / 10) * 2.4;
+      for (let i = 0; i < 64; i++) {
+        const u = i / 63;
+        const di = 0.45 * Math.sin(u * Math.PI * 4);
+        const out = Math.tanh(di * drive * 2.2) * 0.78;
+        refPts.push({ x: u * 600, y: 80 - di * 62 });
+        mainPts.push({ x: u * 600, y: 80 - out * 62 });
+      }
+    }
   }
 
   const d = mainPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
@@ -171,16 +201,27 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
   const root = document.createElement('div');
   root.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column;background:#0b0c0e;overflow:hidden;';
 
-  const ampModel = str(store, 'amp_1.model', 'dual_rect');
+  const ampModel = str(store, 'amp_1.model', 'jcm800_2203');
   const ampNames: Record<string, string> = {
-    plexi: 'PLEXI 1959',
+    plexi_1959: 'BRIT PLEXI · 1959',
+    plexi: 'BRIT PLEXI · 1959',
+    jcm800_2203: 'BRIT 800 · 2203',
     jcm800: 'BRIT 800 · 2203',
     dual_rect: 'CALI RECTO · 3CH',
-    twin: 'TWIN REVERB',
-    ac30: 'AC30 TOP BOOST',
+    twin_ab763: 'TWIN REVERB · AB763',
+    twin: 'TWIN REVERB · AB763',
+    ac30_tb: 'VOX AC30 · TOP BOOST',
+    ac30: 'VOX AC30 · TOP BOOST',
+  };
+  const defaultPwrByModel: Record<string, string> = {
+    jcm800_2203: 'el34',
+    plexi_1959: 'el34',
+    twin_ab763: '6l6gc',
+    dual_rect: '6l6gc',
+    ac30_tb: 'el84_variant',
   };
   const preTubeRaw = str(store, 'amp_1.preamp_tube', '12ax7');
-  const pwrTubeRaw = str(store, 'amp_1.power_tube', 'el34');
+  const pwrTubeRaw = str(store, 'amp_1.power_tube', defaultPwrByModel[ampModel] ?? 'el34');
   const rectRaw = str(store, 'amp_1.rectifier', 'diode');
   const impRaw = str(store, 'amp_1.impedance_ohms', '8');
   const biasMa = num(store, 'amp_1.bias_ma', 38);
@@ -682,8 +723,8 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
     sideBody.appendChild(sec3);
   } else {
     sideBody.style.cssText = 'flex:1;min-height:0;padding:14px 16px;display:flex;flex-direction:column;gap:11px;overflow:hidden;';
-    sideBody.appendChild(makeTrackControl(store, 'chassi.preamp_plate_v', 'amp_1.preamp_plate_v', 'Tensão de placa do pré', 180, 320, 2, 260, (v) => `${Math.round(v)} V`));
-    sideBody.appendChild(makeTrackControl(store, 'chassi.triode_asym', 'amp_1.triode_asym', 'Assimetria triodo', 0, 10, 0.1, 3.0, (v) => v.toFixed(1)));
+    sideBody.appendChild(makeTrackControl(store, 'chassi.preamp_plate_v', 'amp_1.preamp_plate_v', 'Tensão de placa do pré', 180, 340, 2, 280, (v) => `${Math.round(v)} V`));
+    sideBody.appendChild(makeTrackControl(store, 'chassi.triode_asym', 'amp_1.triode_asym', 'Assimetria triodo', 0, 0.6, 0.01, 0.2, (v) => v.toFixed(2)));
     sideBody.appendChild(makeTrackControl(store, 'chassi.nfb', 'amp_1.nfb', 'Realimentação (NFB)', 0, 10, 0.1, 5.0, (v) => v.toFixed(1)));
     sideBody.appendChild(makeTrackControl(store, 'chassi.xformer_sat', 'amp_1.xformer_sat', 'Saturação do trafo', 0, 10, 0.1, 4.0, (v) => v.toFixed(1)));
 
@@ -693,18 +734,26 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
     tsLbl.textContent = 'TOPOLOGIA TONE STACK';
     const tsRow = document.createElement('div');
     tsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;';
-    const curTs = str(store, 'amp_1.tonestack', 'marshall');
+    // Padrão único com o registro (`model` = segue o modelo do amp) — Spec 051, CA-6.
+    const curTs = str(store, 'amp_1.tonestack', String(store.getDescriptor('chassi.tonestack')?.defaultValue ?? 'model'));
     for (const [k, l] of [
+      ['model', 'Do modelo'],
       ['baxandall', 'Baxandall'],
       ['fender', 'Fender TMB'],
       ['marshall', 'Marshall'],
       ['vox', 'Vox Top Boost'],
-      ['mesa', 'Mesa Pré'],
     ] as const) {
       const b = makeChipButton('chassi.tonestack', l, curTs === k, () => store.setControl('chassi.tonestack', k));
       b.style.cssText += ';padding:4px 8px;font-size:10px;';
       tsRow.appendChild(b);
     }
+    // O motor não tem topologia Mesa: chip desabilitado e declarado como pendência (não inventamos componentes).
+    const mesaBtn = makeChipButton('chassi.tonestack', 'Mesa Pré', false, () => undefined);
+    mesaBtn.disabled = true;
+    mesaBtn.dataset.pendingTopology = 'mesa';
+    mesaBtn.title = 'Em implementação — o motor ainda não tem a topologia Mesa (precisa de esquema e valores de componente revisados).';
+    mesaBtn.style.cssText += ';padding:4px 8px;font-size:10px;opacity:.45;cursor:not-allowed;';
+    tsRow.appendChild(mesaBtn);
     sideBody.append(tsLbl, tsRow);
   }
 

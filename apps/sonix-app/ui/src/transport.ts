@@ -27,6 +27,26 @@ export function isTauriRuntime(): boolean {
   );
 }
 
+/** Marcadores postos pelo host Tauri (`commands.rs::response_to_result`) quando o IPC respondeu. */
+export const VALIDATION_PREFIX = 'E_VALIDATION:';
+export const ENGINE_PREFIX = 'E_ENGINE:';
+
+export type BridgeFaultKind = 'ipc' | 'validation' | 'engine';
+
+/**
+ * Separa queda do IPC (sem resposta do host) de rejeição do motor (o IPC respondeu).
+ * Só `ipc` merece o banner vermelho "Motor DSP desconectado" (Spec 051, CA-2).
+ */
+export function classifyBridgeError(raw: string): { kind: BridgeFaultKind; message: string } {
+  if (raw.startsWith(VALIDATION_PREFIX)) {
+    return { kind: 'validation', message: raw.slice(VALIDATION_PREFIX.length) };
+  }
+  if (raw.startsWith(ENGINE_PREFIX)) {
+    return { kind: 'engine', message: raw.slice(ENGINE_PREFIX.length) };
+  }
+  return { kind: 'ipc', message: raw };
+}
+
 /**
  * Coalesce UI parameter writes to at most one `set_params` IPC invocation
  * per animation frame, retaining the latest value per key (Spec 033, CA-8).
@@ -207,21 +227,35 @@ export class SonixTransport {
   readonly coalescer: ParamCoalescer;
   private readonly invokeFn: InvokeFn;
   private onBridgeError?: (msg: string | null) => void;
+  private onNotice?: (msg: string, kind: BridgeFaultKind) => void;
   private lastSeq = { telemetry: 0, tuner: 0, scope: 0 };
 
   constructor(opts: {
     invokeFn?: InvokeFn;
     rafFn?: RafFn;
     onBridgeError?: (msg: string | null) => void;
+    onNotice?: (msg: string, kind: BridgeFaultKind) => void;
   } = {}) {
     this.invokeFn = opts.invokeFn ?? defaultInvoke;
     this.onBridgeError = opts.onBridgeError;
+    this.onNotice = opts.onNotice;
     this.coalescer = new ParamCoalescer({
       invokeFn: this.invokeFn,
       rafFn: opts.rafFn,
       onResult: () => this.onBridgeError?.(null),
-      onError: (err) => this.onBridgeError?.(err),
+      onError: (err) => this.handleFault(err),
     });
+  }
+
+  private handleFault(raw: string): void {
+    const fault = classifyBridgeError(raw);
+    if (fault.kind === 'ipc') {
+      this.onBridgeError?.(fault.message);
+    } else {
+      // O host respondeu: o IPC está vivo; a rejeição vira aviso não bloqueante.
+      this.onBridgeError?.(null);
+      this.onNotice?.(fault.message, fault.kind);
+    }
   }
 
   private async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -231,7 +265,7 @@ export class SonixTransport {
       return res;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.onBridgeError?.(msg);
+      this.handleFault(msg);
       throw err;
     }
   }

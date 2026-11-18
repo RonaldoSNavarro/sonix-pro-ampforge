@@ -207,10 +207,13 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
 
   // Center Speaker Col (exact 560x560 geometry at top)
   const spkCenterCol = document.createElement('div');
-  spkCenterCol.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:0;';
+  spkCenterCol.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:4px;min-width:0;min-height:0;';
+
+  const arenaScaleWrap = document.createElement('div');
+  arenaScaleWrap.style.cssText = 'position:relative;width:516px;height:516px;flex-shrink:0;';
 
   const arenaBox = document.createElement('div');
-  arenaBox.style.cssText = 'position:relative;width:560px;height:560px;flex-shrink:0;';
+  arenaBox.style.cssText = 'position:absolute;left:0;top:0;width:560px;height:560px;transform:scale(0.92);transform-origin:top left;';
 
   const baffle = document.createElement('div');
   baffle.style.cssText =
@@ -335,6 +338,7 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
     let dragging = false;
     node.addEventListener('pointerdown', (e) => {
       dragging = true;
+      store.setDraggingKnob(true);
       try {
         node.setPointerCapture(e.pointerId);
       } catch {
@@ -347,12 +351,30 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
       if (r.width <= 0) return;
       const nx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
       const ny = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
-      const norm = Math.max(0, Math.min(1, Math.hypot(nx, ny)));
-      void store.setControl(`cab.mic${idx}.position`, Number(norm.toFixed(2)));
+      const norm = Number(Math.max(0, Math.min(1, Math.hypot(nx, ny))).toFixed(2));
+      const newMx = 280 + norm * 220 * unitX;
+      const newMy = 280 + norm * 220 * unitY;
+      node.style.left = `${newMx.toFixed(1)}px`;
+      node.style.top = `${newMy.toFixed(1)}px`;
+      node.setAttribute('aria-valuenow', String(norm));
+      node.setAttribute('aria-label', `MIC ${idx} ${model.toUpperCase()} — posição ${Math.round(norm * 100)}%, distância ${dist.toFixed(1)} cm`);
+      sh.style.left = `${(newMx + dist * 0.9).toFixed(1)}px`;
+      sh.style.top = `${(newMy + dist * 0.9).toFixed(1)}px`;
+      tagSpan.style.left = `${newMx.toFixed(1)}px`;
+      tagSpan.style.top = `${(newMy + hh + 6).toFixed(1)}px`;
+      const spEl = root.querySelector(`[data-mic-readout="${idx}"]`);
+      if (spEl) {
+        spEl.textContent = `MIC ${idx}: ${Math.round(norm * 100)}% da calota · ${dist.toFixed(1)} cm · ${angle}° · ${(dist / 34.3).toFixed(2)} ms`;
+      }
+      void store.setControl(`cab.mic${idx}.position`, norm);
     });
-    node.addEventListener('pointerup', () => {
+    const endMicDrag = () => {
+      if (!dragging) return;
       dragging = false;
-    });
+      store.setDraggingKnob(false);
+    };
+    node.addEventListener('pointerup', endMicDrag);
+    node.addEventListener('pointercancel', endMicDrag);
     node.addEventListener(
       'wheel',
       (e) => {
@@ -370,14 +392,18 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
     return { idx, pos, dist, angle, model, type: ms.type, en, inv, col };
   });
 
-  spkCenterCol.appendChild(arenaBox);
+  arenaScaleWrap.appendChild(arenaBox);
+  spkCenterCol.appendChild(arenaScaleWrap);
 
   const micLine = document.createElement('div');
   micLine.className = 'm-mono';
-  micLine.style.cssText = 'display:flex;gap:18px;font-size:11px;';
+  micLine.dataset.region = 'mic-readout-bar';
+  micLine.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:6px 18px;font-size:11px;line-height:1.35;z-index:6;padding:2px 8px;border-radius:4px;background:rgba(10,11,12,.85);';
   for (const m of micMeta) {
     const sp = document.createElement('span');
+    sp.dataset.micReadout = String(m.idx);
     sp.style.color = m.col;
+    sp.style.whiteSpace = 'nowrap';
     sp.textContent = `MIC ${m.idx}: ${Math.round(m.pos * 100)}% da calota · ${m.dist.toFixed(1)} cm · ${m.angle}° · ${(m.dist / 34.3).toFixed(2)} ms`;
     micLine.appendChild(sp);
   }

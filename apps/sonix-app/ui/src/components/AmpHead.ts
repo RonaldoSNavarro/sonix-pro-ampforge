@@ -688,10 +688,11 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
     tbBtn.type = 'button';
     tbBtn.className = 'm-chip';
     tbBtn.dataset.controlId = 'amp.input_jack';
-    tbBtn.dataset.jackId = 'top_boost';
+    tbBtn.dataset.jackId = 'vibrato';
     tbBtn.setAttribute('aria-pressed', isTopBoost ? 'true' : 'false');
     tbBtn.textContent = 'TOP BOOST';
-    tbBtn.addEventListener('click', () => void store.setControl('amp.input_jack', 'top_boost'));
+    // O motor expõe o canal Top Boost do AC30 como `vibrato` (vocabulário único do DSP, Spec 051 CA-4).
+    tbBtn.addEventListener('click', () => void store.setControl('amp.input_jack', 'vibrato'));
 
     const normBtn = document.createElement('button');
     normBtn.type = 'button';

@@ -83,12 +83,22 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
   `;
   tempoBox.addEventListener('click', () => store.tapTempo());
 
+  const isTunerMode = store.palcoMode === 'tuner';
   const navCol = document.createElement('div');
   navCol.style.cssText = 'width:130px;flex:none;display:flex;flex-direction:column;gap:8px;';
   const exitBtn = makeChipButton('ui.nav_screen', 'Sair (Esc)', false, () => store.setScreen('main'));
   exitBtn.style.cssText = `${pBtnCss(false)}flex:1;display:flex;align-items:center;justify-content:center;font-size:13px;`;
-  const tunBtn = makeChipButton('tuner.enabled', 'Afinador', tunerOn, () => store.setControl('tuner.enabled', !tunerOn));
-  tunBtn.style.cssText = `${pBtnCss(tunerOn)}flex:1;display:flex;align-items:center;justify-content:center;font-size:13px;`;
+  const tunBtn = makeChipButton('tuner.enabled', isTunerMode ? 'Ver Palco' : 'Afinador', isTunerMode, () => {
+    if (isTunerMode) {
+      store.palcoMode = 'stage';
+    } else {
+      store.palcoMode = 'tuner';
+      void store.setControl('tuner.enabled', true);
+    }
+    store.emit();
+  });
+  tunBtn.dataset.palcoModeToggle = isTunerMode ? 'stage' : 'tuner';
+  tunBtn.style.cssText = `${pBtnCss(isTunerMode)}flex:1;display:flex;align-items:center;justify-content:center;font-size:13px;`;
   navCol.append(exitBtn, tunBtn);
 
   hdr.append(lcd, tempoBox, navCol);
@@ -96,11 +106,13 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
 
   // ── 2. Middle Stage: Afinador + Looper ─────────────────────────────────────
   const mid = document.createElement('div');
+  mid.dataset.palcoMode = store.palcoMode;
   mid.style.cssText = 'flex:1;display:flex;gap:16px;min-height:0;';
 
-  // Afinador Card (flex: 1.5)
+  // Afinador Card (flex: 1.5 no palco, ou expandido no modo Afinador dedicado)
   const tunerCard = document.createElement('section');
-  tunerCard.style.cssText = `${pWellCss}flex:1.5;padding:16px 20px;display:flex;flex-direction:column;gap:12px;min-width:0;opacity:${tunerOn ? 1 : 0.45};`;
+  tunerCard.dataset.region = 'tuner-card';
+  tunerCard.style.cssText = `${pWellCss}flex:${isTunerMode ? '2.4' : '1.5'};padding:16px 20px;display:flex;flex-direction:column;gap:12px;min-width:0;opacity:${tunerOn ? 1 : 0.45};${isTunerMode ? 'border:1px solid #29c46a;box-shadow:inset 0 3px 10px rgba(0,0,0,.9),0 0 18px rgba(41,196,106,.25);' : ''}`;
 
   const tHdr = document.createElement('div');
   tHdr.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -196,10 +208,11 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
   const innerRing = document.createElement('div');
   innerRing.style.cssText =
     'width:160px;height:160px;border-radius:50%;background:#0a0b0c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;';
+  const isRec = looperAction === 'record' || looperAction === 'rec';
   const stateLabel =
-    looperAction === 'rec' ? 'GRAVANDO' : looperAction === 'play' ? 'TOCANDO' : looperAction === 'overdub' ? 'OVERDUB' : 'VAZIO';
+    isRec ? 'GRAVANDO' : looperAction === 'play' ? 'TOCANDO' : looperAction === 'overdub' ? 'OVERDUB' : 'VAZIO';
   innerRing.innerHTML = `
-    <span class="m-osw" style="font-size:26px;font-weight:700;color:${looperAction === 'rec' ? '#ff3b2f' : '#7e868f'}">${stateLabel}</span>
+    <span class="m-osw" style="font-size:26px;font-weight:700;color:${isRec ? '#ff3b2f' : '#7e868f'}">${stateLabel}</span>
     <span class="m-mono" style="font-size:13px;color:#a3abb4">0 %</span>
     <span class="m-mono" style="font-size:11px;color:#a3abb4">0 camada(s)</span>
   `;
@@ -208,7 +221,7 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
   const btnsGrid = document.createElement('div');
   btnsGrid.style.cssText = 'flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;';
   for (const [act, lbl, dotCol, round] of [
-    ['rec', 'Gravar', '#ff3b2f', true],
+    ['record', 'Gravar', '#ff3b2f', true],
     ['play', 'Tocar', '#29c46a', false],
     ['undo', 'Desfazer', '#7e868f', false],
     ['redo', 'Refazer', '#7e868f', false],
@@ -216,7 +229,7 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
     ['half_speed', '½ velocidade', '#3dd8ff', false],
     ['clear', 'Limpar', '#7e868f', false],
   ] as const) {
-    const active = looperAction === act;
+    const active = looperAction === act || (act === 'record' && looperAction === 'rec');
     const b = makeChipButton('looper.action', '', active, () => store.setControl('looper.action', act));
     b.style.cssText = `${pBtnCss(active)}height:40px;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px;`;
     b.innerHTML = `<span style="width:9px;height:9px;border-radius:${round ? '50%' : '2px'};background:${dotCol}"></span>${lbl}`;
@@ -262,19 +275,51 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
   const fsGrid = document.createElement('div');
   fsGrid.style.cssText = 'flex:1;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:12px;';
 
-  const fsDefs = [
-    { controlId: 'palco.fs_1_gate', paramKey: 'gate.enabled', tag: 'STOMP', lbl: 'Screamer 808', fs: 'FS 1' },
-    { controlId: 'palco.fs_2_drive', paramKey: 'drive.enabled', tag: 'STOMP', lbl: 'Chorus-2', fs: 'FS 2' },
-    { controlId: 'palco.fs_3_comp', paramKey: 'comp_2.enabled', tag: 'STOMP', lbl: 'Tape Echo', fs: 'FS 3' },
-    { controlId: 'palco.fs_4_chorus', paramKey: 'mod_2.enabled', tag: 'STOMP', lbl: 'Plate', fs: 'FS 4' },
-    { controlId: 'palco.fs_5_eq', paramKey: 'eq_1.enabled', tag: 'SCENE', lbl: 'A · Clean', fs: 'FS 5' },
-    { controlId: 'palco.fs_6_delay', paramKey: 'dly_1.enabled', tag: 'SCENE', lbl: 'B · Crunch', fs: 'FS 6' },
-    { controlId: 'palco.fs_7_reverb', paramKey: 'rev_1.enabled', tag: 'SCENE', lbl: 'C · Rhythm', fs: 'FS 7' },
-    { controlId: 'palco.fs_8_split', paramKey: 'split.enabled', tag: 'SCENE', lbl: 'D · Solo', fs: 'FS 8' },
-  ];
+  const fsMode = store.palcoFsMode;
+  const fsDefs: Array<{
+    controlId: string;
+    paramKey: string;
+    tag: string;
+    lbl: string;
+    fs: string;
+    scene?: string;
+    presetDelta?: number;
+  }> =
+    fsMode === 'scene'
+      ? [
+          { controlId: 'palco.fs_1_gate', paramKey: 'gate.enabled', tag: 'SCENE', lbl: 'A · Clean', fs: 'FS 1', scene: 'A' },
+          { controlId: 'palco.fs_2_drive', paramKey: 'drive.enabled', tag: 'SCENE', lbl: 'B · Crunch', fs: 'FS 2', scene: 'B' },
+          { controlId: 'palco.fs_3_comp', paramKey: 'comp_2.enabled', tag: 'SCENE', lbl: 'C · Rhythm', fs: 'FS 3', scene: 'C' },
+          { controlId: 'palco.fs_4_chorus', paramKey: 'mod_2.enabled', tag: 'SCENE', lbl: 'D · Lead', fs: 'FS 4', scene: 'D' },
+          { controlId: 'palco.fs_5_eq', paramKey: 'eq_1.enabled', tag: 'SCENE', lbl: 'E · Ambient', fs: 'FS 5', scene: 'E' },
+          { controlId: 'palco.fs_6_delay', paramKey: 'dly_1.enabled', tag: 'SCENE', lbl: 'F · Heavy', fs: 'FS 6', scene: 'F' },
+          { controlId: 'palco.fs_7_reverb', paramKey: 'rev_1.enabled', tag: 'SCENE', lbl: 'G · Solo', fs: 'FS 7', scene: 'G' },
+          { controlId: 'palco.fs_8_split', paramKey: 'split.enabled', tag: 'SCENE', lbl: 'H · Octave', fs: 'FS 8', scene: 'H' },
+        ]
+      : fsMode === 'stomp'
+        ? [
+            { controlId: 'palco.fs_1_gate', paramKey: 'gate.enabled', tag: 'STOMP', lbl: 'Noise Gate', fs: 'FS 1' },
+            { controlId: 'palco.fs_2_drive', paramKey: 'drive.enabled', tag: 'STOMP', lbl: 'Screamer 808', fs: 'FS 2' },
+            { controlId: 'palco.fs_3_comp', paramKey: 'comp_2.enabled', tag: 'STOMP', lbl: 'FET 76', fs: 'FS 3' },
+            { controlId: 'palco.fs_4_chorus', paramKey: 'mod_2.enabled', tag: 'STOMP', lbl: 'Chorus-2', fs: 'FS 4' },
+            { controlId: 'palco.fs_5_eq', paramKey: 'eq_1.enabled', tag: 'STOMP', lbl: '10 Band EQ', fs: 'FS 5' },
+            { controlId: 'palco.fs_6_delay', paramKey: 'dly_1.enabled', tag: 'STOMP', lbl: 'Tape Echo', fs: 'FS 6' },
+            { controlId: 'palco.fs_7_reverb', paramKey: 'rev_1.enabled', tag: 'STOMP', lbl: 'Plate', fs: 'FS 7' },
+            { controlId: 'palco.fs_8_split', paramKey: 'split.enabled', tag: 'STOMP', lbl: 'Split A/B', fs: 'FS 8' },
+          ]
+        : [
+            { controlId: 'palco.fs_1_gate', paramKey: 'drive.enabled', tag: 'STOMP', lbl: 'Screamer 808', fs: 'FS 1' },
+            { controlId: 'palco.fs_2_drive', paramKey: 'mod_2.enabled', tag: 'STOMP', lbl: 'Chorus-2', fs: 'FS 2' },
+            { controlId: 'palco.fs_3_comp', paramKey: 'dly_1.enabled', tag: 'STOMP', lbl: 'Tape Echo', fs: 'FS 3' },
+            { controlId: 'palco.fs_4_chorus', paramKey: 'rev_1.enabled', tag: 'STOMP', lbl: 'Plate', fs: 'FS 4' },
+            { controlId: 'palco.fs_5_eq', paramKey: 'eq_1.enabled', tag: 'SCENE', lbl: 'A · Clean', fs: 'FS 5', scene: 'A' },
+            { controlId: 'palco.fs_6_delay', paramKey: 'dly_1.enabled', tag: 'SCENE', lbl: 'B · Crunch', fs: 'FS 6', scene: 'B' },
+            { controlId: 'palco.fs_7_reverb', paramKey: 'rev_1.enabled', tag: 'SCENE', lbl: 'C · Rhythm', fs: 'FS 7', scene: 'C' },
+            { controlId: 'palco.fs_8_split', paramKey: 'split.enabled', tag: 'SCENE', lbl: 'D · Solo', fs: 'FS 8', scene: 'D' },
+          ];
 
   for (const fs of fsDefs) {
-    const active = bool(store, fs.paramKey, false);
+    const active = fs.scene ? sceneLetter === fs.scene : bool(store, fs.paramKey, false);
     const col = document.createElement('div');
     col.style.cssText = `display:flex;flex-direction:column;align-items:center;gap:12px;opacity:${active ? 1 : 0.72};`;
 
@@ -298,7 +343,13 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
     btn.setAttribute('aria-label', `Footswitch ${fs.fs}: ${fs.lbl}`);
     btn.style.cssText =
       'width:66px;height:66px;border-radius:50%;border:0;padding:0;cursor:pointer;background:radial-gradient(circle at 38% 32%,#ffffff 0%,#d6d6d6 22%,#909090 55%,#4a4a4a 82%,#2a2a2a 100%);box-shadow:0 0 0 6px #8f949a,0 0 0 7px #2a2a2a,0 8px 14px rgba(0,0,0,.7);';
-    btn.addEventListener('click', () => void store.setControl(fs.controlId, !active));
+    btn.addEventListener('click', () => {
+      if (fs.scene) {
+        void store.selectScene(fs.scene);
+      } else {
+        store.setParamByKey(fs.paramKey, !active);
+      }
+    });
 
     ringWrap.appendChild(btn);
     col.append(oled, ringWrap);
