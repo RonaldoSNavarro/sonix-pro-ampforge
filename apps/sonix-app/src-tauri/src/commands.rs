@@ -313,9 +313,11 @@ where
         .get("buffer_size")
         .or_else(|| payload.get("buffer"))
         .and_then(|v| v.as_u64())
-        .unwrap_or(128) as u32;
-    if !matches!(buffer_size, 32 | 64 | 128 | 256 | 512 | 1024) {
-        return Err(format!("Buffer size inválido: {} samples", buffer_size));
+        .map(|v| v as u32);
+    if let Some(bs) = buffer_size {
+        if !matches!(bs, 32 | 64 | 128 | 256 | 512 | 1024) {
+            return Err(format!("Buffer size inválido: {} samples", bs));
+        }
     }
     let input_device = payload
         .get("input_device")
@@ -361,7 +363,7 @@ where
         input_device.as_deref(),
         output_device.as_deref(),
         Some(sample_rate),
-        Some(buffer_size),
+        buffer_size,
     );
 
     let (new_streams, actual_telemetry) = match open_res {

@@ -1,6 +1,6 @@
 import { CONTROLS_REGISTRY } from './controls.registry.ts';
 import { renderAudioScreen } from './screens/Audio.ts';
-import { renderBancadaScreen } from './screens/Bancada.ts';
+import { buildScopePaths, renderBancadaScreen } from './screens/Bancada.ts';
 import { renderBibliotecaScreen } from './screens/Biblioteca.ts';
 import { renderEstudioScreen } from './screens/Estudio.ts';
 import { renderGabineteScreen } from './screens/Gabinete.ts';
@@ -492,6 +492,99 @@ function updateLiveReadouts(
         seg.style.boxShadow = 'none';
       }
     });
+  }
+
+  // Atualização contínua do Afinador sem reconstruir a tela Palco
+  const tunerNoteEl = appRoot.querySelector<HTMLElement>('[data-live="tuner-note"]');
+  if (tunerNoteEl) {
+    const hasSig = Boolean(
+      store.tuner.signal_present ?? (store.tuner.frequency_hz > 0 && store.tuner.note !== '---')
+    );
+    const note = hasSig ? (store.tuner.note || '---') : '---';
+    const oct =
+      hasSig && store.tuner.octave !== null && Number.isFinite(store.tuner.octave)
+        ? String(store.tuner.octave)
+        : '';
+    const cents = hasSig && Number.isFinite(store.tuner.cents) ? store.tuner.cents : 0;
+    const hz = hasSig && Number.isFinite(store.tuner.frequency_hz) ? store.tuner.frequency_hz : 0;
+    const needlePct = hasSig ? Math.max(4, Math.min(96, 50 + cents * 1.1)) : 50;
+    const inTune = hasSig && Math.abs(cents) <= 2.0;
+    const noteColor = !hasSig ? '#6c7580' : inTune ? '#29c46a' : '#ffb347';
+
+    tunerNoteEl.textContent = note;
+    tunerNoteEl.style.color = noteColor;
+    tunerNoteEl.style.textShadow = hasSig ? '0 0 30px rgba(41,196,106,.5)' : 'none';
+
+    const octEl = appRoot.querySelector<HTMLElement>('[data-live="tuner-octave"]');
+    if (octEl) octEl.textContent = oct;
+
+    const freqEl = appRoot.querySelector<HTMLElement>('[data-live="tuner-freq"]');
+    if (freqEl) freqEl.textContent = hasSig && hz > 0 ? `${hz.toFixed(2)} Hz` : '--- Hz';
+
+    const centsEl = appRoot.querySelector<HTMLElement>('[data-live="tuner-cents"]');
+    if (centsEl) {
+      centsEl.textContent = hasSig ? `${cents >= 0 ? '+' : ''}${cents.toFixed(1)} cents` : 'sem sinal';
+      centsEl.style.color = noteColor;
+    }
+
+    const needleEl = appRoot.querySelector<HTMLElement>('[data-live="tuner-needle"]');
+    if (needleEl) {
+      needleEl.style.left = `${needlePct.toFixed(1)}%`;
+      needleEl.style.background = noteColor;
+      needleEl.style.opacity = hasSig ? '1' : '0.35';
+      needleEl.style.boxShadow = hasSig ? `0 0 10px ${noteColor}` : 'none';
+    }
+
+    const strobeEl = appRoot.querySelector<HTMLElement>('[data-live="tuner-strobe"]');
+    if (strobeEl) {
+      strobeEl.style.background = hasSig
+        ? 'repeating-linear-gradient(90deg,#29c46a 0 22px,#0a0b0c 22px 44px)'
+        : '#101215';
+      strobeEl.style.backgroundPositionX = hasSig ? `${(cents * -1.8).toFixed(1)}px` : '0px';
+    }
+  }
+
+  // Atualização contínua do Osciloscópio CRT sem reconstruir a Bancada
+  const scopeSvg = appRoot.querySelector<SVGSVGElement>('[data-live="scope-svg"]');
+  if (scopeSvg) {
+    const scopeData = buildScopePaths(store);
+    let svgHtml = '';
+    if (scopeData.refPath) {
+      svgHtml += `<path data-scope-ref="true" d="${scopeData.refPath}" fill="none" stroke="rgba(87,255,176,0.28)" stroke-width="1.2" stroke-dasharray="4 4"/>`;
+    }
+    if (scopeData.mainPath) {
+      svgHtml += `<path data-scope-series="${store.crtMode}" data-point-count="${scopeData.pointCount}" d="${scopeData.mainPath}" fill="none" stroke="#57ffb0" stroke-width="2.2" style="filter:drop-shadow(0 0 4px #57ffb0)"/>`;
+    }
+    scopeSvg.innerHTML = svgHtml;
+
+    const capEl = appRoot.querySelector<HTMLElement>('[data-live="scope-caption"]');
+    if (capEl) capEl.textContent = scopeData.caption;
+
+    const overlayEl = appRoot.querySelector<HTMLElement>('[data-live="scope-no-signal"]');
+    if (overlayEl) {
+      if (scopeData.errMsg) {
+        overlayEl.style.cssText =
+          'position:absolute;inset:24px 0 32px;display:flex;align-items:center;justify-content:center;color:#ff6a4a;font-size:12px;font-weight:700;text-align:center;';
+        overlayEl.textContent = scopeData.errMsg;
+      } else if (scopeData.noSignalMsg) {
+        overlayEl.style.cssText =
+          'position:absolute;inset:24px 0 32px;display:flex;align-items:center;justify-content:center;color:#57ffb0;opacity:0.75;font-size:11px;font-weight:700;text-align:center;letter-spacing:.08em;';
+        overlayEl.textContent = scopeData.noSignalMsg;
+      } else {
+        overlayEl.style.cssText = 'display:none;';
+        overlayEl.textContent = '';
+      }
+    }
+
+    const statusEl = appRoot.querySelector<HTMLElement>('[data-live="scope-status"]');
+    if (statusEl) {
+      statusEl.textContent =
+        store.crtMode === 'waveform'
+          ? scopeData.noSignalMsg
+            ? 'aguardando sinal'
+            : `Vpp ${scopeData.vpp.toFixed(2)}`
+          : 'resposta calculada';
+    }
   }
 
   if (showStatusbar) {

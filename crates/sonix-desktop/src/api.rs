@@ -10,7 +10,7 @@ use ampforge_dsp::fx::drive::DriveModel;
 use ampforge_dsp::fx::eq::EqMode;
 use ampforge_dsp::looper::LooperPosition;
 use ampforge_dsp::modshop::{PowerTube, PreampTube, RectifierType, ToneStackTopology};
-use ampforge_dsp::tuner::{TunerPitchResult, TunerProcessor};
+use ampforge_dsp::tuner::{split_note_and_octave, TunerPitchResult, TunerProcessor};
 
 use crate::audio::{
     AudioDeviceEnumerator, AudioMode, AudioStatusTelemetry, ChainSplitMode, CleanInputRing,
@@ -531,7 +531,7 @@ impl Default for AppState {
             amp_volume_2: 0.0,
             amp_cut: 5.0,
             amp_model: "jcm800_2203".to_string(),
-            engine_oversampling: "4x".to_string(),
+            engine_oversampling: "2x".to_string(),
             input_boost: 2.5,
             gate_threshold_db: -65.0,
             input_source: "device".to_string(),
@@ -814,7 +814,7 @@ pub fn dispatch(
                             "4x" => 8,
                             _ => 16,
                         })
-                        .unwrap_or(8)
+                        .unwrap_or(4)
                 });
             let contention_silences = ctx.telemetry.dsp_contention_silence_blocks();
             let live_underruns = ctx.duplex_engine.as_ref().map(|d| d.underruns());
@@ -829,6 +829,7 @@ pub fn dispatch(
 
             let mut val = if let Ok(mut guard) = ctx.audio_telemetry.lock() {
                 if let Some(ref mut t) = *guard {
+                    let prev_algo = t.algorithmic_latency_samples;
                     t.adc_clips = clips;
                     t.algorithmic_latency_samples = algo_lat;
                     if let Some(u) = live_underruns {
@@ -837,10 +838,31 @@ pub fn dispatch(
                     if let Some(o) = live_overruns {
                         t.overruns = o;
                     }
-                    if t.estimated_roundtrip_ms <= 0.0 {
+                    let obs_in = ctx.telemetry.observed_input_period_frames();
+                    let obs_out = ctx.telemetry.observed_output_period_frames();
+                    let mut period_changed = false;
+                    if obs_in > 0 && obs_in != t.input_period_frames {
+                        t.input_period_frames = obs_in;
+                        t.driver_input_latency_ms =
+                            (obs_in as f32 / t.sample_rate.max(1) as f32) * 1000.0;
+                        period_changed = true;
+                    }
+                    if obs_out > 0 && obs_out != t.output_period_frames {
+                        t.output_period_frames = obs_out;
+                        t.driver_output_latency_ms =
+                            (obs_out as f32 / t.sample_rate.max(1) as f32) * 1000.0;
+                        period_changed = true;
+                    }
+                    if t.estimated_roundtrip_ms <= 0.0 || period_changed {
                         let algo_ms = (algo_lat as f32 / t.sample_rate.max(1) as f32) * 1000.0;
+                        let duplex_ms = (t.output_period_frames as f32 / t.sample_rate.max(1) as f32) * 1000.0;
                         t.estimated_roundtrip_ms =
-                            t.driver_input_latency_ms + t.driver_output_latency_ms + algo_ms;
+                            t.driver_input_latency_ms + t.driver_output_latency_ms + duplex_ms + algo_ms;
+                    } else if prev_algo != algo_lat {
+                        let delta_ms =
+                            ((algo_lat as f32 - prev_algo as f32) / t.sample_rate.max(1) as f32)
+                                * 1000.0;
+                        t.estimated_roundtrip_ms = (t.estimated_roundtrip_ms + delta_ms).max(0.0);
                     }
                     let mut v = serde_json::to_value(&*t).unwrap_or_else(|_| serde_json::json!({}));
                     if let Some(obj) = v.as_object_mut() {
@@ -886,7 +908,7 @@ pub fn dispatch(
                         "panics": 0,
                         "adc_clips": clips,
                         "measured_roundtrip_ms": serde_json::Value::Null,
-                        "estimated_roundtrip_ms": driver_ms * 2.0 + algo_ms,
+                        "estimated_roundtrip_ms": driver_ms * 3.0 + algo_ms,
                         "algorithmic_latency_samples": algo_lat,
                     })
                 }
@@ -905,7 +927,7 @@ pub fn dispatch(
                     .app_state
                     .lock()
                     .map(|st| st.engine_oversampling.clone())
-                    .unwrap_or_else(|_| "4x".to_string());
+                    .unwrap_or_else(|_| "2x".to_string());
                 obj.insert(
                     "oversampling".to_string(),
                     serde_json::json!(ov_mode),
@@ -959,16 +981,21 @@ pub fn dispatch(
         }
         "/api/tuner" => {
             if method == "GET" {
-                let (is_muted, is_active) = if let Ok(st) = ctx.app_state.lock() {
-                    (st.tuner_output == "mute" && st.tuner_enabled, st.tuner_enabled)
+                let (is_muted, is_active, ref_hz) = if let Ok(st) = ctx.app_state.lock() {
+                    (
+                        st.tuner_output == "mute" && st.tuner_enabled,
+                        st.tuner_enabled,
+                        st.tuner_ref_hz.clamp(430.0, 450.0),
+                    )
                 } else {
-                    (false, false)
+                    (false, false, 440.0)
                 };
                 let res = if is_active {
                     if let Some(ref ring) = ctx.clean_input_ring {
                         if let Ok(mut session) = ctx.calibration_session.lock() {
                             let sr = ring.sample_rate();
                             session.tuner_processor.set_sample_rate(sr);
+                            session.tuner_processor.set_a4_reference_hz(ref_hz);
                             let CalibrationSession {
                                 ref mut tuner_processor,
                                 ref mut tuner_scratch,
@@ -1016,13 +1043,25 @@ pub fn dispatch(
                         frequency_hz: 0.0,
                     }
                 };
+                let signal_present = res.note_name != "---" && res.frequency_hz > 0.0;
+                let (note_letter, octave) = if signal_present {
+                    split_note_and_octave(&res.note_name)
+                } else {
+                    ("---", None)
+                };
                 let resp = serde_json::json!({
-                    "note": res.note_name,
-                    "frequency_hz": res.frequency_hz,
-                    "cents": res.cents_deviation,
-                    "in_tune": res.cents_deviation.abs() <= 1.0 && res.note_name != "---",
+                    "note": if signal_present { res.note_name.as_str() } else { "---" },
+                    "note_letter": note_letter,
+                    "octave": octave,
+                    "frequency_hz": if signal_present { res.frequency_hz } else { 0.0 },
+                    "cents": if signal_present { res.cents_deviation } else { 0.0 },
+                    "confidence": if signal_present { 1.0 } else { 0.0 },
+                    "in_tune": signal_present && res.cents_deviation.abs() <= 1.0,
+                    "signal_present": signal_present,
                     "active": is_active,
+                    "enabled": is_active,
                     "muted": is_muted,
+                    "ref_hz": ref_hz,
                 });
                 (200, "application/json", serde_json::to_vec(&resp).unwrap())
             } else {
@@ -1360,26 +1399,42 @@ pub fn dispatch(
                         (200, "application/json", serde_json::to_vec(&resp).unwrap())
                     }
                     "waveform" => {
-                        let n = 128;
-                        let mut di = vec![0.0f32; n];
-                        let mut out_wf = vec![0.0f32; n];
-                        let mut has_signal = false;
-                        if let Some(ref ring) = ctx.clean_input_ring {
-                            let read = ring.read_latest_since(0, &mut di);
-                            if read > 0 {
-                                has_signal = true;
-                            }
-                        }
-                        if let Some(ref ring) = ctx.scope_output_ring {
-                            let read = ring.read_latest_since(0, &mut out_wf);
-                            if read > 0 {
-                                has_signal = true;
-                            }
-                        }
-                        let di_json: Vec<f64> = di.iter().map(|&v| v as f64).collect();
-                        let out_json: Vec<f64> = out_wf.iter().map(|&v| v as f64).collect();
+                        let max_n = 1024usize;
+                        let mut di_buf = vec![0.0f32; max_n];
+                        let mut out_buf = vec![0.0f32; max_n];
+                        let read_di = ctx
+                            .clean_input_ring
+                            .as_ref()
+                            .map(|ring| ring.read_latest_since(0, &mut di_buf))
+                            .unwrap_or(0);
+                        let read_out = ctx
+                            .scope_output_ring
+                            .as_ref()
+                            .map(|ring| ring.read_latest_since(0, &mut out_buf))
+                            .unwrap_or(0);
+                        let di_peak = di_buf[..read_di]
+                            .iter()
+                            .fold(0.0f32, |m, &v| m.max(v.abs()));
+                        let out_peak = out_buf[..read_out]
+                            .iter()
+                            .fold(0.0f32, |m, &v| m.max(v.abs()));
+                        let di_active = read_di > 0 && di_peak > 1e-4;
+                        let out_active = read_out > 0 && out_peak > 1e-4;
+                        let has_signal = di_active || out_active;
+                        let di_json: Vec<f64> = if has_signal {
+                            di_buf[..read_di].iter().map(|&v| v as f64).collect()
+                        } else {
+                            Vec::new()
+                        };
+                        let out_json: Vec<f64> = if has_signal {
+                            out_buf[..read_out].iter().map(|&v| v as f64).collect()
+                        } else {
+                            Vec::new()
+                        };
                         let resp = serde_json::json!({
                             "no_signal": !has_signal,
+                            "di_active": di_active,
+                            "output_active": out_active,
                             "waveform": {
                                 "di": di_json,
                                 "output": out_json

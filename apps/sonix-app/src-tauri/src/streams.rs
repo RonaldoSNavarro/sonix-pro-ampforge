@@ -59,7 +59,7 @@ impl StreamCoordinator {
             seq_telemetry: AtomicU64::new(0),
             seq_tuner: AtomicU64::new(0),
             seq_scope: AtomicU64::new(0),
-            scope_mode: Mutex::new("transfer".to_string()),
+            scope_mode: Mutex::new("waveform".to_string()),
             channels: Arc::new(Mutex::new(None)),
             loop_started: AtomicBool::new(false),
         }
@@ -138,7 +138,6 @@ impl StreamCoordinator {
 
         let coordinator = Arc::clone(self);
         std::thread::spawn(move || {
-            let mut tuner_divider = 0u8;
             loop {
                 std::thread::sleep(Duration::from_millis(33));
                 if !coordinator.is_visible() {
@@ -156,19 +155,16 @@ impl StreamCoordinator {
                     let _ = ch.telemetry.send(frame);
                 }
 
-                tuner_divider = tuner_divider.wrapping_add(1);
-                if tuner_divider % 2 == 0 {
-                    if let Some(t_frame) = coordinator.next_tuner_frame(&ctx) {
-                        let _ = ch.tuner.send(t_frame);
-                    }
-                    let mode = coordinator
-                        .scope_mode
-                        .lock()
-                        .map(|g| g.clone())
-                        .unwrap_or_else(|_| "transfer".to_string());
-                    if let Some(s_frame) = coordinator.next_scope_frame(&ctx, &mode) {
-                        let _ = ch.scope.send(s_frame);
-                    }
+                if let Some(t_frame) = coordinator.next_tuner_frame(&ctx) {
+                    let _ = ch.tuner.send(t_frame);
+                }
+                let mode = coordinator
+                    .scope_mode
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_else(|_| "waveform".to_string());
+                if let Some(s_frame) = coordinator.next_scope_frame(&ctx, &mode) {
+                    let _ = ch.scope.send(s_frame);
                 }
             }
         });

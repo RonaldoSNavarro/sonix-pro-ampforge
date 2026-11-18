@@ -140,28 +140,35 @@ export function renderPalcoScreen(store: AppStore): HTMLElement {
 
   const tBody = document.createElement('div');
   tBody.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;';
-  const note = store.tuner.note ?? 'A';
-  const oct = store.tuner.octave ?? 2;
-  const cents = store.tuner.cents ?? 1.5;
-  const hz = store.tuner.frequency_hz ?? 110.0;
-  const needlePct = Math.max(4, Math.min(96, 50 + cents * 1.1));
+  const hasSig = Boolean(
+    store.tuner.signal_present ?? (store.tuner.frequency_hz > 0 && store.tuner.note !== '---')
+  );
+  const note = hasSig ? (store.tuner.note || '---') : '---';
+  const oct = hasSig && store.tuner.octave !== null && Number.isFinite(store.tuner.octave) ? String(store.tuner.octave) : '';
+  const cents = hasSig && Number.isFinite(store.tuner.cents) ? store.tuner.cents : 0;
+  const hz = hasSig && Number.isFinite(store.tuner.frequency_hz) ? store.tuner.frequency_hz : 0;
+  const needlePct = hasSig ? Math.max(4, Math.min(96, 50 + cents * 1.1)) : 50;
+  const inTune = hasSig && Math.abs(cents) <= 2.0;
+  const noteColor = !hasSig ? '#6c7580' : inTune ? '#29c46a' : '#ffb347';
+  const freqTxt = hasSig && hz > 0 ? `${hz.toFixed(2)} Hz` : '--- Hz';
+  const centsTxt = hasSig ? `${cents >= 0 ? '+' : ''}${cents.toFixed(1)} cents` : 'sem sinal';
 
   tBody.innerHTML = `
     <div style="display:flex;align-items:baseline;gap:6px">
-      <span class="m-osw" style="font-size:150px;font-weight:700;line-height:.9;color:#29c46a;text-shadow:0 0 30px rgba(41,196,106,.5)">${note}</span>
-      <span class="m-osw" style="font-size:44px;color:#a3abb4">${oct}</span>
+      <span data-live="tuner-note" class="m-osw" style="font-size:150px;font-weight:700;line-height:.9;color:${noteColor};text-shadow:${hasSig ? '0 0 30px rgba(41,196,106,.5)' : 'none'}">${note}</span>
+      <span data-live="tuner-octave" class="m-osw" style="font-size:44px;color:#a3abb4">${oct}</span>
     </div>
-    <div style="width:100%;max-width:760px;height:46px;border-radius:6px;overflow:hidden;position:relative;box-shadow:inset 0 2px 6px #000;background:repeating-linear-gradient(90deg,#29c46a 0 22px,#0a0b0c 22px 44px)">
+    <div data-live="tuner-strobe" style="width:100%;max-width:760px;height:46px;border-radius:6px;overflow:hidden;position:relative;box-shadow:inset 0 2px 6px #000;background:${hasSig ? 'repeating-linear-gradient(90deg,#29c46a 0 22px,#0a0b0c 22px 44px)' : '#101215'}">
       <div style="position:absolute;left:50%;top:0;bottom:0;width:3px;margin-left:-1.5px;background:#fff;box-shadow:0 0 8px #fff"></div>
     </div>
     <div style="width:100%;max-width:760px;position:relative;height:30px">
       <div style="position:absolute;left:0;right:0;top:14px;height:2px;background:#2a2f36"></div>
       <div style="position:absolute;left:46%;width:8%;top:8px;height:14px;border-radius:3px;background:rgba(41,196,106,.2)"></div>
-      <div style="position:absolute;top:2px;left:${needlePct.toFixed(1)}%;width:6px;height:26px;margin-left:-3px;border-radius:3px;background:#29c46a;box-shadow:0 0 10px #29c46a"></div>
+      <div data-live="tuner-needle" style="position:absolute;top:2px;left:${needlePct.toFixed(1)}%;width:6px;height:26px;margin-left:-3px;border-radius:3px;background:${noteColor};opacity:${hasSig ? '1' : '0.35'};box-shadow:${hasSig ? `0 0 10px ${noteColor}` : 'none'}"></div>
     </div>
     <div class="m-mono" style="display:flex;gap:28px;font-size:15px">
-      <span style="color:#c9ced4">${hz.toFixed(2)} Hz</span>
-      <span style="color:#29c46a">${cents >= 0 ? '+' : ''}${cents.toFixed(1)} cents</span>
+      <span data-live="tuner-freq" style="color:#c9ced4">${freqTxt}</span>
+      <span data-live="tuner-cents" style="color:${noteColor}">${centsTxt}</span>
       <span style="color:#a3abb4">temperamento igual</span>
     </div>
   `;

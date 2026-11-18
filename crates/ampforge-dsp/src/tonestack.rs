@@ -49,10 +49,10 @@ pub fn resolved_fmv_components(
 
     match topo {
         ToneStackTopology::MarshallCathodeFollower | ToneStackTopology::Model => FmvComponents {
-            // Marshall 1959 / 2203 cathode-follower fed FMV stack (33k, 470pF, 22nF, 22nF)
-            r_treble: 250_000.0,
+            // Marshall 1959 / 2203 cathode-follower fed FMV stack (33k, 470pF, 22nF, 22nF, 220k Treble, 22k Mid)
+            r_treble: 220_000.0,
             r_bass: 1_000_000.0,
-            r_mid: 25_000.0,
+            r_mid: 22_000.0,
             r_slope: 33_000.0,
             r_load: 1_000_000.0,
             c1: 470e-12,

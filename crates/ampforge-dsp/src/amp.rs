@@ -458,6 +458,7 @@ pub struct WhiteBoxAmpProcessor {
     interstage_hp2: f64,
     interstage_hp3: f64,
     miller_lp1: f64,
+    miller_lp2: f64,
     ac30_cut_lp: f64,
     passive_tonestack: PassiveToneStack,
     depth_filter: BiquadFilter,
@@ -806,34 +807,35 @@ const SINC_WEIGHTS: [[f64; 8]; 8] = [
 
 impl WhiteBoxAmpProcessor {
     pub fn create_voicing_filters(model: AmpModelId, sr: f64) -> (BiquadFilter, BiquadFilter) {
-        // Curvas físicas documentadas em docs/amps/voicing-fontes.md
+        // Curvas físicas documentadas em docs/amps/voicing-fontes.md e esquemas elétricos originais
         match model {
             AmpModelId::BritJcm800_2203 => (
-                BiquadFilter::peaking(1600.0, 2.0, 1.1, sr),
-                BiquadFilter::low_shelf(110.0, -1.5, sr),
+                BiquadFilter::peaking(1650.0, 3.8, 1.15, sr),
+                BiquadFilter::low_shelf(180.0, -4.2, sr),
             ),
             AmpModelId::BritPlexi1959 => (
-                BiquadFilter::peaking(2400.0, 2.5, 0.9, sr),
-                BiquadFilter::low_shelf(120.0, 1.5, sr),
+                BiquadFilter::peaking(2500.0, 2.6, 0.90, sr),
+                BiquadFilter::low_shelf(160.0, 2.8, sr),
             ),
             AmpModelId::UsTwinBlackface65 => (
-                BiquadFilter::high_shelf(4500.0, 1.5, sr),
-                BiquadFilter::low_shelf(80.0, 0.5, sr),
+                BiquadFilter::high_shelf(4200.0, 3.2, sr),
+                BiquadFilter::peaking(450.0, -4.5, 1.0, sr),
             ),
             AmpModelId::CaliDualRectoRevF => (
-                BiquadFilter::peaking(85.0, 2.0, 1.4, sr),
-                BiquadFilter::peaking(750.0, -2.0, 1.1, sr),
+                BiquadFilter::peaking(85.0, 3.8, 1.4, sr),
+                BiquadFilter::peaking(750.0, -3.5, 1.1, sr),
             ),
             AmpModelId::UkAc30TopBoost => (
-                BiquadFilter::peaking(3800.0, 2.5, 1.1, sr),
-                BiquadFilter::low_shelf(140.0, -2.5, sr),
+                BiquadFilter::peaking(3300.0, 3.5, 1.1, sr),
+                BiquadFilter::low_shelf(150.0, -3.5, sr),
             ),
         }
     }
 
     pub fn new(model_id: AmpModelId) -> Self {
-        let sr = 48000.0 * 8.0;
-        let (v1, v2) = Self::create_voicing_filters(model_id, sr);
+        let default_os = 2usize;
+        let sr = 48000.0 * (default_os as f32);
+        let (v1, v2) = Self::create_voicing_filters(model_id, sr as f64);
         let mut s = Self {
             model_id,
             panel: AmpFrontPanel::default(),
@@ -845,6 +847,7 @@ impl WhiteBoxAmpProcessor {
             interstage_hp2: 0.0,
             interstage_hp3: 0.0,
             miller_lp1: 0.0,
+            miller_lp2: 0.0,
             ac30_cut_lp: 0.0,
             passive_tonestack: PassiveToneStack::new(),
             depth_filter: BiquadFilter::default(),
@@ -865,7 +868,7 @@ impl WhiteBoxAmpProcessor {
             target_mod_settings: None,
             model_crossfade: 0.0,
             crossfade_step: 1.0 / (48000.0 * 0.020),
-            oversampling_factor: 8,
+            oversampling_factor: default_os,
             sag_state: 0.0,
             xformer_lf_state: 0.0,
             speaker_res_filter: BiquadFilter::default(),
@@ -1200,7 +1203,15 @@ impl WhiteBoxAmpProcessor {
         let pre_gain_db = -44.0 + (self.panel.input_gain as f64 / 10.0) * 62.0;
         let pre_gain_lin = 10.0f64.powf(pre_gain_db / 20.0);
 
-        let od_gain_db = (self.panel.overdrive as f64 / 10.0) * 36.0;
+        let od_norm = (self.panel.overdrive as f64 / 10.0).clamp(0.0, 1.0);
+        let od_gain_db = match self.model_id {
+            // Twin Reverb AB763 não tem estágio de Overdrive: em overdrive=5.0 (padrão) mantém headroom limpo real
+            AmpModelId::UsTwinBlackface65 => ((od_norm - 0.5).max(0.0)) * 22.0,
+            // Plexi 1959 & AC30 Top Boost: overdrive atua como trim moderado sem mascarar dinâmica limpa
+            AmpModelId::BritPlexi1959 | AmpModelId::UkAc30TopBoost => od_norm * 18.0,
+            // JCM800 2203 & Dual Rectifier Rev F: cascata de alto ganho
+            AmpModelId::BritJcm800_2203 | AmpModelId::CaliDualRectoRevF => od_norm * 36.0,
+        };
         let od_gain_lin = 10.0f64.powf(od_gain_db / 20.0);
 
         let vol2_gain_db = -44.0 + (self.panel.volume_2 as f64 / 10.0) * 62.0;
@@ -1256,7 +1267,7 @@ impl WhiteBoxAmpProcessor {
                     (1.0 + (gain as f64 / 10.0) * 18.0 + (vol2 as f64 / 10.0) * 6.0) / power_tube_headroom
                 }
                 AmpModelId::UsTwinBlackface65 => {
-                    (0.85 + (gain as f64 / 10.0) * 2.2) / power_tube_headroom
+                    (0.55 + (gain as f64 / 10.0) * 1.65) / power_tube_headroom
                 }
                 AmpModelId::CaliDualRectoRevF => {
                     let master_pot = master as f64 / 10.0;
@@ -1362,7 +1373,7 @@ impl WhiteBoxAmpProcessor {
             0.0
         };
         let rev_mix = if is_twin_vibrato_ch {
-            (self.panel.reverb as f64 / 10.0).clamp(0.0, 1.0) * 1.45
+            (self.panel.reverb as f64 / 10.0).clamp(0.0, 1.0) * 3.10
         } else {
             0.0
         };
@@ -1442,6 +1453,7 @@ impl WhiteBoxAmpProcessor {
 
                         let ch1_sig = if ch1_on {
                             let g1 = (s * pre_gain_lin * od_gain_lin * lead_mult * tube_gain) / v1_headroom;
+                            // Canal I High Treble do Super Lead mantem corpo nos graves ao somar no V2a
                             triode_adaa1(g1, &mut self.adaa_pre_prev, kp_base, kn_base) * v1_headroom
                         } else {
                             0.0
@@ -1459,13 +1471,19 @@ impl WhiteBoxAmpProcessor {
                     }
                     AmpModelId::BritJcm800_2203 => {
                         let is_low = self.panel.input_jack.is_low_pad();
-                        let base_drive = pre_gain_lin * od_gain_lin * lead_mult * tube_gain;
+                        let raw_drive = pre_gain_lin * od_gain_lin * lead_mult * tube_gain;
+                        // Limitação física de condução de grade em cascata extrema (joelho de 4a ordem preserva gain=10, od=0 linear)
+                        let base_drive = raw_drive / (1.0 + (raw_drive / 18.5).powi(4)).powf(0.25);
+                        // Grid-stopper de 68 kΩ + capacitância de Miller de V1a (~6.4 kHz)
+                        let alpha_grid_jcm = (2.0 * std::f64::consts::PI * 6400.0 / sr).clamp(0.01, 0.85);
+                        self.miller_lp2 += alpha_grid_jcm * (s - self.miller_lp2);
+                        let s_v1a_in = self.miller_lp2;
                         // V1a stage (Low jack skips V1a excess gain while matching -6dB input pad)
                         let s_after_v1a = if is_low {
-                            s * base_drive
+                            s_v1a_in * base_drive
                         } else {
                             triode_adaa1(
-                                (s * 1.05 * base_drive) / v1_headroom,
+                                (s_v1a_in * 1.05 * base_drive) / v1_headroom,
                                 &mut self.adaa_pre_prev,
                                 kp_base,
                                 kn_base,
@@ -1475,19 +1493,25 @@ impl WhiteBoxAmpProcessor {
                         let v1b_in = one_pole_hpf(&mut self.interstage_hp1, s_after_v1a, alpha_hp_tight);
                         let kp_cold = (1.0 + 11.0 * asym) * ef86_knee;
                         let kn_cold = ((1.0 - 2.6 * asym) * ef86_knee).max(0.35);
-                        let v1b = triode_adaa1((v1b_in * 1.08) / v1_headroom, &mut self.adaa_s2_prev, kp_cold, kn_cold)
+                        let v1b = triode_adaa1((v1b_in * 1.12) / v1_headroom, &mut self.adaa_s2_prev, kp_cold, kn_cold)
                             * v1_headroom;
+                        // Divisor 470k + capacitância de Miller entre V1b e V2a (~7.0 kHz) antes do cathode follower
+                        let alpha_miller_jcm = (2.0 * std::f64::consts::PI * 7000.0 / sr).clamp(0.01, 0.85);
+                        self.miller_lp1 += alpha_miller_jcm * (v1b - self.miller_lp1);
                         // V2a + V2b Cathode Follower
-                        let v2_in = one_pole_hpf(&mut self.interstage_hp2, v1b, alpha_hp_loose);
+                        let v2_in = one_pole_hpf(&mut self.interstage_hp2, self.miller_lp1, alpha_hp_loose);
                         triode_adaa1((v2_in * 1.0) / v1_headroom, &mut self.adaa_s3_prev, kp_base, kn_base)
                             * v1_headroom
                     }
                     AmpModelId::UsTwinBlackface65 => {
-                        // High-headroom AB763 clean triode stages (Volume -> Bright -> Tone Stack)
-                        let twin_headroom = v1_headroom * 1.55;
-                        let g_twin = (s * pre_gain_lin * 0.72 * od_gain_lin * lead_mult * tube_gain) / twin_headroom;
-                        let v1 = triode_adaa1(g_twin, &mut self.adaa_pre_prev, kp_base * 0.85, kn_base) * twin_headroom;
-                        one_pole_hpf(&mut self.interstage_hp1, v1, alpha_hp_loose * 0.6)
+                        // Circuito AB763: V1a (1.5k/22uF) -> Volume + Bright -> Tone Stack passivo ENTRE V1a e V1b -> V1b recovery
+                        let twin_headroom = v1_headroom * 2.50;
+                        let g_v1a = (s * pre_gain_lin * 1.95 * od_gain_lin * lead_mult * tube_gain) / twin_headroom;
+                        let v1a = triode_adaa1(g_v1a, &mut self.adaa_pre_prev, kp_base * 0.78, kn_base * 0.88) * twin_headroom;
+                        let v1a_hp = one_pole_hpf(&mut self.interstage_hp1, v1a, alpha_hp_loose * 0.40);
+                        let after_ts = self.passive_tonestack.process(v1a_hp) * ts_recovery;
+                        let g_v1b = (after_ts * 1.75) / twin_headroom;
+                        triode_adaa1(g_v1b, &mut self.adaa_s2_prev, kp_base * 0.82, kn_base * 0.90) * twin_headroom
                     }
                     AmpModelId::CaliDualRectoRevF => {
                         let (stage_drive, n_stages, use_tight_hp) = match self.panel.channel_mode {
@@ -1529,11 +1553,12 @@ impl WhiteBoxAmpProcessor {
                     }
                 };
 
-                // 3. Passive Interactive Tone Stack (or Normal bypass on AC30 Normal channel)
-                let skip_top_boost_stack = self.model_id == AmpModelId::UkAc30TopBoost
-                    && self.panel.input_jack.is_normal_channel()
-                    && self.mod_settings.tonestack == ToneStackTopology::Model;
-                let v_base = if skip_top_boost_stack {
+                // 3. Passive Interactive Tone Stack pós-pré (Twin AB763 já passou entre V1a e V1b; AC30 Normal bypassa Top Boost)
+                let skip_post_tonestack = (self.model_id == AmpModelId::UsTwinBlackface65)
+                    || (self.model_id == AmpModelId::UkAc30TopBoost
+                        && self.panel.input_jack.is_normal_channel()
+                        && self.mod_settings.tonestack == ToneStackTopology::Model);
+                let v_base = if skip_post_tonestack {
                     v_pre_out
                 } else {
                     self.passive_tonestack.process(v_pre_out) * ts_recovery
@@ -1596,7 +1621,7 @@ impl WhiteBoxAmpProcessor {
                 self.adaa_power_prev = power_in;
 
                 // NFB Linearization on power stage distortion (Modern Dual Rect / AC30 use eff_nfb=0)
-                let nfb_linearization = 1.0 / (1.0 + (eff_nfb / 10.0) * 3.0);
+                let nfb_linearization = 1.0 / (1.0 + (eff_nfb / 10.0) * 1.15);
                 let power_stage_dist = power_sat_raw - power_in_raw;
                 let power_sat = power_in_raw + power_stage_dist * nfb_linearization;
 
@@ -1630,13 +1655,13 @@ impl WhiteBoxAmpProcessor {
                 self.sag_state += alpha_sag * (target_drop - self.sag_state);
                 let b_plus_factor = ((1.0 - self.sag_state) * variac_scale).max(0.15);
 
-                // Safe output limiter inside oversampled loop
+                // Safe output limiter inside oversampled loop (limiar 0.78 preserva ataque transiente; teto 0.85 evita Gibbs > 0.999 pós-AA)
                 let lim_in = power_out * b_plus_factor * self.standby_env;
                 let abs_s = lim_in.abs();
-                let mut lim_out = if abs_s <= 0.65 {
+                let mut lim_out = if abs_s <= 0.78 {
                     lim_in
                 } else {
-                    lim_in.signum() * (0.65 + 0.25 * ((abs_s - 0.65) / 0.25).tanh())
+                    lim_in.signum() * (0.78 + 0.07 * ((abs_s - 0.78) / 0.07).tanh())
                 };
 
                 // Anti-Aliasing Decimation Filter

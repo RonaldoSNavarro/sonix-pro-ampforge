@@ -65,12 +65,17 @@ function makeRecorder() {
       rec.commands.push({ cmd: 'load_preset', payload });
       return {};
     },
+    setAudioDevice: async (payload) => {
+      rec.commands.push({ cmd: 'set_audio_device', payload });
+      return {};
+    },
     getAudioStatus: async () => ({}),
     getState: noop,
     getScope: noop,
     listPresets: async () => ({ presets: [] }),
     getDevices: async () => ({ devices: [] }),
     startStreams: noop,
+    setStreamVisible: noop,
     setFullscreen: noop,
   };
   return { rec, transport };
@@ -431,9 +436,9 @@ test('CA-9: Modifier no Inspetor tem botões habilitados, alterna fonte e explic
   screen.remove();
 });
 
-test('CA-17: Oversampling tem padrão consistente 4x, mostra impacto de CPU/latência e botão DI chama setInputDi', async () => {
-  const { store } = freshStore();
-  assert.equal(store.getParam('engine.oversampling', '4x'), '4x', 'CA-17: padrão de oversampling na store deve ser 4x');
+test('CA-17: Oversampling tem padrão consistente 2x, mostra impacto de CPU/latência e low-latency ajusta buffer para 64', async () => {
+  const { store, rec } = freshStore();
+  assert.equal(store.getParam('engine.oversampling', '2x'), '2x', 'CA-17: padrão de oversampling na store deve ser 2x');
 
   store.screen = 'audio';
   store.audioTab = 'perf';
@@ -442,6 +447,111 @@ test('CA-17: Oversampling tem padrão consistente 4x, mostra impacto de CPU/lat�
   const txt = screen.textContent || '';
   assert.ok(txt.includes('latência') || txt.includes('amostras'), 'CA-17: aba Desempenho deve explicar impacto de CPU e latência');
   screen.remove();
+
+  // Ao selecionar wasapi_shared_low_latency a partir do default 128, buffer padrão cai para 64
+  store.audioStatus.mode = 'wasapi_shared';
+  store.audioStatus.output_period_frames = 128;
+  store.audioTab = 'dev';
+  const devScreen = renderAudioScreen(store);
+  document.body.appendChild(devScreen);
+  const selects = [...devScreen.querySelectorAll('select[data-control-id="audio.device_apply"]')];
+  const driverSel = selects[0];
+  assert.ok(driverSel, 'Seletor de driver deve existir na aba Dispositivo e latência');
+  driverSel.value = 'wasapi_shared_low_latency';
+  driverSel.dispatchEvent(new Event('change', { bubbles: true }));
+  const applyBtn = [...devScreen.querySelectorAll('button[data-control-id="audio.device_apply"]')].find(
+    (b) => b.textContent === 'Aplicar',
+  );
+  assert.ok(applyBtn, 'Botão Aplicar deve existir');
+  applyBtn.click();
+  await new Promise((r) => setTimeout(r, 10));
+  const setDevCall = rec.commands.find((c) => c.cmd === 'set_audio_device');
+  assert.ok(setDevCall, 'Aplicar deve invocar set_audio_device');
+  assert.equal(setDevCall.payload?.mode, 'wasapi_shared_low_latency');
+  assert.equal(setDevCall.payload?.buffer_size, 64, 'Trocar para baixa latência deve ajustar buffer padrão de 128 para 64');
+  devScreen.remove();
+});
+
+test('CA-13 & CA-15: Afinador e osciloscópio atualizam em tempo real sem valores fictícios ou oitava duplicada', () => {
+  const { store } = freshStore();
+  // Sem sinal inicial: sem nota/frequência fictícia "A2 / 110.00 Hz"
+  assert.equal(store.tuner.note, '---');
+  assert.equal(store.tuner.octave, null);
+  assert.equal(store.tuner.frequency_hz, 0);
+
+  store.screen = 'palco';
+  store.palcoMode = 'tuner';
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  const unmount = mountAppShell(root, store);
+
+  assert.ok(root.textContent?.includes('---'), 'Afinador inicial deve indicar --- sem sinal');
+  assert.ok(!root.textContent?.includes('110.00 Hz'), 'Afinador inicial não deve exibir 110.00 Hz fictício');
+
+  // Emite evento de stream do afinador com formato do backend ("note": "A2", "note_letter": "A", "octave": 2)
+  store.applyTunerPayload?.({
+    note: 'A2',
+    note_letter: 'A',
+    octave: 2,
+    frequency_hz: 110.05,
+    cents: 0.8,
+    signal_present: true,
+    enabled: true,
+  });
+  // Simula entrega via método público/handleTuner se não houver, ou via subscriber:
+  const noteEl = root.querySelector('[data-live="tuner-note"]');
+  const octEl = root.querySelector('[data-live="tuner-octave"]');
+  const freqEl = root.querySelector('[data-live="tuner-freq"]');
+  assert.ok(noteEl && octEl && freqEl, 'Palco deve expor elementos [data-live="tuner-*"] para atualização em tempo real');
+  assert.equal(noteEl.textContent, 'A', 'Nota do afinador não pode duplicar oitava (ex: A22)');
+  assert.equal(octEl.textContent, '2', 'Oitava do afinador deve ser exibida separadamente');
+  assert.ok(freqEl.textContent?.includes('110.05 Hz'), `Frequência ao vivo não atualizou: ${freqEl.textContent}`);
+
+  // Ao sumir o sinal, volta para ---
+  store.applyTunerPayload?.({
+    note: '---',
+    note_letter: '---',
+    octave: null,
+    frequency_hz: 0.0,
+    cents: 0.0,
+    signal_present: false,
+    enabled: true,
+  });
+  assert.equal(noteEl.textContent, '---');
+  assert.equal(octEl.textContent, '');
+  assert.ok(freqEl.textContent?.includes('---'));
+
+  // Osciloscópio CRT em Bancada: sem sinal não fabrica onda senoidal/tanh sintética no modo waveform
+  store.setScreen('chassi');
+  store.crtMode = 'waveform';
+  store.applyScopePayload('waveform', { no_signal: true, waveform: { di: [], output: [] } });
+  const scopeOverlay = root.querySelector('[data-live="scope-no-signal"]');
+  assert.ok(scopeOverlay && scopeOverlay.textContent?.includes('SEM SINAL'), 'Modo waveform sem sinal deve mostrar aviso explícito em vez de onda sintética');
+  assert.equal(root.querySelector('svg[data-live="scope-svg"] path[data-scope-series="waveform"]'), null, 'Não pode desenhar curva sintética em waveform sem sinal');
+
+  // Quando chegam amostras reais no stream 'scope', atualiza SVG em tempo real sem reconstruir tela
+  const svgBefore = root.querySelector('svg[data-live="scope-svg"]');
+  const diSig = Array.from({ length: 512 }, (_, i) => 0.25 * Math.sin((2 * Math.PI * 110 * i) / 48000));
+  const outSig = diSig.map((v) => Math.tanh(v * 2.0));
+  store.applyScopePayload('waveform', { no_signal: false, waveform: { di: diSig, output: outSig } });
+  const svgAfter = root.querySelector('svg[data-live="scope-svg"]');
+  assert.equal(svgBefore, svgAfter, 'Atualização do osciloscópio não deve reconstruir o SVG');
+  const mainPath = root.querySelector('svg[data-live="scope-svg"] path[data-scope-series="waveform"]');
+  assert.ok(mainPath && (mainPath.getAttribute('d') || '').length > 20, 'Stream scope deve desenhar o path da forma de onda real');
+
+  // Botões chassi.crt_mode atualizam aria-pressed imediatamente ao clicar
+  const crtBtnsBefore = [...root.querySelectorAll('button[data-control-id="chassi.crt_mode"]')];
+  const wfBtnBefore = crtBtnsBefore.find((b) => b.textContent === 'Forma de onda');
+  const trBtnBefore = crtBtnsBefore.find((b) => b.textContent === 'Transferência');
+  assert.equal(wfBtnBefore?.getAttribute('aria-pressed'), 'true');
+  assert.equal(trBtnBefore?.getAttribute('aria-pressed'), 'false');
+  trBtnBefore.click();
+  const crtBtnsAfter = [...root.querySelectorAll('button[data-control-id="chassi.crt_mode"]')];
+  assert.equal(crtBtnsAfter.find((b) => b.textContent === 'Forma de onda')?.getAttribute('aria-pressed'), 'false');
+  assert.equal(crtBtnsAfter.find((b) => b.textContent === 'Transferência')?.getAttribute('aria-pressed'), 'true');
+
+  unmount();
+  root.remove();
 });
 
 test('CA-18: Tap Tempo em BPM maior aumenta dly_1.repeat_rate (e diminui o tempo de delay em ms)', () => {

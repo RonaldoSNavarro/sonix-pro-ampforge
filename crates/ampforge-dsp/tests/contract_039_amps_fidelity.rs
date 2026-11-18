@@ -1,4 +1,6 @@
 use ampforge_dsp::amp::{AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
+use ampforge_dsp::cab::VirtualCabProcessor;
+use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
 use ampforge_dsp::modshop::{PowerTube, ToneStackTopology};
 use ampforge_dsp::tonestack::{
     analog_tonestack_magnitude_db, resolved_fmv_components, PassiveToneStack,
@@ -330,5 +332,242 @@ fn test_ca_08_presence_and_depth_scale_with_effective_nfb() {
         (v10_hi - v0_hi) > 2.0,
         "With NFB connected, Presence=10 must boost 4.2 kHz > 2 dB, got {:.2} dB",
         v10_hi - v0_hi
+    );
+}
+
+#[test]
+fn test_ca_09_five_amp_models_distinct_tonal_footprint_and_transient_attack() {
+    // 1. Schematic component verification: Marshall 1959/2203 uses 220k Treble and 22k Mid pots
+    let m_comps = resolved_fmv_components(ToneStackTopology::MarshallCathodeFollower, 5.0, 5.0, 5.0);
+    assert!(
+        (m_comps.r_treble - 220_000.0).abs() < 1.0 && (m_comps.r_mid - 22_000.0).abs() < 1.0,
+        "Marshall FMV deve usar R_treble=220k e R_mid=22k (obtido treb={}, mid={})",
+        m_comps.r_treble,
+        m_comps.r_mid
+    );
+
+    // 2. Cab default hi-cut (4.2 kHz for standalone 4x12 cab) supports calibrating to 8.2 kHz for open transient clarity
+    let mut cab = VirtualCabProcessor::new();
+    cab.set_sample_rate(48000.0);
+    let tone_6k: Vec<f32> = (0..4096)
+        .map(|i| 0.1 * (2.0 * std::f32::consts::PI * 6000.0 * (i as f32 / 48000.0)).sin())
+        .collect();
+    let mut out_4200 = vec![0.0f32; 4096];
+    cab.process(&tone_6k, &mut out_4200);
+    let db_6k_at_4200 = 20.0 * (rms(&out_4200[1024..]) / 0.07071f32).max(1e-6).log10();
+
+    cab.set_hicut_khz(8.2);
+    assert!(
+        (cab.hicut_khz() - 8.2).abs() < 0.1,
+        "VirtualCabProcessor.set_hicut_khz(8.2) deve ajustar para 8.2 kHz, obteve {} kHz",
+        cab.hicut_khz()
+    );
+    let mut out_8200 = vec![0.0f32; 4096];
+    cab.process(&tone_6k, &mut out_8200);
+    let db_6k_at_8200 = 20.0 * (rms(&out_8200[1024..]) / 0.07071f32).max(1e-6).log10();
+    assert!(
+        db_6k_at_8200 - db_6k_at_4200 > 4.0,
+        "Ajustar hi-cut para 8.2 kHz deve recuperar > 4 dB em 6 kHz vs 4.2 kHz (diff={:.2} dB)",
+        db_6k_at_8200 - db_6k_at_4200
+    );
+
+    // 3. Level-matched THD progression under default overdrive=5.0 at gain=5.0, 1 kHz 0.06 peak
+    let sr = 48000.0f32;
+    let n = 4800usize;
+    let tone_1k: Vec<f32> = (0..n)
+        .map(|i| 0.06 * (2.0 * std::f32::consts::PI * 1000.0 * (i as f32 / sr)).sin())
+        .collect();
+
+    let measure_model_thd = |model: AmpModelId, ch_mode: AmpChannelMode| -> f32 {
+        let mut amp = WhiteBoxAmpProcessor::new(model);
+        amp.set_sample_rate(sr);
+        amp.set_channel_mode(ch_mode);
+        amp.panel_mut().set_input_gain(5.0);
+        amp.panel_mut().set_master_volume(5.0);
+        let mut out = vec![0.0f32; n];
+        amp.process(&tone_1k, &mut out);
+        amp.compute_thd(&out[2400..])
+    };
+
+    let thd_twin = measure_model_thd(AmpModelId::UsTwinBlackface65, AmpChannelMode::Clean);
+    let thd_ac30 = measure_model_thd(AmpModelId::UkAc30TopBoost, AmpChannelMode::Clean);
+    let thd_plexi = measure_model_thd(AmpModelId::BritPlexi1959, AmpChannelMode::Clean);
+    let thd_jcm = measure_model_thd(AmpModelId::BritJcm800_2203, AmpChannelMode::Vintage);
+    let thd_rect = measure_model_thd(AmpModelId::CaliDualRectoRevF, AmpChannelMode::Modern);
+
+    assert!(
+        thd_twin < 0.08,
+        "Twin Reverb AB763 em gain=5 (overdrive padrão) deve manter headroom limpo (THD < 8%, foi {:.2}%)",
+        thd_twin * 100.0
+    );
+    assert!(
+        thd_jcm > thd_twin * 2.0 && thd_rect > thd_jcm * 1.15,
+        "Progression esperada THD Twin ({:.4}) << JCM800 ({:.4}) < Rectifier Modern ({:.4})",
+        thd_twin, thd_jcm, thd_rect
+    );
+    assert!(
+        thd_ac30 > thd_twin * 1.2 && thd_plexi > thd_twin * 1.2,
+        "AC30 ({:.4}) e Plexi ({:.4}) devem saturar acima do Twin limpo ({:.4})",
+        thd_ac30, thd_plexi, thd_twin
+    );
+
+    // 4. Band energy separation across all 5 amps using identical multi-harmonic guitar signal + transient burst
+    let sig_len = 16384usize;
+    let test_chord: Vec<f32> = (0..sig_len)
+        .map(|i| {
+            let t = i as f32 / sr;
+            let attack = if i < 960 { 1.0 + 1.5 * (-t * 220.0).exp() } else { 1.0 };
+            0.05
+                * attack
+                * (1.0 * (2.0 * std::f32::consts::PI * 110.0 * t).sin()
+                    + 0.75 * (2.0 * std::f32::consts::PI * 330.0 * t).sin()
+                    + 0.50 * (2.0 * std::f32::consts::PI * 880.0 * t).sin()
+                    + 0.35 * (2.0 * std::f32::consts::PI * 2400.0 * t).sin()
+                    + 0.25 * (2.0 * std::f32::consts::PI * 4200.0 * t).sin())
+        })
+        .collect();
+
+    let band_profile = |model: AmpModelId, ch_mode: AmpChannelMode| -> [f64; 3] {
+        let mut amp = WhiteBoxAmpProcessor::new(model);
+        amp.set_sample_rate(sr);
+        amp.set_channel_mode(ch_mode);
+        amp.panel_mut().set_input_gain(6.0);
+        amp.panel_mut().set_master_volume(5.5);
+        let mut out = vec![0.0f32; sig_len];
+        amp.process(&test_chord, &mut out);
+        let steady = &out[4096..];
+        let total_rms = (rms(steady) as f64).max(1e-9);
+        let mut lp1 = 0.0f64;
+        let mut lp2 = 0.0f64;
+        let a_low = 1.0 - (-2.0 * std::f64::consts::PI * 250.0 / sr as f64).exp();
+        let a_mid = 1.0 - (-2.0 * std::f64::consts::PI * 1800.0 / sr as f64).exp();
+        let (mut e_low, mut e_mid, mut e_hi) = (0.0f64, 0.0f64, 0.0f64);
+        for &s in steady {
+            let x = (s as f64) / total_rms;
+            lp1 += a_low * (x - lp1);
+            lp2 += a_mid * (x - lp2);
+            let low = lp1;
+            let mid = lp2 - lp1;
+            let hi = x - lp2;
+            e_low += low * low;
+            e_mid += mid * mid;
+            e_hi += hi * hi;
+        }
+        let n_f = steady.len() as f64;
+        [
+            10.0 * (e_low / n_f).max(1e-12).log10(),
+            10.0 * (e_mid / n_f).max(1e-12).log10(),
+            10.0 * (e_hi / n_f).max(1e-12).log10(),
+        ]
+    };
+
+    let profiles = [
+        ("Twin", band_profile(AmpModelId::UsTwinBlackface65, AmpChannelMode::Clean)),
+        ("Plexi", band_profile(AmpModelId::BritPlexi1959, AmpChannelMode::Clean)),
+        ("JCM800", band_profile(AmpModelId::BritJcm800_2203, AmpChannelMode::Vintage)),
+        ("AC30", band_profile(AmpModelId::UkAc30TopBoost, AmpChannelMode::Clean)),
+        ("Recto", band_profile(AmpModelId::CaliDualRectoRevF, AmpChannelMode::Modern)),
+    ];
+
+    for i in 0..profiles.len() {
+        for j in (i + 1)..profiles.len() {
+            let max_band_diff = (0..3)
+                .map(|b| (profiles[i].1[b] - profiles[j].1[b]).abs())
+                .fold(0.0f64, f64::max);
+            assert!(
+                max_band_diff >= 2.0,
+                "Amps {} ({:?}) e {} ({:?}) soam próximos demais após normalização (max_diff={:.2} dB < 2.0 dB)",
+                profiles[i].0, profiles[i].1, profiles[j].0, profiles[j].1, max_band_diff
+            );
+        }
+    }
+
+    // 5. Transient pick attack preservation (crest factor >= 2.2 on pick onset vs sustain)
+    let mut pick_sig = vec![0.0f32; 8192];
+    for i in 0..8192 {
+        let t = i as f32 / sr;
+        let env = if i < 2400 {
+            0.05
+        } else {
+            let dt = (i - 2400) as f32 / sr;
+            0.05 + 0.30 * (-dt * 85.0).exp()
+        };
+        pick_sig[i] = env * (2.0 * std::f32::consts::PI * 220.0 * t).sin();
+    }
+    let mut amp_pick = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
+    amp_pick.set_sample_rate(sr);
+    amp_pick.panel_mut().set_input_gain(5.5);
+    amp_pick.panel_mut().set_master_volume(6.0);
+    let mut out_pick = vec![0.0f32; 8192];
+    amp_pick.process(&pick_sig, &mut out_pick);
+    let sustain_rms = rms(&out_pick[1024..2300]).max(1e-6);
+    let onset_peak = out_pick[2400..3000].iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    let crest = onset_peak / sustain_rms;
+    assert!(
+        crest >= 2.5,
+        "Ataque transiente esmagado (crest={:.2} < 2.5, peak={:.4}, sustain_rms={:.4})",
+        crest, onset_peak, sustain_rms
+    );
+
+    // 6. Fender AB763 pre-V1b tone stack placement: sweeping Bass with high Gain alters downstream clipping harmonics
+    let measure_twin_bass_thd = |bass: f32| -> f32 {
+        let mut t = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
+        t.set_sample_rate(sr);
+        t.panel_mut().set_input_gain(8.5);
+        t.panel_mut().set_bass(bass);
+        let low_note: Vec<f32> = (0..4800)
+            .map(|i| 0.14 * (2.0 * std::f32::consts::PI * 100.0 * (i as f32 / sr)).sin())
+            .collect();
+        let mut out = vec![0.0f32; 4800];
+        t.process(&low_note, &mut out);
+        // measure 300 Hz (3rd harmonic) ratio
+        let tail = &out[2400..];
+        let mut r1 = 0.0f64;
+        let mut i1 = 0.0f64;
+        let mut r3 = 0.0f64;
+        let mut i3 = 0.0f64;
+        for (idx, &s) in tail.iter().enumerate() {
+            let a1 = 2.0 * std::f64::consts::PI * 100.0 * idx as f64 / sr as f64;
+            let a3 = 3.0 * a1;
+            r1 += s as f64 * a1.cos();
+            i1 -= s as f64 * a1.sin();
+            r3 += s as f64 * a3.cos();
+            i3 -= s as f64 * a3.sin();
+        }
+        ((r3 * r3 + i3 * i3).sqrt() / (r1 * r1 + i1 * i1).sqrt().max(1e-12)) as f32
+    };
+    let h3_b0 = measure_twin_bass_thd(0.0);
+    let h3_b10 = measure_twin_bass_thd(10.0);
+    assert!(
+        (h3_b10 - h3_b0).abs() > 0.015,
+        "Tone Stack AB763 pré-V1b deve alterar geração harmônica na V1b ao varrer Bass 0->10 (h3_b0={:.4}, h3_b10={:.4})",
+        h3_b0, h3_b10
+    );
+}
+
+#[test]
+fn test_ca_10_mxr_10_band_eq_selective_q_reduces_adjacent_octave_overlap() {
+    let sr = 48000.0f32;
+    let mut eq = EqProcessor::new(EqMode::Graphic10BandPedal);
+    eq.set_sample_rate(sr);
+    // Boost 250 Hz (index 3) by +12 dB; leave 125 Hz (index 2) and 500 Hz (index 4) at 0 dB
+    eq.set_graphic_band_db(3, 12.0);
+
+    let gain_at = |eq_p: &mut EqProcessor, f_hz: f32| -> f32 {
+        let n = 8192;
+        let inp: Vec<f32> = (0..n)
+            .map(|i| 0.1 * (2.0 * std::f32::consts::PI * f_hz * (i as f32 / sr)).sin())
+            .collect();
+        let mut out = vec![0.0f32; n];
+        eq_p.process(&inp, &mut out);
+        20.0 * (rms(&out[4096..]) / rms(&inp[4096..]).max(1e-9)).log10()
+    };
+
+    let g_250 = gain_at(&mut eq, 250.0);
+    let g_500 = gain_at(&mut eq, 500.0);
+    assert!(
+        g_250 >= 11.0 && g_500 <= 3.5,
+        "MXR 10-Band EQ deve manter +12 dB focado em 250 Hz ({:.2} dB) com vazamento limitado em 500 Hz ({:.2} dB <= 3.5 dB)",
+        g_250, g_500
     );
 }

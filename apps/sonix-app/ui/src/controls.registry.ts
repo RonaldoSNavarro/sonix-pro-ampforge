@@ -139,7 +139,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     backendKey: 'engine.oversampling',
     type: 'enum',
     options: ['2x', '4x', '8x'],
-    defaultValue: '4x',
+    defaultValue: '2x',
     hardwareBehavior: 'Altera fator real de sobreamostragem IIR/FIR dos estágios não-lineares, reduzindo aliasing em alto ganho.',
     pendingSpec: null,
   },

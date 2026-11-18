@@ -71,9 +71,12 @@ export interface TunerData {
   enabled: boolean;
   frequency_hz: number;
   note: string;
-  octave: number;
+  octave: number | null;
   cents: number;
   confidence: number;
+  signal_present?: boolean;
+  muted?: boolean;
+  ref_hz?: number;
   strings?: Array<{ name: string; cents: number; ok: boolean }>;
 }
 
@@ -95,6 +98,9 @@ export interface TelemetryData {
 
 export interface ScopeData {
   mode: 'waveform' | 'transfer' | 'tonestack' | string;
+  no_signal?: boolean;
+  di_active?: boolean;
+  output_active?: boolean;
   waveform?: {
     di: number[];
     output: number[];
@@ -186,15 +192,17 @@ export class AppStore {
 
   tuner: TunerData = {
     enabled: false,
-    frequency_hz: 110.0,
-    note: 'A',
-    octave: 2,
+    frequency_hz: 0.0,
+    note: '---',
+    octave: null,
     cents: 0.0,
     confidence: 0.0,
+    signal_present: false,
   };
 
   scope: ScopeData = {
     mode: 'waveform',
+    no_signal: true,
   };
 
   irInfo = {
@@ -333,6 +341,7 @@ export class AppStore {
     if (this.screen === screen) return;
     this.screen = screen;
     if (screen === 'chassi') {
+      void this.transport.setStreamVisible?.(true, this.crtMode);
       void this.refreshScope();
     }
     this.emit();
@@ -486,19 +495,57 @@ export class AppStore {
     this.applyTelemetry(frame.payload);
   }
 
-  private handleTuner(frame: TunerFrame): void {
-    const p = frame.payload;
-    if (!p) return;
+  applyTunerPayload(p: Record<string, unknown>): void {
+    const enabled = Boolean(p.enabled ?? p.active ?? this.getParam('tuner.enabled', false));
+    const freqRaw = Number(p.frequency_hz ?? 0);
+    const freq = Number.isFinite(freqRaw) && freqRaw > 0 ? freqRaw : 0;
+
+    let note = String(p.note_letter ?? p.note ?? '---').trim();
+    let octave: number | null =
+      p.octave === null || p.octave === undefined
+        ? null
+        : Number.isFinite(Number(p.octave))
+          ? Number(p.octave)
+          : null;
+
+    if (note !== '---' && octave === null) {
+      const m = /^([A-G]#?)(-?\d+)$/.exec(note);
+      if (m) {
+        note = m[1];
+        octave = Number(m[2]);
+      }
+    } else if (note !== '---') {
+      const m = /^([A-G]#?)(-?\d+)$/.exec(note);
+      if (m) {
+        note = m[1];
+      }
+    }
+
+    const hasSignal =
+      p.signal_present !== undefined
+        ? Boolean(p.signal_present) && freq > 0 && note !== '---'
+        : freq > 0 && note !== '---';
+
+    const centsRaw = Number(p.cents ?? 0);
     this.tuner = {
-      enabled: Boolean(p.enabled ?? this.getParam('tuner.enabled', false)),
-      frequency_hz: Number(p.frequency_hz ?? this.tuner.frequency_hz),
-      note: String(p.note ?? this.tuner.note),
-      octave: Number(p.octave ?? this.tuner.octave),
-      cents: Number(p.cents ?? this.tuner.cents),
-      confidence: Number(p.confidence ?? 0),
+      enabled,
+      signal_present: hasSignal,
+      muted: p.muted !== undefined ? Boolean(p.muted) : undefined,
+      ref_hz: typeof p.ref_hz === 'number' && Number.isFinite(p.ref_hz) ? p.ref_hz : undefined,
+      frequency_hz: hasSignal ? freq : 0,
+      note: hasSignal ? note : '---',
+      octave: hasSignal ? octave : null,
+      cents: hasSignal && Number.isFinite(centsRaw) ? centsRaw : 0,
+      confidence: hasSignal ? Number(p.confidence ?? 1) : 0,
       strings: Array.isArray(p.strings) ? (p.strings as TunerData['strings']) : undefined,
     };
     this.emit('tuner');
+  }
+
+  private handleTuner(frame: TunerFrame): void {
+    const p = frame.payload;
+    if (!p) return;
+    this.applyTunerPayload(p);
   }
 
   applyScopePayload(mode: string, p: Record<string, unknown>): void {
@@ -507,12 +554,22 @@ export class AppStore {
       p.waveform && typeof p.waveform === 'object'
         ? (p.waveform as { di?: unknown; output?: unknown })
         : undefined;
+    const diArr = wf && Array.isArray(wf.di) ? (wf.di as number[]) : [];
+    const outArr = wf && Array.isArray(wf.output) ? (wf.output as number[]) : [];
+    const diPeak = diArr.reduce((acc, v) => Math.max(acc, Math.abs(Number(v) || 0)), 0);
+    const outPeak = outArr.reduce((acc, v) => Math.max(acc, Math.abs(Number(v) || 0)), 0);
+    const explicitNoSignal = Boolean(p.no_signal);
+    const wfHasSignal = mode === 'waveform' ? !explicitNoSignal && (diPeak > 1e-4 || outPeak > 1e-4) : true;
+
     this.scope = {
       mode,
+      no_signal: mode === 'waveform' ? !wfHasSignal : explicitNoSignal,
+      di_active: typeof p.di_active === 'boolean' ? p.di_active : diPeak > 1e-4,
+      output_active: typeof p.output_active === 'boolean' ? p.output_active : outPeak > 1e-4,
       waveform: wf
         ? {
-            di: Array.isArray(wf.di) ? (wf.di as number[]) : [],
-            output: Array.isArray(wf.output) ? (wf.output as number[]) : [],
+            di: wfHasSignal ? diArr : [],
+            output: wfHasSignal ? outArr : [],
           }
         : undefined,
       transfer: Array.isArray(p.transfer)

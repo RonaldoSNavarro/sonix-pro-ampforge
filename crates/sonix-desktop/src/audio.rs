@@ -890,6 +890,9 @@ impl DesktopAudioHost {
     ) {
         let ch = in_channels.max(1);
         let total_frames = data.len() / ch;
+        if total_frames > 0 {
+            telemetry.record_observed_input_period(total_frames as u32);
+        }
         let chunk_cap = mono_buf.len().max(1);
         let input_channel = duplex.input_channel();
         let mut offset = 0usize;
@@ -909,6 +912,13 @@ impl DesktopAudioHost {
         telemetry.update_input_peak(peak_db);
     }
 
+    #[allow(dead_code)]
+    #[inline]
+    fn record_observed_period(observed: &AtomicU32, sample_len: usize, channels: usize) {
+        let frames = (sample_len / channels.max(1)).max(1) as u32;
+        observed.store(frames, Ordering::Relaxed);
+    }
+
     /// Processa entrada I16 em qualquer quantidade de frames com seleção linear de canal (Spec 034 CA-5 & Spec 036 CA-6).
     pub fn process_input_callback_i16(
         data: &[i16],
@@ -919,6 +929,9 @@ impl DesktopAudioHost {
     ) {
         let ch = in_channels.max(1);
         let total_frames = data.len() / ch;
+        if total_frames > 0 {
+            telemetry.record_observed_input_period(total_frames as u32);
+        }
         let chunk_cap = mono_buf.len().max(1);
         let input_channel = duplex.input_channel();
         let mut offset = 0usize;
@@ -955,6 +968,7 @@ impl DesktopAudioHost {
         if total_frames == 0 {
             return;
         }
+        telemetry.record_observed_output_period(total_frames as u32);
         if let Some(obs) = observed_period {
             let tf = total_frames as u32;
             if obs.load(Ordering::Relaxed) != tf {
@@ -1020,6 +1034,7 @@ impl DesktopAudioHost {
         if total_frames == 0 {
             return;
         }
+        telemetry.record_observed_output_period(total_frames as u32);
         if let Some(obs) = observed_period {
             let tf = total_frames as u32;
             if obs.load(Ordering::Relaxed) != tf {
@@ -1160,7 +1175,17 @@ impl DesktopAudioHost {
                 ));
             }
         }
-        Self::start_realtime_wasapi_duplex_with_config(
+        let req_mode_str = match mode {
+            AudioMode::Auto | AudioMode::WasapiShared => "wasapi_shared",
+            AudioMode::WasapiSharedLowLatency => "wasapi_shared_low_latency",
+            AudioMode::WasapiExclusive => "wasapi_exclusive",
+            AudioMode::Asio => "asio_native",
+        };
+        let host = cpal::default_host();
+        Self::start_realtime_duplex_on_host(
+            &host,
+            "wasapi",
+            req_mode_str,
             duplex,
             dsp_chain,
             telemetry,
@@ -1234,7 +1259,12 @@ impl DesktopAudioHost {
             .default_output_config()
             .map_err(|e| AudioDriverError::InitFailed(format!("Falha na config de saída: {}", e)))?;
 
-        let target_period = requested_buffer_size.unwrap_or(128).max(32);
+        let default_target = if default_mode_name == "wasapi_shared_low_latency" || default_mode_name == "wasapi_exclusive" {
+            64
+        } else {
+            128
+        };
+        let target_period = requested_buffer_size.unwrap_or(default_target).max(32);
         let in_channels = in_config.channels() as usize;
         let out_channels = out_config.channels() as usize;
 
@@ -1256,17 +1286,20 @@ impl DesktopAudioHost {
         out_stream_config.sample_rate = aligned_out_sr;
         out_stream_config.buffer_size = cpal::BufferSize::Fixed(target_period);
 
+        telemetry.reset_observed_periods();
         let observed_in_period = Arc::new(AtomicU32::new(target_period));
         let observed_out_period = Arc::new(AtomicU32::new(target_period));
 
         let duplex_in = duplex.clone();
         let tele_in = telemetry.clone();
+        let obs_in_f32 = observed_in_period.clone();
         let mut mono_buf = vec![0.0f32; 4096];
         let (in_stream, in_opened_fixed) = match in_config.sample_format() {
             cpal::SampleFormat::F32 => {
                 let build_res = in_device.build_input_stream(
                     in_stream_config.clone(),
                     move |data: &[f32], _| {
+                        Self::record_observed_period(&obs_in_f32, data.len(), in_channels);
                         Self::process_input_callback_f32(data, in_channels, &mut mono_buf, &duplex_in, &tele_in);
                     },
                     |_err| {},
@@ -1278,9 +1311,11 @@ impl DesktopAudioHost {
                         let mut mono_buf_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
                         let tele_fb = telemetry.clone();
+                        let obs_in_fb = observed_in_period.clone();
                         let s = in_device.build_input_stream(
                             in_config.clone().into(),
                             move |data: &[f32], _| {
+                                Self::record_observed_period(&obs_in_fb, data.len(), in_channels);
                                 Self::process_input_callback_f32(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
                             },
                             |_| {},
@@ -1292,9 +1327,11 @@ impl DesktopAudioHost {
                 }
             }
             cpal::SampleFormat::I16 => {
+                let obs_in_i16 = observed_in_period.clone();
                 let s = in_device.build_input_stream(
                     in_stream_config.clone(),
                     move |data: &[i16], _| {
+                        Self::record_observed_period(&obs_in_i16, data.len(), in_channels);
                         Self::process_input_callback_i16(data, in_channels, &mut mono_buf, &duplex_in, &tele_in);
                     },
                     |_err| {},
@@ -1304,9 +1341,11 @@ impl DesktopAudioHost {
                         let mut mono_buf_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
                         let tele_fb = telemetry.clone();
+                        let obs_in_fb = observed_in_period.clone();
                         in_device.build_input_stream(
                             in_config.clone().into(),
                             move |data: &[i16], _| {
+                                Self::record_observed_period(&obs_in_fb, data.len(), in_channels);
                                 Self::process_input_callback_i16(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
                             },
                             |_| {},
@@ -1447,20 +1486,38 @@ impl DesktopAudioHost {
             _ => return Err(AudioDriverError::InitFailed("Formato de amostra de saída não suportado".to_string())),
         };
 
+        duplex.set_target_period(target_period as usize);
+
+        in_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de entrada: {}", e)))?;
+        out_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de saída: {}", e)))?;
+
         let in_period_frames = if in_opened_fixed {
             target_period
         } else {
-            observed_in_period.load(Ordering::Relaxed)
+            let obs_tele = telemetry.observed_input_period_frames();
+            let obs_local = observed_in_period.load(Ordering::Relaxed);
+            if obs_tele > 0 {
+                obs_tele
+            } else if obs_local > 0 {
+                obs_local
+            } else {
+                target_period
+            }
         };
         let out_period_frames = if out_opened_fixed {
             target_period
         } else {
-            observed_out_period.load(Ordering::Relaxed)
+            let obs_tele = telemetry.observed_output_period_frames();
+            let obs_local = observed_out_period.load(Ordering::Relaxed);
+            if obs_tele > 0 {
+                obs_tele
+            } else if obs_local > 0 {
+                obs_local
+            } else {
+                target_period
+            }
         };
         duplex.set_target_period(out_period_frames as usize);
-
-        in_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de entrada: {}", e)))?;
-        out_stream.play().map_err(|e| AudioDriverError::InitFailed(format!("Falha ao ativar stream de saída: {}", e)))?;
 
         let in_sr = in_stream_config.sample_rate;
         let out_sr = effective_out_sr;
@@ -1469,14 +1526,18 @@ impl DesktopAudioHost {
         let algo_lat_samples = dsp_chain
             .try_lock()
             .map(|d| d.algorithmic_latency_samples())
-            .unwrap_or(16);
+            .unwrap_or(4);
+        let duplex_queue_ms = (out_period_frames as f32 / out_sr.max(1) as f32) * 1000.0;
+        let algo_lat_ms = (algo_lat_samples as f32 / out_sr.max(1) as f32) * 1000.0;
 
         let status_telemetry = AudioStatusTelemetry {
             backend: backend_name.to_string(),
             mode: if backend_name == "asio" {
                 default_mode_name.to_string()
-            } else if out_opened_fixed && out_period_frames <= 128 {
+            } else if default_mode_name == "wasapi_shared_low_latency" && out_opened_fixed && out_period_frames <= 128 {
                 "wasapi_shared_low_latency".to_string()
+            } else if default_mode_name == "wasapi_exclusive" && out_opened_fixed {
+                "wasapi_exclusive".to_string()
             } else {
                 default_mode_name.to_string()
             },
@@ -1500,7 +1561,7 @@ impl DesktopAudioHost {
             panics: 0,
             adc_clips: 0,
             measured_roundtrip_ms: None,
-            estimated_roundtrip_ms: in_lat_ms + out_lat_ms + (algo_lat_samples as f32 / out_sr.max(1) as f32) * 1000.0,
+            estimated_roundtrip_ms: in_lat_ms + out_lat_ms + duplex_queue_ms + algo_lat_ms,
             algorithmic_latency_samples: algo_lat_samples,
         };
 
@@ -2633,6 +2694,7 @@ impl RealtimeDspChain {
 
         let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
         amp.set_sample_rate(sample_rate);
+        amp.set_oversampling_factor(2);
         amp.panel_mut().set_input_gain(8.0);
         amp.panel_mut().set_master_volume(7.0);
         amp.panel_mut().set_bass(5.0);
@@ -2642,6 +2704,7 @@ impl RealtimeDspChain {
 
         let mut cab = VirtualCabProcessor::new();
         cab.set_sample_rate(sample_rate);
+        cab.set_hicut_khz(8.2);
 
         let mut pitch_1 = PitchProcessor::new(PitchModel::PedalWhammy);
         pitch_1.prepare(sample_rate);
@@ -2664,12 +2727,14 @@ impl RealtimeDspChain {
 
         let mut amp_2 = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
         amp_2.set_sample_rate(sample_rate);
+        amp_2.set_oversampling_factor(2);
         amp_2.panel_mut().set_input_gain(5.0);
         amp_2.panel_mut().set_master_volume(7.0);
 
         let mut cab_2 = VirtualCabProcessor::new();
         cab_2.set_sample_rate(sample_rate);
         cab_2.set_speaker_model(ampforge_dsp::cab::SpeakerCabModel::AlnicoBlue2x12Open);
+        cab_2.set_hicut_khz(9.0);
 
         let mut mod_2 = ModulationProcessor::new(ModModel::AnalogBbdChorus);
         mod_2.set_sample_rate(sample_rate);
@@ -4861,6 +4926,8 @@ pub struct TelemetryBuffer {
     waveform_write_seq: AtomicU64,
     waveform_capacity: usize,
     dsp_contention_silence_blocks: AtomicU64,
+    observed_input_period_frames: AtomicU32,
+    observed_output_period_frames: AtomicU32,
 }
 
 impl TelemetryBuffer {
@@ -4878,7 +4945,39 @@ impl TelemetryBuffer {
             waveform_write_seq: AtomicU64::new(0),
             waveform_capacity: cap,
             dsp_contention_silence_blocks: AtomicU64::new(0),
+            observed_input_period_frames: AtomicU32::new(0),
+            observed_output_period_frames: AtomicU32::new(0),
         }
+    }
+
+    #[inline]
+    pub fn reset_observed_periods(&self) {
+        self.observed_input_period_frames.store(0, Ordering::Relaxed);
+        self.observed_output_period_frames.store(0, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn record_observed_input_period(&self, frames: u32) {
+        if frames > 0 && self.observed_input_period_frames.load(Ordering::Relaxed) != frames {
+            self.observed_input_period_frames.store(frames, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    pub fn record_observed_output_period(&self, frames: u32) {
+        if frames > 0 && self.observed_output_period_frames.load(Ordering::Relaxed) != frames {
+            self.observed_output_period_frames.store(frames, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    pub fn observed_input_period_frames(&self) -> u32 {
+        self.observed_input_period_frames.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn observed_output_period_frames(&self) -> u32 {
+        self.observed_output_period_frames.load(Ordering::Relaxed)
     }
 
     pub fn update_b_plus_v(&self, b_plus_v: f32) {

@@ -4,7 +4,10 @@
 
 use serde_json::{json, Value};
 use sonix_desktop::api::{dispatch, ApiContext, AppState};
-use sonix_desktop::audio::{LockFreeParamQueue, RealtimeDspChain, TelemetryBuffer};
+use sonix_desktop::audio::{
+    AudioStatusTelemetry, DesktopAudioHost, LockFreeParamQueue, RealtimeDspChain,
+    RealtimeDuplexEngine, TelemetryBuffer,
+};
 use sonix_desktop::calibration::CalibrationStore;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -445,7 +448,7 @@ fn test_ca_12_cab_1_and_cab_2_speakers_resonance_and_hicut_have_distinct_effect(
 #[test]
 fn test_ca_13_tuner_reads_pitch_and_looper_reverse_and_half_speed_work() {
     let ctx = make_ctx();
-    // 1. Afinador: mesmo quando tuner.enabled foi ligado ANTES do sinal entrar no ring, /api/tuner detecta A2 (110 Hz)
+    // 1. Afinador: mesmo quando tuner.enabled foi ligado ANTES do sinal entrar no ring, /api/tuner detecta A2 (110 Hz ± 0.5 Hz)
     let _ = post_params(&ctx, "tuner.enabled", &json!(true));
     if let Some(ref ring) = ctx.clean_input_ring {
         let base = ring.total_written();
@@ -461,16 +464,98 @@ fn test_ca_13_tuner_reads_pitch_and_looper_reverse_and_half_speed_work() {
     let v_tun: Value = serde_json::from_slice(&b_tun).unwrap();
     let freq = v_tun["frequency_hz"].as_f64().unwrap_or(0.0);
     assert!(
-        (freq - 110.0).abs() < 3.0,
-        "CA-13: /api/tuner deve detectar ~110 Hz (obteve {v_tun})"
+        (freq - 110.0).abs() <= 0.5,
+        "CA-13: /api/tuner deve detectar 110.0 +- 0.5 Hz (obteve {v_tun})"
     );
-    assert_ne!(v_tun["note"].as_str(), Some("---"), "CA-13: nota não pode ficar em ---");
+    assert_eq!(v_tun["note"].as_str(), Some("A2"), "CA-13: note deve ser A2: {v_tun}");
+    assert_eq!(v_tun["note_letter"].as_str(), Some("A"), "CA-13: note_letter deve ser A sem oitava: {v_tun}");
+    assert_eq!(v_tun["octave"].as_i64(), Some(2), "CA-13: octave deve ser 2: {v_tun}");
+    assert_eq!(v_tun["signal_present"].as_bool(), Some(true), "CA-13: signal_present deve ser true: {v_tun}");
 
     // 2. Looper: aceita reverse e half_speed além de record/play/overdub/stop/undo/redo/clear e reporta telemetria
     for act in ["record", "play", "overdub", "undo", "redo", "reverse", "half_speed", "stop", "clear"] {
         let (code, body) = post_params(&ctx, "looper.action", &json!(act));
         assert_eq!(code, 200, "CA-13: looper.action={act} rejeitado: {body}");
     }
+}
+
+#[test]
+fn test_ca_13_tuner_six_guitar_strings_accuracy_ref_hz_mute_and_no_signal() {
+    let ctx = make_ctx();
+    let _ = post_params(&ctx, "tuner.enabled", &json!(true));
+    let _ = post_params(&ctx, "tuner.output", &json!("mute"));
+
+    // 1. Estado inicial sem sinal: deve retornar "---", octave null, frequency_hz 0.0, signal_present false
+    let (c_empty, _, b_empty) = dispatch(&ctx, "/api/tuner", "GET", b"");
+    assert_eq!(c_empty, 200);
+    let v_empty: Value = serde_json::from_slice(&b_empty).unwrap();
+    assert_eq!(v_empty["note"].as_str(), Some("---"));
+    assert!(v_empty["octave"].is_null(), "octave deve ser null sem sinal: {v_empty}");
+    assert_eq!(v_empty["frequency_hz"].as_f64().unwrap_or(-1.0), 0.0);
+    assert_eq!(v_empty["signal_present"].as_bool(), Some(false));
+
+    // 2. Todas as 6 frequências obrigatórias com erro <= 0.5 Hz e tuner.output = mute silenciando saída
+    let cases = [
+        (82.41f32, "E2", "E", 2i64),
+        (110.00, "A2", "A", 2),
+        (146.83, "D3", "D", 3),
+        (220.00, "A3", "A", 3),
+        (329.63, "E4", "E", 4),
+        (440.00, "A4", "A", 4),
+    ];
+    for (target_hz, full_note, letter, oct) in cases {
+        let inp: Vec<f32> = (0..4096)
+            .map(|i| 0.25 * (2.0 * std::f32::consts::PI * target_hz * (i as f32 / 48000.0)).sin())
+            .collect();
+        let mut out = vec![0.0f32; 4096];
+        {
+            let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+            chain.process(&inp, &mut out);
+        }
+        let rms_out = (out[512..].iter().map(|s| s * s).sum::<f32>() / (out.len() - 512) as f32).sqrt();
+        assert!(
+            rms_out < 1e-4,
+            "CA-13: tuner.output=mute deve silenciar saída (rms_out={rms_out} para {target_hz} Hz)"
+        );
+
+        let (c, _, b) = dispatch(&ctx, "/api/tuner", "GET", b"");
+        assert_eq!(c, 200);
+        let v: Value = serde_json::from_slice(&b).unwrap();
+        let freq = v["frequency_hz"].as_f64().unwrap_or(0.0);
+        assert!(
+            (freq - target_hz as f64).abs() <= 0.5,
+            "Nota {full_note} ({target_hz} Hz) fora de +-0.5 Hz: obteve {freq:.3} Hz ({v})"
+        );
+        assert_eq!(v["note"].as_str(), Some(full_note), "{v}");
+        assert_eq!(v["note_letter"].as_str(), Some(letter), "{v}");
+        assert_eq!(v["octave"].as_i64(), Some(oct), "{v}");
+        assert_eq!(v["muted"].as_bool(), Some(true), "{v}");
+    }
+
+    // 3. Propagação real de tuner.ref_hz = 442.0 para A4 (440 Hz -> ~ -7.85 cents relativo a A4=442)
+    let _ = post_params(&ctx, "tuner.ref_hz", &json!(442.0));
+    let (c_ref, _, b_ref) = dispatch(&ctx, "/api/tuner", "GET", b"");
+    assert_eq!(c_ref, 200);
+    let v_ref: Value = serde_json::from_slice(&b_ref).unwrap();
+    let cents_442 = v_ref["cents"].as_f64().unwrap_or(0.0);
+    assert!(
+        (cents_442 - (-7.85)).abs() < 1.0,
+        "tuner.ref_hz=442 deve ser aplicado ao /api/tuner em 440 Hz (esperado ~-7.85 cents, obteve {cents_442})"
+    );
+    assert!((v_ref["ref_hz"].as_f64().unwrap_or(0.0) - 442.0).abs() < 0.01);
+
+    // 4. Quando entra silêncio longo no ring, sinal volta a ausente ("---")
+    let silent = vec![0.0f32; 4096];
+    let mut silent_out = vec![0.0f32; 4096];
+    {
+        let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+        chain.process(&silent, &mut silent_out);
+    }
+    let (_, _, b_sil) = dispatch(&ctx, "/api/tuner", "GET", b"");
+    let v_sil: Value = serde_json::from_slice(&b_sil).unwrap();
+    assert_eq!(v_sil["note"].as_str(), Some("---"));
+    assert_eq!(v_sil["frequency_hz"].as_f64().unwrap_or(-1.0), 0.0);
+    assert_eq!(v_sil["signal_present"].as_bool(), Some(false));
 }
 
 #[test]
@@ -506,8 +591,77 @@ fn test_ca_15_chassis_preamp_tube_ecc83_12ay7_and_mods_have_measurable_effect() 
 }
 
 #[test]
+fn test_ca_15_scope_waveform_window_and_no_signal_handling() {
+    let ctx = make_ctx();
+
+    // 1. Silêncio absoluto processado pelo callback não pode ser reportado como sinal válido no osciloscópio
+    let silent = vec![0.0f32; 1024];
+    let mut sil_out = vec![0.0f32; 1024];
+    {
+        let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+        chain.process(&silent, &mut sil_out);
+    }
+    let (c_sil, _, b_sil) = dispatch(&ctx, "/api/scope?mode=waveform", "GET", b"");
+    assert_eq!(c_sil, 200);
+    let v_sil: Value = serde_json::from_slice(&b_sil).unwrap();
+    assert_eq!(
+        v_sil["no_signal"].as_bool(),
+        Some(true),
+        "Silêncio absoluto no ring deve reportar no_signal=true: {v_sil}"
+    );
+    assert_eq!(
+        v_sil["waveform"]["output"].as_array().map(|a| a.len()),
+        Some(0),
+        "Sem sinal real, waveform.output não pode conter zeros falsos: {v_sil}"
+    );
+
+    // 2. Com sinal E2 (82.41 Hz) contínuo, /api/scope entrega janela >= 512 amostras (até 1024) para cobrir ciclos graves completos
+    let sig: Vec<f32> = (0..2048)
+        .map(|i| 0.25 * (2.0 * std::f32::consts::PI * 82.41 * (i as f32 / 48000.0)).sin())
+        .collect();
+    let mut sig_out = vec![0.0f32; 2048];
+    {
+        let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+        chain.process(&sig, &mut sig_out);
+    }
+    let (c_sig, _, b_sig) = dispatch(&ctx, "/api/scope?mode=waveform", "GET", b"");
+    assert_eq!(c_sig, 200);
+    let v_sig: Value = serde_json::from_slice(&b_sig).unwrap();
+    assert_eq!(v_sig["no_signal"].as_bool(), Some(false));
+    let di_len = v_sig["waveform"]["di"].as_array().map(|a| a.len()).unwrap_or(0);
+    let out_len = v_sig["waveform"]["output"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert!(
+        di_len >= 512 && out_len >= 512,
+        "Janela do osciloscópio deve ser >= 512 amostras para cobrir notas graves (di={di_len}, out={out_len})"
+    );
+}
+
+#[test]
 fn test_ca_17_oversampling_2x_4x_8x_updates_algorithmic_latency_and_audio() {
     let ctx = make_ctx();
+    // Padrão inicial deve ser 2x (4 amostras) conforme Spec 051 CA-17
+    let (c_init_st, _, b_init_st) = dispatch(&ctx, "/api/state", "GET", b"");
+    assert_eq!(c_init_st, 200);
+    let v_init_st: Value = serde_json::from_slice(&b_init_st).unwrap();
+    assert_eq!(
+        v_init_st["engine.oversampling"].as_str(),
+        Some("2x"),
+        "CA-17: AppState padrão deve iniciar em engine.oversampling='2x': {v_init_st}"
+    );
+    let (c_init_aud, _, b_init_aud) = dispatch(&ctx, "/api/audio/status", "GET", b"");
+    assert_eq!(c_init_aud, 200);
+    let v_init_aud: Value = serde_json::from_slice(&b_init_aud).unwrap();
+    assert_eq!(
+        v_init_aud["oversampling"].as_str(),
+        Some("2x"),
+        "CA-17: /api/audio/status padrão deve iniciar em 2x: {v_init_aud}"
+    );
+    assert_eq!(
+        v_init_aud["algorithmic_latency_samples"].as_u64(),
+        Some(4),
+        "CA-17: /api/audio/status padrão deve iniciar em 4 amostras (2x): {v_init_aud}"
+    );
+
     let expected = [("2x", 4u64), ("4x", 8u64), ("8x", 16u64)];
     for (mode, samples) in expected {
         let (code, body) = post_params(&ctx, "engine.oversampling", &json!(mode));
@@ -532,4 +686,78 @@ fn test_ca_17_oversampling_2x_4x_8x_updates_algorithmic_latency_and_audio() {
             "CA-17: oversampling {mode} deve reportar {samples} amostras de latência algorítmica"
         );
     }
+
+    // Com audio_telemetry ativo (Some(t)), trocar oversampling e período observado atualiza estimated_roundtrip_ms e períodos
+    let _ = post_params(&ctx, "engine.oversampling", &json!("2x"));
+    {
+        let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+        let inp = [0.0f32; 64];
+        let mut out = [0.0f32; 64];
+        chain.process(&inp, &mut out);
+    }
+    *ctx.audio_telemetry.lock().unwrap() = Some(AudioStatusTelemetry {
+        backend: "wasapi".to_string(),
+        mode: "wasapi_shared".to_string(),
+        fallback_reason: None,
+        raw_processing: false,
+        sample_rate: 48000,
+        input_period_frames: 128,
+        output_period_frames: 128,
+        input_device: "In".to_string(),
+        output_device: "Out".to_string(),
+        driver_input_latency_ms: 2.667,
+        driver_output_latency_ms: 2.667,
+        cpu_avg_pct: 1.0,
+        cpu_peak_pct: 2.0,
+        underruns: 0,
+        overruns: 0,
+        panics: 0,
+        adc_clips: 0,
+        measured_roundtrip_ms: None,
+        estimated_roundtrip_ms: 2.667 + 2.667 + 2.667 + (4.0 / 48.0),
+        algorithmic_latency_samples: 4,
+    });
+    let (_, _, b_2x) = dispatch(&ctx, "/api/audio/status", "GET", b"");
+    let v_2x: Value = serde_json::from_slice(&b_2x).unwrap();
+    let rt_2x = v_2x["estimated_roundtrip_ms"].as_f64().unwrap_or(0.0);
+
+    let _ = post_params(&ctx, "engine.oversampling", &json!("8x"));
+    {
+        let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+        let inp = [0.0f32; 64];
+        let mut out = [0.0f32; 64];
+        chain.process(&inp, &mut out);
+    }
+    let (_, _, b_8x) = dispatch(&ctx, "/api/audio/status", "GET", b"");
+    let v_8x: Value = serde_json::from_slice(&b_8x).unwrap();
+    let rt_8x = v_8x["estimated_roundtrip_ms"].as_f64().unwrap_or(0.0);
+    assert!(
+        (rt_8x - rt_2x - 0.25).abs() < 0.01,
+        "CA-17/CA-25: estimated_roundtrip_ms com stream ativo deve subir +0.25 ms de 2x para 8x (2x={rt_2x}, 8x={rt_8x})"
+    );
+
+    // Callbacks observando período real de 480 frames (10 ms @ 48 kHz) propagam para /api/audio/status
+    let duplex = RealtimeDuplexEngine::with_target_period(4096, 480);
+    let in_stereo = vec![0.05f32; 480 * 2];
+    let mut mono_in = vec![0.0f32; 480];
+    let mut mono_out = vec![0.0f32; 480];
+    let mut out_stereo = vec![0.0f32; 480 * 2];
+    DesktopAudioHost::process_input_callback_f32(&in_stereo, 2, &mut mono_in, &duplex, &ctx.telemetry);
+    DesktopAudioHost::process_output_callback_f32(
+        &mut out_stereo,
+        2,
+        48000.0,
+        &mut mono_in,
+        &mut mono_out,
+        &duplex,
+        ctx.dsp_chain.as_ref().unwrap(),
+        &ctx.telemetry,
+        None,
+    );
+    let (_, _, b_obs) = dispatch(&ctx, "/api/audio/status", "GET", b"");
+    let v_obs: Value = serde_json::from_slice(&b_obs).unwrap();
+    assert_eq!(v_obs["input_period_frames"].as_u64(), Some(480));
+    assert_eq!(v_obs["output_period_frames"].as_u64(), Some(480));
+    assert!((v_obs["driver_input_latency_ms"].as_f64().unwrap_or(0.0) - 10.0).abs() < 0.05);
+    assert!(v_obs["estimated_roundtrip_ms"].as_f64().unwrap_or(0.0) >= 30.0);
 }

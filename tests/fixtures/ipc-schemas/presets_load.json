@@ -83,7 +83,7 @@
     "drive.level": 7.5,
     "drive.model": "ts808",
     "drive.tone": 6.0,
-    "engine.oversampling": "4x",
+    "engine.oversampling": "2x",
     "eq_1.bands_db": [
       0.0,
       0.0,

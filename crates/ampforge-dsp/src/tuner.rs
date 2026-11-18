@@ -26,6 +26,23 @@ pub struct TunerPitchResult {
     pub frequency_hz: f32,
 }
 
+/// Separa o nome completo da nota (ex.: `"A2"`, `"F#3"`, `"---"`) em `(letra, oitava)`.
+pub fn split_note_and_octave(note_name: &str) -> (&str, Option<i32>) {
+    let trimmed = note_name.trim();
+    if trimmed.is_empty() || trimmed == "---" {
+        return ("---", None);
+    }
+    if let Some(pos) = trimmed.find(|c: char| c.is_ascii_digit() || c == '-') {
+        let letter = &trimmed[..pos];
+        if let Ok(oct) = trimmed[pos..].parse::<i32>() {
+            if !letter.is_empty() {
+                return (letter, Some(oct));
+            }
+        }
+    }
+    (trimmed, None)
+}
+
 #[derive(Debug, Clone)]
 pub struct PolyphonicStringStatus {
     pub string_index: usize,
@@ -124,6 +141,7 @@ impl TunerProcessor {
 
     pub fn detect_pitch(&mut self, signal: &[f32]) -> TunerPitchResult {
         if signal.len() < 256 {
+            self.last_poly_cents = [0.0; 6];
             return TunerPitchResult {
                 note_name: "---".to_string(),
                 cents_deviation: 0.0,
@@ -134,6 +152,7 @@ impl TunerProcessor {
         let n = signal.len();
         let rms = (signal.iter().map(|&s| s * s).sum::<f32>() / n as f32).sqrt();
         if rms < 0.00063 {
+            self.last_poly_cents = [0.0; 6];
             return TunerPitchResult {
                 note_name: "---".to_string(),
                 cents_deviation: 0.0,
@@ -141,6 +160,20 @@ impl TunerProcessor {
             };
         }
 
+        // Evita repetir nota antiga quando os últimos ~22 ms já entraram em silêncio (guitarra abafada).
+        let tail_len = ((self.sample_rate * 0.022).round() as usize).clamp(256, n);
+        let tail = &signal[n - tail_len..];
+        let tail_rms = (tail.iter().map(|&s| s * s).sum::<f32>() / tail.len() as f32).sqrt();
+        if tail_rms < 0.00063 {
+            self.last_poly_cents = [0.0; 6];
+            return TunerPitchResult {
+                note_name: "---".to_string(),
+                cents_deviation: 0.0,
+                frequency_hz: 0.0,
+            };
+        }
+
+        // Em modo polifônico, avalia todas as 6 cordas antes do retorno antecipado do YIN monofônico (acordes têm d' > 0.35).
         if self.mode == TunerMode::Polyphonic {
             self.update_polyphonic_from_samples(signal);
         }
@@ -222,26 +255,37 @@ impl TunerProcessor {
             };
         }
 
-        // 4. Parabolic interpolation for sub-sample accuracy on symmetric difference function d
-        let tau_sub = if best_tau > min_lag && best_tau + 1 < max_lag {
-            let s0 = self.d_scratch[best_tau - 1];
-            let s1 = self.d_scratch[best_tau];
-            let s2 = self.d_scratch[best_tau + 1];
+        // 4. Ajuste local no mínimo de d(tau) + interpolação parabólica para precisão sub-amostra
+        let mut center_tau = best_tau;
+        if center_tau > min_lag
+            && center_tau + 1 < max_lag
+            && self.d_scratch[center_tau - 1] < self.d_scratch[center_tau]
+            && self.d_scratch[center_tau - 1] <= self.d_scratch[center_tau + 1]
+        {
+            center_tau -= 1;
+        } else if center_tau > min_lag
+            && center_tau + 2 < max_lag
+            && self.d_scratch[center_tau + 1] < self.d_scratch[center_tau]
+            && self.d_scratch[center_tau + 1] <= self.d_scratch[center_tau - 1]
+        {
+            center_tau += 1;
+        }
+        let tau_sub = if center_tau > min_lag && center_tau + 1 < max_lag {
+            let s0 = self.d_scratch[center_tau - 1];
+            let s1 = self.d_scratch[center_tau];
+            let s2 = self.d_scratch[center_tau + 1];
             let denom = 2.0 * (s0 - 2.0 * s1 + s2);
-            if denom.abs() > 1e-9 {
-                best_tau as f32 + (s0 - s2) / denom
+            if denom.abs() > 1e-9 && (s0 - 2.0 * s1 + s2) > 0.0 {
+                let delta = ((s0 - s2) / denom).clamp(-0.5, 0.5);
+                center_tau as f32 + delta
             } else {
-                best_tau as f32
+                center_tau as f32
             }
         } else {
-            best_tau as f32
+            center_tau as f32
         };
 
         let freq = self.sample_rate / tau_sub;
-
-        if self.mode == TunerMode::Polyphonic {
-            self.update_polyphonic_from_samples(signal);
-        }
 
         if freq < 60.0 || freq > 1400.0 {
             return TunerPitchResult {

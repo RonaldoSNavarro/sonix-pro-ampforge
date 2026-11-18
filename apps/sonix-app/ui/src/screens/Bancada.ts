@@ -2,18 +2,45 @@ import { createKnob } from '../components/Knob.ts';
 import type { AppStore } from '../store.ts';
 import { makeChipButton, num, str } from './_helpers.ts';
 
-function buildScopePaths(store: AppStore): {
+function sliceTriggeredWindow(
+  outArr: number[],
+  diArr: number[],
+  targetLen = 512
+): { outWin: number[]; diWin: number[] } {
+  const n = outArr.length;
+  if (n <= targetLen) {
+    return { outWin: outArr, diWin: diArr };
+  }
+  const ref = diArr.length === n && diArr.some((v) => Math.abs(v) > 1e-4) ? diArr : outArr;
+  const searchLimit = Math.max(1, n - targetLen);
+  let trig = 0;
+  for (let i = 1; i < searchLimit; i++) {
+    if (ref[i - 1] < 0 && ref[i] >= 0) {
+      trig = i;
+      break;
+    }
+  }
+  const end = Math.min(n, trig + targetLen);
+  return {
+    outWin: outArr.slice(trig, end),
+    diWin: diArr.length === n ? diArr.slice(trig, end) : diArr.slice(0, targetLen),
+  };
+}
+
+export function buildScopePaths(store: AppStore): {
   mainPath: string | null;
   refPath: string | null;
   pointCount: number;
   errMsg: string | null;
+  noSignalMsg: string | null;
   caption: string;
+  vpp: number;
 } {
   const mode = store.crtMode;
   const labels: Record<typeof mode, string> = {
-    waveform: 'SAÍDA DO ESTÁGIO DE POTÊNCIA · tracejado = entrada DI',
-    transfer: 'CURVA DE TRANSFERÊNCIA X-Y · ponto de operação e joelho de clipping',
-    tonestack: 'TONE STACK · tracejado = impedância do falante',
+    waveform: 'SAÍDA DO ESTÁGIO DE POTÊNCIA (ÁUDIO REAL) · tracejado = entrada DI',
+    transfer: 'CURVA DE TRANSFERÊNCIA X-Y (RESPOSTA CALCULADA) · clipping',
+    tonestack: 'TONE STACK (RESPOSTA CALCULADA) · tracejado = impedância do falante',
   };
 
   if (store.scopeError) {
@@ -22,12 +49,15 @@ function buildScopePaths(store: AppStore): {
       refPath: null,
       pointCount: 0,
       errMsg: `sem dados do motor (${store.scopeError})`,
+      noSignalMsg: null,
       caption: labels[mode],
+      vpp: 0,
     };
   }
 
   let mainPts: Array<{ x: number; y: number }> = [];
   let refPts: Array<{ x: number; y: number }> = [];
+  let vpp = 0;
   if (mode === 'waveform') {
     const raw = store.scope.waveform as unknown;
     const outArr = Array.isArray(raw)
@@ -39,11 +69,43 @@ function buildScopePaths(store: AppStore): {
       raw && typeof raw === 'object' && Array.isArray((raw as { di?: unknown }).di)
         ? ((raw as { di: number[] }).di)
         : [];
-    if (outArr.length >= 2) {
-      mainPts = outArr.map((v, i) => ({ x: (i / (outArr.length - 1)) * 600, y: 80 - v * 62 }));
+    const outPeak = outArr.reduce((acc, v) => Math.max(acc, Math.abs(Number(v) || 0)), 0);
+    const diPeak = diArr.reduce((acc, v) => Math.max(acc, Math.abs(Number(v) || 0)), 0);
+    const hasRealWaveform = !store.scope.no_signal && (outPeak > 1e-4 || diPeak > 1e-4);
+
+    if (!hasRealWaveform || (outArr.length < 2 && diArr.length < 2)) {
+      return {
+        mainPath: null,
+        refPath: null,
+        pointCount: 0,
+        errMsg: null,
+        noSignalMsg: 'SEM SINAL DE ÁUDIO — AGUARDANDO ENTRADA',
+        caption: labels[mode],
+        vpp: 0,
+      };
     }
-    if (diArr.length >= 2) {
-      refPts = diArr.map((v, i) => ({ x: (i / (diArr.length - 1)) * 600, y: 80 - v * 62 }));
+
+    const { outWin, diWin } = sliceTriggeredWindow(outArr, diArr, 512);
+    const maxV = outWin.reduce((acc, v) => Math.max(acc, v), -Infinity);
+    const minV = outWin.reduce((acc, v) => Math.min(acc, v), Infinity);
+    vpp = outWin.length >= 2 && Number.isFinite(maxV - minV) ? maxV - minV : 0;
+
+    if (outWin.length >= 2) {
+      mainPts = outWin.map((v, i) => ({
+        x: (i / (outWin.length - 1)) * 600,
+        y: Math.max(4, Math.min(156, 80 - v * 62)),
+      }));
+    } else if (diWin.length >= 2) {
+      mainPts = diWin.map((v, i) => ({
+        x: (i / (diWin.length - 1)) * 600,
+        y: Math.max(4, Math.min(156, 80 - v * 62)),
+      }));
+    }
+    if (diWin.length >= 2) {
+      refPts = diWin.map((v, i) => ({
+        x: (i / (diWin.length - 1)) * 600,
+        y: Math.max(4, Math.min(156, 80 - v * 62)),
+      }));
     }
   } else if (mode === 'transfer' && Array.isArray(store.scope.transfer) && store.scope.transfer.length >= 2) {
     mainPts = store.scope.transfer.map((p) => ({
@@ -56,10 +118,16 @@ function buildScopePaths(store: AppStore): {
       x: (i / (ts.length - 1)) * 600,
       y: 60 - p.db * 4,
     }));
+    if (Array.isArray(store.scope.speaker_z) && store.scope.speaker_z.length >= 2) {
+      const sz = store.scope.speaker_z;
+      refPts = sz.map((p, i) => ({
+        x: (i / (sz.length - 1)) * 600,
+        y: Math.max(10, Math.min(150, 140 - p.z * 1.8)),
+      }));
+    }
   }
 
   if (mainPts.length === 0) {
-    // Fallback determinístico baseado nos parâmetros reais do modelo quando o stream IPC ainda não entregou pontos (Spec 051, CA-15)
     if (mode === 'tonestack') {
       const bass = num(store, 'amp_1.bass', 5.0);
       const mid = num(store, 'amp_1.middle', 5.0);
@@ -79,16 +147,6 @@ function buildScopePaths(store: AppStore): {
         const y = Math.tanh((x + asym * 0.25) * k) - Math.tanh(asym * 0.25 * k);
         mainPts.push({ x: ((x + 1) / 2) * 600, y: Math.max(10, Math.min(150, 80 - y * 62)) });
       }
-    } else {
-      const gain = num(store, 'amp_1.gain', 6.5);
-      const drive = 0.6 + (gain / 10) * 2.4;
-      for (let i = 0; i < 64; i++) {
-        const u = i / 63;
-        const di = 0.45 * Math.sin(u * Math.PI * 4);
-        const out = Math.tanh(di * drive * 2.2) * 0.78;
-        refPts.push({ x: u * 600, y: 80 - di * 62 });
-        mainPts.push({ x: u * 600, y: 80 - out * 62 });
-      }
     }
   }
 
@@ -98,11 +156,13 @@ function buildScopePaths(store: AppStore): {
       ? refPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
       : null;
   return {
-    mainPath: d,
+    mainPath: d || null,
     refPath: refD,
     pointCount: mainPts.length,
     errMsg: null,
+    noSignalMsg: null,
     caption: labels[mode],
+    vpp,
   };
 }
 
@@ -453,12 +513,13 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
 
   const scopeData = buildScopePaths(store);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('data-live', 'scope-svg');
   svg.setAttribute('viewBox', '0 0 600 160');
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
   let svgHtml = '';
   if (scopeData.refPath) {
-    svgHtml += `<path d="${scopeData.refPath}" fill="none" stroke="rgba(87,255,176,0.28)" stroke-width="1.2" stroke-dasharray="4 4"/>`;
+    svgHtml += `<path data-scope-ref="true" d="${scopeData.refPath}" fill="none" stroke="rgba(87,255,176,0.28)" stroke-width="1.2" stroke-dasharray="4 4"/>`;
   }
   if (scopeData.mainPath) {
     svgHtml += `<path data-scope-series="${store.crtMode}" data-point-count="${scopeData.pointCount}" d="${scopeData.mainPath}" fill="none" stroke="#57ffb0" stroke-width="2.2" style="filter:drop-shadow(0 0 4px #57ffb0)"/>`;
@@ -467,19 +528,27 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
   scopeCol.appendChild(svg);
 
   const scopeHdr = document.createElement('span');
+  scopeHdr.setAttribute('data-live', 'scope-caption');
   scopeHdr.className = 'm-mono';
   scopeHdr.style.cssText = 'position:absolute;left:12px;top:8px;font-size:10px;color:#57ffb0;opacity:.8;';
   scopeHdr.textContent = scopeData.caption;
   scopeCol.appendChild(scopeHdr);
 
+  const errDiv = document.createElement('div');
+  errDiv.className = 'm-mono';
+  errDiv.setAttribute('data-live', 'scope-no-signal');
   if (scopeData.errMsg) {
-    const errDiv = document.createElement('div');
-    errDiv.className = 'm-mono';
     errDiv.style.cssText =
       'position:absolute;inset:24px 0 32px;display:flex;align-items:center;justify-content:center;color:#ff6a4a;font-size:12px;font-weight:700;text-align:center;';
     errDiv.textContent = scopeData.errMsg;
-    scopeCol.appendChild(errDiv);
+  } else if (scopeData.noSignalMsg) {
+    errDiv.style.cssText =
+      'position:absolute;inset:24px 0 32px;display:flex;align-items:center;justify-content:center;color:#57ffb0;opacity:0.75;font-size:11px;font-weight:700;text-align:center;letter-spacing:.08em;';
+    errDiv.textContent = scopeData.noSignalMsg;
+  } else {
+    errDiv.style.cssText = 'display:none;';
   }
+  scopeCol.appendChild(errDiv);
 
   const crtFoot = document.createElement('div');
   crtFoot.style.cssText = 'position:absolute;left:12px;bottom:6px;display:flex;gap:4px;';
@@ -490,6 +559,8 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
   ] as const) {
     const btn = makeChipButton('chassi.crt_mode', lbl, store.crtMode === m, () => {
       store.crtMode = m;
+      store.emit();
+      void store.transport.setStreamVisible?.(true, m);
       void store.refreshScope();
     });
     btn.className = 'm-mono';
@@ -499,9 +570,15 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
     crtFoot.appendChild(btn);
   }
   const clipLbl = document.createElement('span');
+  clipLbl.setAttribute('data-live', 'scope-status');
   clipLbl.className = 'm-mono';
   clipLbl.style.cssText = 'position:absolute;right:12px;bottom:8px;font-size:10px;color:#57ffb0;opacity:.8;';
-  clipLbl.textContent = 'saturação suave';
+  clipLbl.textContent =
+    store.crtMode === 'waveform'
+      ? scopeData.noSignalMsg
+        ? 'aguardando sinal'
+        : `Vpp ${scopeData.vpp.toFixed(2)}`
+      : 'resposta calculada';
   scopeCol.append(crtFoot, clipLbl);
 
   // Headroom column inside CRT bezel (130px)

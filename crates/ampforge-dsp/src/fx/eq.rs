@@ -67,9 +67,14 @@ impl EqProcessor {
             EqMode::Graphic10BandPedal => &MXR_10_FREQS,
         };
         self.num_bands = freqs.len();
+        let default_q = match mode {
+            EqMode::Graphic10BandPedal => 2.1,
+            EqMode::Graphic5BandBoogie => 1.75,
+            EqMode::Parametric8Band => 1.414,
+        };
         for (i, &freq_hz) in freqs.iter().enumerate() {
             self.bands[i].freq_hz = freq_hz;
-            self.bands[i].q = 1.414;
+            self.bands[i].q = default_q;
             self.bands[i].gain_db = self.graphic_bands_db[i];
         }
     }
@@ -178,7 +183,12 @@ impl EqProcessor {
             let a_lin = 10.0f64.powf(band.gain_db as f64 / 40.0);
             let omega =
                 2.0 * std::f64::consts::PI * (band.freq_hz as f64) / (self.sample_rate as f64);
-            let alpha = omega.sin() / (2.0 * band.q as f64);
+            let eff_q = if self.mode == EqMode::Graphic10BandPedal {
+                (band.q as f64) * (1.0 + 0.025 * (band.gain_db.abs() as f64))
+            } else {
+                band.q as f64
+            };
+            let alpha = omega.sin() / (2.0 * eff_q);
             let cos_w = omega.cos();
 
             let b0 = 1.0 + alpha * a_lin;

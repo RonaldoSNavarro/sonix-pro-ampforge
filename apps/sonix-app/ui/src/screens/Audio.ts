@@ -110,6 +110,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     const selStyle =
       'height:30px;border-radius:5px;border:1px solid #2a2f37;background:#090b0d;color:#e6eaef;padding:0 10px;font-size:12px;';
 
+    let bufSel: HTMLSelectElement | null = null;
     const driverSel = document.createElement('select');
     driverSel.style.cssText = selStyle;
     driverSel.dataset.controlId = 'audio.device_apply';
@@ -130,6 +131,15 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     }
     driverSel.addEventListener('change', () => {
       pending.backend = driverSel.value;
+      if (
+        (pending.backend === 'wasapi_shared_low_latency' ||
+          pending.backend === 'wasapi_exclusive' ||
+          pending.backend === 'asio') &&
+        pending.bufferSize === 128
+      ) {
+        pending.bufferSize = 64;
+        if (bufSel) bufSel.value = '64';
+      }
     });
     devCard.appendChild(makeRow('Driver / Backend', driverSel));
 
@@ -216,21 +226,22 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     });
     devCard.appendChild(makeRow('Sample Rate', srSel));
 
-    const bufSel = document.createElement('select');
-    bufSel.style.cssText = selStyle;
-    bufSel.dataset.controlId = 'audio.device_apply';
+    const bufSelect = document.createElement('select');
+    bufSel = bufSelect;
+    bufSelect.style.cssText = selStyle;
+    bufSelect.dataset.controlId = 'audio.device_apply';
     for (const sz of [32, 64, 128, 256, 512]) {
       const ms = ((sz / pending.sampleRate) * 1000).toFixed(2);
       const o = document.createElement('option');
       o.value = String(sz);
       o.textContent = `${sz} amostras (${ms} ms)`;
       if (pending.bufferSize === sz) o.selected = true;
-      bufSel.appendChild(o);
+      bufSelect.appendChild(o);
     }
-    bufSel.addEventListener('change', () => {
-      pending.bufferSize = Number(bufSel.value);
+    bufSelect.addEventListener('change', () => {
+      pending.bufferSize = Number(bufSelect.value);
     });
-    devCard.appendChild(makeRow('Tamanho de Buffer', bufSel));
+    devCard.appendChild(makeRow('Tamanho de Buffer', bufSelect));
 
     if (store.devices.length === 0) {
       const emptyBanner = document.createElement('div');
@@ -424,10 +435,10 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     perfCard.style.cssText =
       'border-radius:8px;background:#121417;border:1px solid #1f242b;padding:16px;display:flex;flex-direction:column;gap:12px;';
     perfCard.innerHTML = '<span class="m-lbl" style="font-size:10px;letter-spacing:.12em">DESEMPENHO &amp; OVERSAMPLING DSP</span>';
-    const curOs = str(store, 'engine.oversampling', '4x');
+    const curOs = str(store, 'engine.oversampling', '2x');
     const osMeta: Record<string, { label: string; desc: string }> = {
-      '2x': { label: '2X · Econômico (96 kHz)', desc: 'Latência algorítmica: 4 amostras (0,08 ms @ 48 kHz) · menor uso de CPU.' },
-      '4x': { label: '4X · Equilibrado (192 kHz · Padrão)', desc: 'Latência algorítmica: 8 amostras (0,17 ms @ 48 kHz) · recomendado ao vivo.' },
+      '2x': { label: '2X · Baixa Latência (96 kHz · Padrão)', desc: 'Latência algorítmica: 4 amostras (0,08 ms @ 48 kHz) · menor uso de CPU e menor latência ao vivo.' },
+      '4x': { label: '4X · Equilibrado (192 kHz)', desc: 'Latência algorítmica: 8 amostras (0,17 ms @ 48 kHz) · reduz aliasing em médio/alto ganho.' },
       '8x': { label: '8X · Ultra Qualidade (384 kHz)', desc: 'Latência algorítmica: 16 amostras (0,33 ms @ 48 kHz) · máxima supressão de aliasing em alto ganho.' },
     };
     const osRow = document.createElement('div');
@@ -440,7 +451,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     const osDesc = document.createElement('div');
     osDesc.className = 'm-mono';
     osDesc.style.cssText = 'font-size:11px;color:#a3abb4;line-height:1.5;';
-    osDesc.textContent = osMeta[curOs]?.desc ?? osMeta['4x'].desc;
+    osDesc.textContent = osMeta[curOs]?.desc ?? osMeta['2x'].desc;
 
     const diCard = document.createElement('div');
     diCard.style.cssText =
@@ -501,6 +512,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     try {
       await store.transport.setAudioDevice({
         backend: pending.backend.startsWith('wasapi') ? 'wasapi' : pending.backend,
+        mode: pending.backend,
         sample_rate: pending.sampleRate,
         buffer_size: pending.bufferSize,
         input_device: pending.inputDevice || undefined,
