@@ -220,3 +220,34 @@ fn ca6_single_audio_host_resets_and_allows_reopen() {
     assert!(ensure_single_audio_host(&count), "CA-6: após limpeza deve permitir reabertura");
     reset_audio_host_count_for_test();
 }
+
+#[test]
+fn test_configure_audio_device_accepts_wasapi_shared_480_frames() {
+    let (ctx, duplex, dsp) = build_context();
+    let active_streams: Arc<Mutex<Option<MockStream>>> = Arc::new(Mutex::new(None));
+    let res = configure_audio_device_generic(
+        &json!({
+            "driver": "wasapi",
+            "input_device": "InA",
+            "output_device": "Alto-falantes",
+            "sample_rate": 48000,
+            "buffer_size": 480
+        }),
+        &ctx,
+        &duplex,
+        &dsp,
+        &active_streams,
+        None,
+        |_d, _dsp, _tel, _in_dev, _out_dev, _sr, req_buf| {
+            assert_eq!(req_buf, Some(480));
+            Ok((
+                Some(MockStream {
+                    alive: Arc::new(AtomicBool::new(true)),
+                }),
+                mock_telemetry(48000, 480, "InA", "Alto-falantes"),
+            ))
+        },
+    );
+    assert!(res.is_ok(), "Deve aceitar período 480 de WASAPI Compartilhado: {:?}", res);
+}
+

@@ -1307,13 +1307,15 @@ impl DesktopAudioHost {
                 );
                 match build_res {
                     Ok(s) => (s, true),
-                    Err(_) if requested_sample_rate.is_none() && requested_buffer_size.is_none() => {
+                    Err(_) => {
                         let mut mono_buf_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
                         let tele_fb = telemetry.clone();
                         let obs_in_fb = observed_in_period.clone();
+                        let mut in_fb_config: cpal::StreamConfig = in_config.clone().into();
+                        in_fb_config.sample_rate = aligned_in_sr;
                         let s = in_device.build_input_stream(
-                            in_config.clone().into(),
+                            in_fb_config,
                             move |data: &[f32], _| {
                                 Self::record_observed_period(&obs_in_fb, data.len(), in_channels);
                                 Self::process_input_callback_f32(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
@@ -1323,7 +1325,6 @@ impl DesktopAudioHost {
                         ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?;
                         (s, false)
                     }
-                    Err(e) => return Err(AudioDriverError::InitFailed(format!("Configuração de entrada recusada: {}", e))),
                 }
             }
             cpal::SampleFormat::I16 => {
@@ -1336,26 +1337,24 @@ impl DesktopAudioHost {
                     },
                     |_err| {},
                     None,
-                ).or_else(|e| {
-                    if requested_sample_rate.is_none() && requested_buffer_size.is_none() {
-                        let mut mono_buf_fb = vec![0.0f32; 4096];
-                        let duplex_fb = duplex.clone();
-                        let tele_fb = telemetry.clone();
-                        let obs_in_fb = observed_in_period.clone();
-                        in_device.build_input_stream(
-                            in_config.clone().into(),
-                            move |data: &[i16], _| {
-                                Self::record_observed_period(&obs_in_fb, data.len(), in_channels);
-                                Self::process_input_callback_i16(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
-                            },
-                            |_| {},
-                            None,
-                        ).map_err(|e2| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e2)))
-                    } else {
-                        Err(AudioDriverError::InitFailed(format!("Configuração de entrada I16 recusada: {}", e)))
-                    }
+                ).or_else(|_| {
+                    let mut mono_buf_fb = vec![0.0f32; 4096];
+                    let duplex_fb = duplex.clone();
+                    let tele_fb = telemetry.clone();
+                    let obs_in_fb = observed_in_period.clone();
+                    let mut in_fb_config: cpal::StreamConfig = in_config.clone().into();
+                    in_fb_config.sample_rate = aligned_in_sr;
+                    in_device.build_input_stream(
+                        in_fb_config,
+                        move |data: &[i16], _| {
+                            Self::record_observed_period(&obs_in_fb, data.len(), in_channels);
+                            Self::process_input_callback_i16(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
+                        },
+                        |_| {},
+                        None,
+                    ).map_err(|e2| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e2)))
                 })?;
-                (s, requested_buffer_size.is_some())
+                (s, false)
             }
             _ => return Err(AudioDriverError::InitFailed("Formato de amostra de entrada não suportado".to_string())),
         };
@@ -1395,15 +1394,17 @@ impl DesktopAudioHost {
                 );
                 match build_res {
                     Ok(s) => (s, true),
-                    Err(_) if requested_sample_rate.is_none() && requested_buffer_size.is_none() => {
+                    Err(_) => {
                         let mut mono_in_fb = vec![0.0f32; 4096];
                         let mut mono_out_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
                         let dsp_chain_fb = dsp_chain.clone();
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
+                        let mut out_fb_config: cpal::StreamConfig = out_config.clone().into();
+                        out_fb_config.sample_rate = aligned_out_sr;
                         let s = out_device.build_output_stream(
-                            out_config.clone().into(),
+                            out_fb_config,
                             move |data: &mut [f32], _| {
                                 Self::process_output_callback_f32(
                                     data,
@@ -1422,7 +1423,6 @@ impl DesktopAudioHost {
                         ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?;
                         (s, false)
                     }
-                    Err(e) => return Err(AudioDriverError::InitFailed(format!("Configuração de saída recusada: {}", e))),
                 }
             }
             cpal::SampleFormat::I16 => {
@@ -1453,15 +1453,17 @@ impl DesktopAudioHost {
                 );
                 match build_res {
                     Ok(s) => (s, true),
-                    Err(_) if requested_sample_rate.is_none() && requested_buffer_size.is_none() => {
+                    Err(_) => {
                         let mut mono_in_fb = vec![0.0f32; 4096];
                         let mut mono_out_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
                         let dsp_chain_fb = dsp_chain.clone();
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
+                        let mut out_fb_config: cpal::StreamConfig = out_config.clone().into();
+                        out_fb_config.sample_rate = aligned_out_sr;
                         let s = out_device.build_output_stream(
-                            out_config.clone().into(),
+                            out_fb_config,
                             move |data: &mut [i16], _| {
                                 Self::process_output_callback_i16(
                                     data,
@@ -1480,7 +1482,6 @@ impl DesktopAudioHost {
                         ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?;
                         (s, false)
                     }
-                    Err(e) => return Err(AudioDriverError::InitFailed(format!("Configuração de saída I16 recusada: {}", e))),
                 }
             }
             _ => return Err(AudioDriverError::InitFailed("Formato de amostra de saída não suportado".to_string())),

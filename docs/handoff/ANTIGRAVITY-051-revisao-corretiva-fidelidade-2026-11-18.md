@@ -66,3 +66,14 @@
   - Binário gerado: `G:/Dev/.cargo-target/simulador-de-efeitos/release/sonix-app.exe`
   - Tamanho: 8.216.188 bytes.
   - Perfil: Release otimizado LTO com UI embutida.
+
+---
+
+## 4. Correção Adicional Pós-Teste (Buffer 480 WASAPI e Saída Analógica)
+- **Diagnóstico:** Em placas Realtek no Windows, o sistema iniciava por padrão na saída digital óptica (`Realtek Digital Output`) silenciosa. Ao trocar para `Alto-falantes`, a aplicação retornava erro de IPC com banner vermelho `Motor DSP desconectado (Buffer size inválido: 480 samples)` porque 480 (período de 10 ms do WASAPI Compartilhado a 48 kHz) era rejeitado pela validação de potências de 2 em `commands.rs`.
+- **Correções Aplicadas:**
+  1. `commands.rs`: aceita períodos no intervalo legal `32..=2048` (incluindo 441, 480, 882, 960) e prefixa erros de validação com `E_VALIDATION:`.
+  2. `audio.rs`: fallback resiliente caso o driver de áudio recuse `BufferSize::Fixed`, abrindo com o buffer padrão do hardware sem abortar.
+  3. `Audio.ts` e `store.ts`: auto-redirecionamento da saída digital para `Alto-falantes / Speakers` na inicialização e persistência de preferências em `localStorage`.
+  4. `shell.ts`: badge âmbar `STANDBY ATIVO` interativo na barra de status para desativação com 1 clique.
+  5. Teste de contrato `test_configure_audio_device_accepts_wasapi_shared_480_frames` adicionado e verificado em `contract_049_device_reconfigure.rs`.

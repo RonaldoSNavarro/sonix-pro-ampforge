@@ -624,6 +624,11 @@ function updateLiveReadouts(
         ? '<b style="color:#ffae42;">sinal baixo — calibre a entrada</b>'
         : 'não calibrada';
 
+    const isStandby = Boolean(store.params?.['amp_1.standby']);
+    const standbyBadge = isStandby
+      ? `<span id="stby-badge" style="color:#ffb020;font-weight:700;display:inline-flex;align-items:center;gap:4px;cursor:pointer;padding:1px 6px;border-radius:4px;background:rgba(255,176,32,0.15);border:1px solid rgba(255,176,32,0.4);" title="O amplificador está em Standby (silenciado). Clique para ativar o som."><span style="width:6px;height:6px;border-radius:50%;background:#ffb020;box-shadow:0 0 6px #ffb020;display:inline-block;"></span>STANDBY ATIVO</span>`
+      : '';
+
     refs.statusbar.style.paddingBottom = '2px';
     refs.statusbar.innerHTML = `
       <span style="display:flex;align-items:center;gap:6px;">
@@ -635,10 +640,18 @@ function updateLiveReadouts(
       <span>período ${inFrames}/${outFrames}</span>
       <span>ida-e-volta <b style="color:#e8eaed;">${rtlMs.toFixed(1)} ms</b> ${rtlTag}</span>
       <span>xruns ${xruns}</span>
+      ${standbyBadge}
       <span style="flex:1;"></span>
       <span>gate ${gateTxt}</span>
       <span>${calLabel} · pico ${peakStr} dBFS</span>
     `;
+
+    const badgeEl = refs.statusbar.querySelector('#stby-badge');
+    if (badgeEl) {
+      badgeEl.addEventListener('click', () => {
+        void store.setControl('amp.standby', false);
+      });
+    }
   }
 }
 

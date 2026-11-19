@@ -402,6 +402,49 @@ export class AppStore {
       // ignore
     }
 
+    try {
+      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('sonix:preferred_audio_device') : null;
+      if (saved) {
+        const pref = JSON.parse(saved);
+        if (pref && typeof pref === 'object' && pref.outputDevice) {
+          const hasOut = this.devices.some((d) => d.name === pref.outputDevice);
+          if (hasOut && this.audioStatus.output_device !== pref.outputDevice) {
+            await this.transport.setAudioDevice({
+              backend: pref.backend || 'wasapi',
+              mode: pref.backend,
+              sample_rate: pref.sampleRate || 48000,
+              buffer_size: pref.bufferSize || 64,
+              input_device: pref.inputDevice || undefined,
+              output_device: pref.outputDevice,
+            });
+            const updatedSt = await this.transport.getAudioStatus();
+            if (updatedSt && typeof updatedSt === 'object') Object.assign(this.audioStatus, updatedSt);
+          }
+        }
+      } else {
+        const curOut = this.audioStatus.output_device || '';
+        if (/digital output|spdif|s\/pdif/i.test(curOut)) {
+          const analogDev = this.devices.find(
+            (d) => d.is_output && /alto-falantes|speakers|alto falantes|headphone|fone/i.test(d.name)
+          );
+          if (analogDev) {
+            await this.transport.setAudioDevice({
+              backend: this.audioStatus.backend || 'wasapi',
+              mode: this.audioStatus.mode || 'wasapi_shared',
+              sample_rate: this.audioStatus.sample_rate || 48000,
+              buffer_size: this.audioStatus.output_period_frames || 64,
+              input_device: this.audioStatus.input_device || undefined,
+              output_device: analogDev.name,
+            });
+            const updatedSt = await this.transport.getAudioStatus();
+            if (updatedSt && typeof updatedSt === 'object') Object.assign(this.audioStatus, updatedSt);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     await this.transport.startStreams({
       onTelemetry: (f: TelemetryFrame) => this.handleTelemetry(f),
       onTuner: (f: TunerFrame) => this.handleTuner(f),

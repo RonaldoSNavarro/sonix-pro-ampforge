@@ -230,11 +230,18 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     bufSel = bufSelect;
     bufSelect.style.cssText = selStyle;
     bufSelect.dataset.controlId = 'audio.device_apply';
-    for (const sz of [32, 64, 128, 256, 512]) {
+    const standardSizes = [32, 64, 128, 256, 512];
+    const sizes = standardSizes.includes(pending.bufferSize)
+      ? standardSizes
+      : [...standardSizes, pending.bufferSize].sort((a, b) => a - b);
+    for (const sz of sizes) {
       const ms = ((sz / pending.sampleRate) * 1000).toFixed(2);
       const o = document.createElement('option');
       o.value = String(sz);
-      o.textContent = `${sz} amostras (${ms} ms)`;
+      const isCurrent = sz === pending.bufferSize && !standardSizes.includes(sz);
+      o.textContent = isCurrent
+        ? `${sz} amostras (${ms} ms - atual)`
+        : `${sz} amostras (${ms} ms)`;
       if (pending.bufferSize === sz) o.selected = true;
       bufSelect.appendChild(o);
     }
@@ -518,6 +525,18 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
         input_device: pending.inputDevice || undefined,
         output_device: pending.outputDevice || undefined,
       });
+      try {
+        localStorage.setItem(
+          'sonix:preferred_audio_device',
+          JSON.stringify({
+            backend: pending.backend,
+            sampleRate: pending.sampleRate,
+            bufferSize: pending.bufferSize,
+            inputDevice: pending.inputDevice,
+            outputDevice: pending.outputDevice,
+          })
+        );
+      } catch {}
       const st = await store.transport.getAudioStatus();
       if (st && typeof st === 'object') Object.assign(store.audioStatus, st);
       store.emit('status');

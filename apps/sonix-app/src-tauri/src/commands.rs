@@ -307,7 +307,7 @@ where
         .and_then(|v| v.as_u64())
         .unwrap_or(48000) as u32;
     if !matches!(sample_rate, 44100 | 48000 | 88200 | 96000) {
-        return Err(format!("Taxa de amostragem não suportada: {} Hz", sample_rate));
+        return Err(format!("E_VALIDATION:Taxa de amostragem não suportada: {} Hz", sample_rate));
     }
     let buffer_size = payload
         .get("buffer_size")
@@ -315,8 +315,10 @@ where
         .and_then(|v| v.as_u64())
         .map(|v| v as u32);
     if let Some(bs) = buffer_size {
-        if !matches!(bs, 32 | 64 | 128 | 256 | 512 | 1024) {
-            return Err(format!("Buffer size inválido: {} samples", bs));
+        if !matches!(bs, 32 | 64 | 128 | 256 | 441 | 448 | 480 | 512 | 882 | 960 | 1024 | 2048)
+            && !(32..=2048).contains(&bs)
+        {
+            return Err(format!("E_VALIDATION:Buffer size inválido: {} samples", bs));
         }
     }
     let input_device = payload
