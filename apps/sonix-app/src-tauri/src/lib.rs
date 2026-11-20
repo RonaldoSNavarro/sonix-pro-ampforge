@@ -171,6 +171,13 @@ fn build_runtime_with_calibration(
         Some(calib_store),
     );
     api_ctx.duplex_engine = Some(audio_ctrl.duplex.clone());
+    let default_data_dir = std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("SonixPro");
+    api_ctx.set_data_dir(default_data_dir);
 
     AppRuntime {
         api_ctx,
@@ -235,6 +242,7 @@ pub fn run() {
             commands::load_ir,
             commands::set_input_di,
             commands::calibrate_input,
+            commands::run_reamp,
             commands::measure_latency,
             commands::set_audio_device,
             commands::set_stream_visible,

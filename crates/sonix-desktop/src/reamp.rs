@@ -37,12 +37,19 @@ pub fn measure_loopback_delay_samples(probe: &[f32], recorded: &[f32]) -> usize 
 }
 
 /// Alinha a gravação de retorno compensando `delay_samples` medido por loopback (erro <= 1 amostra).
+pub const MAX_REAMP_SAMPLES: usize = 480_000;
+
 pub fn align_reamp_recording(recorded: &[f32], delay_samples: usize, target_len: usize) -> Vec<f32> {
-    let mut out = vec![0.0f32; target_len];
+    let safe_len = target_len.min(MAX_REAMP_SAMPLES);
+    let mut out = Vec::new();
+    if safe_len == 0 || out.try_reserve_exact(safe_len).is_err() {
+        return out;
+    }
+    out.resize(safe_len, 0.0);
     if delay_samples >= recorded.len() {
         return out;
     }
-    let avail = (recorded.len() - delay_samples).min(target_len);
+    let avail = (recorded.len() - delay_samples).min(safe_len);
     out[..avail].copy_from_slice(&recorded[delay_samples..delay_samples + avail]);
     out
 }

@@ -83,3 +83,7 @@ required-features = ["dev-http"]
 name = "contract_036_audio_host_midi_telemetry"
 required-features = ["dev-http"]
 
+[[test]]
+name = "auditoria_2026_11_20_seguranca"
+required-features = ["dev-http"]
+

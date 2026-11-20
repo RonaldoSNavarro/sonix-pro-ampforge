@@ -225,6 +225,16 @@ pub fn calibrate_input(payload: Value, state: State<'_, AppRuntime>) -> Result<V
     ))
 }
 
+pub fn run_reamp_ipc(ctx: &ApiContext, payload: &Value) -> Result<Value, String> {
+    let body = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
+    response_to_result(invoke_dispatch(ctx, "POST", "/api/reamp/run", &body))
+}
+
+#[tauri::command]
+pub fn run_reamp(payload: Value, state: State<'_, AppRuntime>) -> Result<Value, String> {
+    run_reamp_ipc(&state.api_ctx, &payload)
+}
+
 #[tauri::command]
 pub fn measure_latency(state: State<'_, AppRuntime>) -> Result<Value, String> {
     let status = get_audio_status(state)?;

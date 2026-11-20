@@ -32,6 +32,13 @@ impl RawRequest {
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
+
+    fn headers<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        self.headers
+            .iter()
+            .filter(move |(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 fn reason_phrase(status: u16) -> &'static str {
@@ -180,12 +187,41 @@ impl LocalAppServer {
         )
     }
 
+    pub fn bind_port_with_data_dir(port: u16, data_dir: PathBuf) -> Result<Self, String> {
+        Self::bind_port_with_all_and_data_dir(
+            port,
+            Arc::new(TelemetryBuffer::new(512)),
+            None,
+            None,
+            None,
+            Some(data_dir),
+        )
+    }
+
     pub fn bind_port_with_all(
         port: u16,
         telemetry: Arc<TelemetryBuffer>,
         dsp_chain: Option<Arc<Mutex<RealtimeDspChain>>>,
         device_id: Option<&str>,
         calibration_store: Option<CalibrationStore>,
+    ) -> Result<Self, String> {
+        Self::bind_port_with_all_and_data_dir(
+            port,
+            telemetry,
+            dsp_chain,
+            device_id,
+            calibration_store,
+            None,
+        )
+    }
+
+    fn bind_port_with_all_and_data_dir(
+        port: u16,
+        telemetry: Arc<TelemetryBuffer>,
+        dsp_chain: Option<Arc<Mutex<RealtimeDspChain>>>,
+        device_id: Option<&str>,
+        calibration_store: Option<CalibrationStore>,
+        data_dir: Option<PathBuf>,
     ) -> Result<Self, String> {
         let addr = format!("127.0.0.1:{}", port);
         let listener = TcpListener::bind(&addr)
@@ -216,7 +252,7 @@ impl LocalAppServer {
         let session_token = generate_secure_token();
         let static_dir = find_design_system_dir();
 
-        let api_ctx = ApiContext::new(
+        let mut api_ctx = ApiContext::new(
             audio_telemetry.clone(),
             app_state.clone(),
             telemetry,
@@ -225,6 +261,9 @@ impl LocalAppServer {
             device_id,
             calibration_store,
         );
+        if let Some(dir) = data_dir {
+            api_ctx.set_data_dir(dir);
+        }
 
         let mut server_threads = Vec::new();
         for _ in 0..4 {
@@ -255,22 +294,72 @@ impl LocalAppServer {
                     let url = request.url.as_str();
                     let path = url.split('?').next().unwrap_or("/");
 
-                    // 1. Validação estrita de Host contra DNS Rebinding (Specs 015 CA-2 e 046 CA-1)
-                    let host_validation = match request.header("host") {
-                        None => Err((400u16, "text/plain", b"Bad Request: missing Host".to_vec())),
-                        Some(v) => {
-                            let expected_ip = format!("127.0.0.1:{}", actual_port);
-                            let expected_name = format!("localhost:{}", actual_port);
-                            if v.eq_ignore_ascii_case(&expected_ip) || v.eq_ignore_ascii_case(&expected_name) {
-                                Ok(())
-                            } else {
-                                Err((421u16, "text/plain", b"Misdirected Request".to_vec()))
-                            }
+                    // 1. Validação estrita de Host contra DNS Rebinding e Request Smuggling em todas as rotas (Specs 015 CA-2, 046 CA-1, AUD-01)
+                    let hosts: Vec<&str> = request.headers("host").collect();
+                    let host_validation = if hosts.is_empty() {
+                        Err((400u16, "text/plain", b"Bad Request: missing Host".to_vec()))
+                    } else if hosts.len() > 1 {
+                        Err((421u16, "text/plain", b"Misdirected Request".to_vec()))
+                    } else {
+                        let v = hosts[0];
+                        let expected_ip = format!("127.0.0.1:{}", actual_port);
+                        let expected_name = format!("localhost:{}", actual_port);
+                        if v.eq_ignore_ascii_case(&expected_ip)
+                            || v.eq_ignore_ascii_case(&expected_name)
+                        {
+                            Ok(())
+                        } else {
+                            Err((421u16, "text/plain", b"Misdirected Request".to_vec()))
                         }
                     };
 
                     let (status, content_type, body) = if let Err(err_resp) = host_validation {
                         err_resp
+                    } else if method != "GET" && method != "HEAD" {
+                        // Regra geral (AUD-01): todo pedido mutante passa por CSRF + Token + limite + Content-Type antes do roteador
+                        Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
+                            let content_len = req
+                                .header("content-length")
+                                .and_then(|v| v.parse::<usize>().ok());
+                            let max_body = if path == "/api/params" { 4096 } else { 20 * 1024 * 1024 };
+                            if content_len.map(|l| l > max_body).unwrap_or(false)
+                                || req.body.len() > max_body
+                            {
+                                return (413, "text/plain", b"Payload Too Large".to_vec());
+                            }
+
+                            let ct_hdr = req.header("content-type").map(|v| v.to_ascii_lowercase());
+                            let valid_ct = match path {
+                                "/api/input/di" | "/api/cab/ir" => ct_hdr
+                                    .as_deref()
+                                    .map(|ct| {
+                                        ct.contains("audio/wav")
+                                            || ct.contains("audio/x-wav")
+                                            || ct.contains("audio/wave")
+                                            || ct.contains("application/octet-stream")
+                                    })
+                                    .unwrap_or(false),
+                                "/api/params" => ct_hdr
+                                    .as_deref()
+                                    .map(|ct| ct.contains("application/json"))
+                                    .unwrap_or(false),
+                                _ => {
+                                    if !req.body.is_empty() || ct_hdr.is_some() {
+                                        ct_hdr
+                                            .as_deref()
+                                            .map(|ct| ct.contains("application/json"))
+                                            .unwrap_or(false)
+                                    } else {
+                                        true
+                                    }
+                                }
+                            };
+                            if !valid_ct {
+                                return (415, "text/plain", b"Unsupported Media Type".to_vec());
+                            }
+
+                            api::dispatch(&api_ctx_clone, url, method, &req.body)
+                        })
                     } else {
                         match path {
                             "/" | "/index.html" => {
@@ -300,50 +389,6 @@ impl LocalAppServer {
                                     .and_then(|d| fs::read_to_string(d.join("app.js")).ok())
                                     .unwrap_or_default();
                                 (200, "application/javascript; charset=utf-8", content.into_bytes())
-                            }
-                            "/api/params" if method == "POST" => {
-                                Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
-                                    let is_json = req
-                                        .header("content-type")
-                                        .map(|v| v.contains("application/json"))
-                                        .unwrap_or(false);
-                                    if !is_json {
-                                        return (415, "text/plain", b"Unsupported Media Type".to_vec());
-                                    }
-                                    let content_len = req
-                                        .header("content-length")
-                                        .and_then(|v| v.parse::<usize>().ok());
-                                    if content_len.map(|l| l > 4096).unwrap_or(false) || req.body.len() > 4096 {
-                                        (413, "text/plain", b"Payload Too Large".to_vec())
-                                    } else {
-                                        api::dispatch(&api_ctx_clone, url, method, &req.body)
-                                    }
-                                })
-                            }
-                            "/api/input/di" | "/api/cab/ir" if method == "POST" => {
-                                Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
-                                    let content_len = req
-                                        .header("content-length")
-                                        .and_then(|v| v.parse::<usize>().ok());
-                                    if content_len.map(|l| l > 20 * 1024 * 1024).unwrap_or(false)
-                                        || req.body.len() > 20 * 1024 * 1024
-                                    {
-                                        (413, "text/plain", b"Payload Too Large".to_vec())
-                                    } else {
-                                        api::dispatch(&api_ctx_clone, url, method, &req.body)
-                                    }
-                                })
-                            }
-                            "/api/presets/load"
-                            | "/api/presets/save"
-                            | "/api/presets/import"
-                            | "/api/scenes/select"
-                            | "/api/input/calibrate"
-                                if method == "POST" =>
-                            {
-                                Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
-                                    api::dispatch(&api_ctx_clone, url, method, &req.body)
-                                })
                             }
                             _ => api::dispatch(&api_ctx_clone, url, method, &request.body),
                         }
@@ -400,27 +445,29 @@ impl LocalAppServer {
     where
         F: FnOnce(&RawRequest) -> (u16, &'static str, Vec<u8>),
     {
-        let origin_hdr = request.header("origin");
-        let sec_fetch = request.header("sec-fetch-site");
+        let origins: Vec<&str> = request.headers("origin").collect();
+        let sec_fetches: Vec<&str> = request.headers("sec-fetch-site").collect();
 
         let expected_ip_origin = format!("http://127.0.0.1:{}", server_port);
         let expected_localhost_origin = format!("http://localhost:{}", server_port);
-        let is_valid_origin = match origin_hdr {
-            Some(v) => {
-                v.eq_ignore_ascii_case(&expected_ip_origin)
-                    || v.eq_ignore_ascii_case(&expected_localhost_origin)
-            }
-            None => sec_fetch.map(|s| s != "cross-site").unwrap_or(true),
+        let origin_ok = if origins.len() > 1 {
+            false
+        } else if let Some(v) = origins.first() {
+            v.eq_ignore_ascii_case(&expected_ip_origin)
+                || v.eq_ignore_ascii_case(&expected_localhost_origin)
+        } else {
+            true
         };
+        let sec_fetch_ok = !sec_fetches
+            .iter()
+            .any(|s| s.trim().eq_ignore_ascii_case("cross-site"));
 
-        if !is_valid_origin {
+        if !origin_ok || !sec_fetch_ok {
             return (403, "text/plain", b"Forbidden Origin".to_vec());
         }
 
-        let has_valid_token = request
-            .header("x-sonix-token")
-            .map(|th| th == session_token)
-            .unwrap_or(false);
+        let tokens: Vec<&str> = request.headers("x-sonix-token").collect();
+        let has_valid_token = tokens.len() == 1 && tokens[0] == session_token;
 
         if !has_valid_token {
             return (401, "text/plain", b"Unauthorized: missing or invalid X-Sonix-Token".to_vec());

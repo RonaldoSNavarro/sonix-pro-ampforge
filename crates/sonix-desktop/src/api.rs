@@ -738,6 +738,53 @@ pub struct ApiContext {
     pub device_enumerator: Arc<dyn AudioDeviceEnumerator>,
     pub duplex_engine: Option<Arc<RealtimeDuplexEngine>>,
     pub custom_presets_dir: Option<std::path::PathBuf>,
+    pub data_dir: Option<std::path::PathBuf>,
+}
+
+/// Tabela canônica de rotas da API local (`(METHOD, PATH)`).
+/// Toda requisição é despachada exclusivamente por esta tabela (AUD-01).
+pub static ROUTES: &[(&str, &str)] = &[
+    ("GET", "/api/status"),
+    ("GET", "/api/audio/status"),
+    ("GET", "/api/telemetry"),
+    ("GET", "/api/devices"),
+    ("GET", "/api/state"),
+    ("GET", "/api/tuner"),
+    ("GET", "/api/graph"),
+    ("POST", "/api/graph"),
+    ("GET", "/api/scope"),
+    ("POST", "/api/params"),
+    ("POST", "/api/input/di"),
+    ("POST", "/api/input/calibrate"),
+    ("POST", "/api/cab/ir"),
+    ("GET", "/api/presets"),
+    ("POST", "/api/presets/load"),
+    ("POST", "/api/presets/save"),
+    ("POST", "/api/presets/import"),
+    ("GET", "/api/presets/*/export"),
+    ("GET", "/api/setlist"),
+    ("POST", "/api/setlist"),
+    ("POST", "/api/setlist/next"),
+    ("POST", "/api/setlist/prev"),
+    ("GET", "/api/modifiers"),
+    ("POST", "/api/modifiers"),
+    ("DELETE", "/api/modifiers"),
+    ("GET", "/api/footswitch"),
+    ("POST", "/api/footswitch/press"),
+    ("POST", "/api/scenes/select"),
+    ("POST", "/api/reamp/run"),
+];
+
+pub fn route_matches(pattern: &str, path: &str) -> bool {
+    if pattern == path {
+        return true;
+    }
+    if pattern == "/api/presets/*/export" {
+        return path.starts_with("/api/presets/")
+            && path.ends_with("/export")
+            && path.len() > "/api/presets//export".len();
+    }
+    false
 }
 
 impl ApiContext {
@@ -792,11 +839,16 @@ impl ApiContext {
             device_enumerator: Arc::new(CpalAudioEnumerator::new()),
             duplex_engine: None,
             custom_presets_dir: None,
+            data_dir: None,
         }
     }
 
     pub fn set_presets_dir(&mut self, dir: std::path::PathBuf) {
         self.custom_presets_dir = Some(dir);
+    }
+
+    pub fn set_data_dir(&mut self, dir: std::path::PathBuf) {
+        self.data_dir = Some(dir);
     }
 }
 
@@ -809,8 +861,18 @@ pub fn dispatch(
     body: &[u8],
 ) -> (u16, &'static str, Vec<u8>) {
     let path = route_with_query.split('?').next().unwrap_or("/");
+    let matched_route = ROUTES
+        .iter()
+        .find(|(m, rp)| *m == method && route_matches(rp, path))
+        .map(|(_, rp)| *rp);
+    let Some(matched_path) = matched_route else {
+        if ROUTES.iter().any(|(_, rp)| route_matches(rp, path)) {
+            return (405, "text/plain", b"Method Not Allowed".to_vec());
+        }
+        return (404, "text/plain", b"Not Found".to_vec());
+    };
 
-    match path {
+    match matched_path {
         "/api/status" => {
             let backend = ctx
                 .audio_telemetry
@@ -1263,6 +1325,9 @@ pub fn dispatch(
                     );
                 };
                 if let Some(conns) = v.get("connections").and_then(|c| c.as_array()) {
+                    if conns.len() > 256 {
+                        return (400, "application/json", br#"{"error":"Muitas conexoes em /api/graph"}"#.to_vec());
+                    }
                     let mut dag = ampforge_dsp::dag::DagGraph::new();
                     for c in conns {
                         let fr = c.get("from").and_then(|x| x.get("row")).and_then(|x| x.as_u64());
@@ -1299,6 +1364,9 @@ pub fn dispatch(
                 if let Ok(mut st) = ctx.app_state.lock() {
                     let mut next = st.dag_topology;
                     if let Some(slots) = v.get("slots").and_then(|s| s.as_array()) {
+                        if slots.len() > 48 {
+                            return (400, "application/json", br#"{"error":"Slots demais em /api/graph"}"#.to_vec());
+                        }
                         for item in slots {
                             let Some(r) = item.get("row").and_then(|x| x.as_u64()) else {
                                 return (400, "application/json", b"{\"error\":\"row ausente\"}".to_vec());
@@ -1673,13 +1741,9 @@ pub fn dispatch(
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
         }
-        p if p.starts_with("/api/presets/") && p.ends_with("/export") => {
-            if method == "GET" {
-                let id = &p["/api/presets/".len()..p.len() - "/export".len()];
-                handle_get_presets_export(id)
-            } else {
-                (405, "text/plain", b"Method Not Allowed".to_vec())
-            }
+        "/api/presets/*/export" => {
+            let id = &path["/api/presets/".len()..path.len() - "/export".len()];
+            handle_get_presets_export(id)
         }
         _ => (404, "text/plain", b"Not Found".to_vec()),
     }
@@ -2053,6 +2117,13 @@ pub fn handle_post_params(
 
     match serde_json::from_str::<serde_json::Value>(&body_str) {
         Ok(serde_json::Value::Object(map)) => {
+            if map.len() > 256 {
+                return (
+                    400,
+                    "application/json",
+                    br#"{"error":"Patch /api/params excede limite de 256 chaves"}"#.to_vec(),
+                );
+            }
             let mut validation_error: Option<String> = None;
             let mut applied = Vec::new();
             let mut ignored = Vec::new();
@@ -3978,12 +4049,20 @@ fn handle_post_presets_import(
     body: &[u8],
     ctx: &ApiContext,
 ) -> (u16, &'static str, Vec<u8>) {
+    if body.len() > 256 * 1024 {
+        return (413, "application/json", b"{\"error\":\"preset_too_large\"}".to_vec());
+    }
     let Ok(content) = std::str::from_utf8(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_utf8\"}".to_vec());
     };
 
     let doc = match sonix_core::persistence::SonixPresetDoc::from_json_str(content) {
-        Ok(d) => d,
+        Ok(d) => {
+            if d.params.as_ref().map(|p| p.len() > 512).unwrap_or(false) {
+                return (400, "application/json", b"{\"error\":\"too_many_preset_params\"}".to_vec());
+            }
+            d
+        }
         Err(e) => {
             return (
                 400,
@@ -4665,28 +4744,122 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
     }
 }
 
+fn reamp_sessions_dir(ctx: &ApiContext) -> std::path::PathBuf {
+    if let Some(ref dir) = ctx.data_dir {
+        return dir.join("reamp");
+    }
+    if let Some(ref presets_dir) = ctx.custom_presets_dir {
+        let base = presets_dir.parent().unwrap_or(presets_dir);
+        return base.join("reamp");
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return std::path::PathBuf::from(appdata).join("SonixPro").join("reamp");
+    }
+    std::env::temp_dir().join("sonix-pro").join("reamp")
+}
+
 fn handle_post_reamp_run(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
     let val: serde_json::Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(_) => return (400, "application/json", br#"{"error":"JSON invalido"}"#.to_vec()),
     };
 
-    let parse_f32_vec = |key: &str| -> Option<Vec<f32>> {
-        val.get(key)?
-            .as_array()?
-            .iter()
-            .map(|x| x.as_f64().map(|n| n as f32))
-            .collect()
+    if val.get("session_path").is_some() {
+        return (
+            400,
+            "application/json",
+            br#"{"error":"session_path nao e permitido; utilize session_name"}"#.to_vec(),
+        );
+    }
+
+    let session_file_stem = if let Some(raw_name) = val.get("session_name") {
+        let Some(name_str) = raw_name.as_str() else {
+            return (400, "application/json", br#"{"error":"session_name invalido"}"#.to_vec());
+        };
+        let valid_name = !name_str.is_empty()
+            && name_str.len() <= 64
+            && name_str
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !valid_name {
+            return (400, "application/json", br#"{"error":"session_name invalido"}"#.to_vec());
+        }
+        name_str.to_string()
+    } else {
+        let unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        format!("sessao-{}", unix_ms)
     };
 
-    let probe = parse_f32_vec("probe").unwrap_or_default();
-    let loopback_rec = parse_f32_vec("loopback_rec").unwrap_or_default();
-    let reamp_rec = parse_f32_vec("reamp_rec").unwrap_or_default();
-    let di_len = val
-        .get("di_len")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize)
-        .unwrap_or_else(|| reamp_rec.len());
+    let parse_f32_vec_bounded = |key: &str| -> Result<Option<Vec<f32>>, &'static str> {
+        let Some(v) = val.get(key) else {
+            return Ok(None);
+        };
+        let Some(arr) = v.as_array() else {
+            return Err("vetor_invalido");
+        };
+        if arr.len() > crate::reamp::MAX_REAMP_SAMPLES {
+            return Err("vetor_excede_limite");
+        }
+        let mut out = Vec::new();
+        if out.try_reserve_exact(arr.len()).is_err() {
+            return Err("memoria_insuficiente");
+        }
+        for item in arr {
+            let Some(num) = item.as_f64() else {
+                return Err("amostra_nao_numerica");
+            };
+            if !num.is_finite() {
+                return Err("amostra_nao_finita");
+            }
+            out.push(num as f32);
+        }
+        Ok(Some(out))
+    };
+
+    let probe = match parse_f32_vec_bounded("probe") {
+        Ok(v) => v.unwrap_or_default(),
+        Err(msg) => {
+            let body = serde_json::to_vec(&serde_json::json!({ "error": msg })).unwrap_or_default();
+            return (400, "application/json", body);
+        }
+    };
+    let loopback_rec = match parse_f32_vec_bounded("loopback_rec") {
+        Ok(v) => v.unwrap_or_default(),
+        Err(msg) => {
+            let body = serde_json::to_vec(&serde_json::json!({ "error": msg })).unwrap_or_default();
+            return (400, "application/json", body);
+        }
+    };
+    let reamp_rec = match parse_f32_vec_bounded("reamp_rec") {
+        Ok(v) => v.unwrap_or_default(),
+        Err(msg) => {
+            let body = serde_json::to_vec(&serde_json::json!({ "error": msg })).unwrap_or_default();
+            return (400, "application/json", body);
+        }
+    };
+
+    let di_len = if let Some(raw_len) = val.get("di_len") {
+        let Some(n_u64) = raw_len.as_u64() else {
+            return (400, "application/json", br#"{"error":"di_len invalido"}"#.to_vec());
+        };
+        let Ok(n_usize) = usize::try_from(n_u64) else {
+            return (400, "application/json", br#"{"error":"di_len fora do limite"}"#.to_vec());
+        };
+        if n_usize > reamp_rec.len() || n_usize > crate::reamp::MAX_REAMP_SAMPLES {
+            return (
+                400,
+                "application/json",
+                br#"{"error":"di_len excede reamp_rec.len() ou limite maximo"}"#.to_vec(),
+            );
+        }
+        n_usize
+    } else {
+        reamp_rec.len()
+    };
+
     let di_source = val
         .get("di_source")
         .and_then(|v| v.as_str())
@@ -4723,14 +4896,10 @@ fn handle_post_reamp_run(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, V
         di_source,
     };
 
-    if let Some(path_str) = val.get("session_path").and_then(|v| v.as_str()) {
-        if let Err(e) = crate::reamp::save_reamp_session_metadata(std::path::Path::new(path_str), &metadata) {
-            return (
-                400,
-                "application/json",
-                serde_json::to_vec(&serde_json::json!({ "error": e })).unwrap(),
-            );
-        }
+    let session_file = reamp_sessions_dir(ctx).join(format!("{}.json", session_file_stem));
+    if let Err(e) = crate::reamp::save_reamp_session_metadata(&session_file, &metadata) {
+        let body = serde_json::to_vec(&serde_json::json!({ "error": e })).unwrap_or_default();
+        return (500, "application/json", body);
     }
 
     let resp = serde_json::json!({
@@ -4738,9 +4907,11 @@ fn handle_post_reamp_run(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, V
         "measured_delay_samples": measured_delay_samples,
         "aligned_samples": aligned,
         "metadata": metadata,
+        "session_file": session_file.to_string_lossy(),
         "notice": "Normalmente é necessário um reamp box entre a saída de linha e a entrada do amplificador."
     });
-    (200, "application/json", serde_json::to_vec(&resp).unwrap())
+    let body = serde_json::to_vec(&resp).unwrap_or_default();
+    (200, "application/json", body)
 }
 
 fn setlist_store_path(custom_dir: Option<&std::path::Path>) -> std::path::PathBuf {
@@ -4801,8 +4972,8 @@ fn handle_post_setlist(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec
     let Ok(dto) = serde_json::from_slice::<SetlistDto>(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_setlist_json\"}".to_vec());
     };
-    if dto.id.trim().is_empty() || dto.presets.is_empty() {
-        return (400, "application/json", b"{\"error\":\"setlist_id_ou_presets_vazios\"}".to_vec());
+    if dto.id.trim().is_empty() || dto.id.len() > 128 || dto.presets.is_empty() || dto.presets.len() > 256 {
+        return (400, "application/json", b"{\"error\":\"setlist_id_ou_presets_vazios_ou_excede_limite\"}".to_vec());
     }
     for pid in &dto.presets {
         if !preset_exists_in(ctx.custom_presets_dir.as_deref(), pid) {
@@ -4908,6 +5079,9 @@ fn handle_post_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, V
     let Ok(dto) = serde_json::from_slice::<ModifierBindingDto>(body) else {
         return (400, "application/json", b"{\"error\":\"invalid_modifier_json\"}".to_vec());
     };
+    if dto.id.trim().is_empty() || dto.id.len() > 64 {
+        return (400, "application/json", b"{\"error\":\"modifier_id_invalido\"}".to_vec());
+    }
     let Some((_, min_bound, max_bound)) = crate::audio::ModifierTargetParam::from_str_name(&dto.target_param) else {
         return (
             400,
@@ -4935,6 +5109,13 @@ fn handle_post_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, V
         if let Some(existing) = st.modifiers.iter_mut().find(|m| m.id == dto.id) {
             *existing = dto.clone();
         } else {
+            if st.modifiers.len() >= 64 {
+                return (
+                    400,
+                    "application/json",
+                    b"{\"error\":\"limite_modifiers_atingido\"}".to_vec(),
+                );
+            }
             st.modifiers.push(dto.clone());
         }
         st.modifiers.clone()
