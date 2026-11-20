@@ -1,109 +1,53 @@
-# SONIX PRO – AMPFORGE | Backlog de engenharia
+# SONIX PRO // AMPFORGE™ — Backlog de Engenharia e Estado dos Marcos
 
-Este backlog traduz as decisões de produto em entregas verificáveis. A ordem prioriza o caminho de áudio confiável antes de expandir a biblioteca de modelos.
+Este documento alinha o backlog histórico do projeto com o **estado real do repositório** (conferido em 2026-11-19 contra `specs/README.md` e `AGENTS.md`).
 
-## Decisões de produto já confirmadas
+## Decisões de Produto Confirmadas
 
-- Rust; aplicação standalone para Windows 10 e 11.
-- WASAPI e ASIO disponíveis no primeiro release.
-- Múltiplas taxas de amostragem, conforme capacidades do dispositivo.
-- Entrada e saída com número de canais configurável dinamicamente.
-- Entradas Hi-Z e de linha; suporte a fluxo de reamp.
-- Fidelidade híbrida: circuit-level, modelagem comportamental e IR.
-- Considerar VST3 futuramente; manter DSP independente de host desde o início.
+- Núcleo DSP em Rust puro, desacoplado de GUI e host.
+- Aplicação desktop standalone Windows 10 e 11 via **Tauri v2 + Vite/TypeScript** (sem HTTP/TCP no release).
+- **WASAPI e ASIO** como requisitos confirmados do produto (WASAPI operacional; ASIO via feature `asio` pendente de validação em hardware/SDK/licenciamento — Spec 049 CA-36).
+- Múltiplas taxas de amostragem (`44,1` / `48` / `88,2` / `96` kHz), canais configuráveis, modo Instrument/Line, captura DI e Reamp.
+- Modelagem híbrida (circuit-level/nodal + behavioral com memória/ADAA + convolução IR particionada zero-latency).
+- Plugins DAW **VST3 e CLAP** (`crates/sonix-plugin` via `nih_plug`) compartilhando o mesmo núcleo DSP.
 
-## Épico A — Fundação e contratos
+---
 
-- [ ] Criar workspace Cargo e crates iniciais `ampforge-dsp`, `ampforge-engine`, `ampforge-audio`, `ampforge-presets` e `ampforge-desktop`.
-- [ ] Definir `AudioSpec` com sample rate, block size, formato, input channels, output channels e layout/mapeamento.
-- [ ] Definir contrato de processador sem dependência de GUI, CPAL, WASAPI, ASIO ou VST.
-- [ ] Definir unidades, ranges, smoothing, IDs estáveis e schema versionado dos parâmetros.
-- [ ] Criar harness de testes offline para processar WAV/fixtures sem abrir dispositivo de áudio.
+## Marcos Concluídos (Specs 001–051)
 
-**Aceite:** `cargo test` executa sem hardware; DSP pode ser instanciado e testado em qualquer host; layouts de canal inválidos geram erro explícito.
+- [x] **Fundação DSP, Lock-Free SPSC e Tempo Real** (Specs 001, 014, 016, 017, 018, 028, 034, 037, 044): callback zero-alloc/zero-lock verificado por alocador global de contagem, `RetiredReaper` off-RT, defesa NaN/Inf e limite `<= 0 dBFS`.
+- [x] **Shell Desktop Tauri v2 e Contratos UI↔Backend** (Specs 011, 012, 015, 027, 033, 035, 046, 048, 050, 051): 6 telas fiéis à referência visual (SSIM), `controls.registry.ts` sem controles decorativos, `Channel` 30 Hz / 0 Hz minimizado, build release standalone com `custom-protocol` e startup seguro em Standby.
+- [x] **Host de Áudio, Calibração, MIDI, Reamp e Plugins** (Specs 013, 019, 026, 029, 036, 049): WASAPI duplex, calibração de entrada + riff Karplus-Strong, MIDI real, alinhamento loopback de reamp, binários VST3/CLAP em `sonix-plugin`.
+- [x] **Equipamentos e Efeitos — 1ª Geração Integrada** (Specs 002–010, 020–025, 030–032, 038–043, 045, 047): 5 amplificadores, 6 pedais de drive, Noise Gate com histerese/LR4, Compressor 1176LN, EQ 8/5/10 bandas, 7 modelos de modulação, RE-201 + delays, 5 reverbs, 4 modos de pitch, afinador YIN/polifônico, looper O(1) e gabinete com convolução IR particionada + 7 microfones.
 
-## Épico B — Host de áudio Windows
+---
 
-- [ ] Implementar enumeração e seleção de dispositivos WASAPI.
-- [ ] Implementar enumeração e seleção de dispositivos ASIO.
-- [ ] Encapsular ambos atrás de uma interface interna comum `AudioBackend`.
-- [ ] Detectar backend/driver ausente e apresentar fallback/erro acionável.
-- [ ] Negociar sample rate, buffer, formato e canais com o dispositivo.
-- [ ] Implementar reconexão e recuperação de falhas sem travar a GUI.
-- [ ] Testar instalação limpa em Windows 10 e 11 x64.
-- [ ] Revisar dependências, SDKs, licenças e redistribuição de componentes ASIO.
+## Aprovado Aguardando Autorização de Implementação
 
-**Aceite:** WASAPI e ASIO abrem streams em hardware de referência; formatos não suportados são reportados; falha de ASIO não impede uso de WASAPI; nenhuma promessa de suporte é feita para combinação de driver não testada.
+- [ ] **Spec 052** — Abertura animada com emblema SVG vetorial, designs skeuomórficos dos pedais faltantes (Modulação, Pitch e Wah `wah_1` Cry Baby GCB95) e mini-cabeça AMP 2 no Estúdio.
 
-## Épico C — Formatos, canais e roteamento
+---
 
-- [ ] Suportar taxas múltiplas anunciadas pelos dispositivos e preparar o engine com a taxa efetiva.
-- [ ] Suportar mono, estéreo e N canais de entrada/saída por configuração.
-- [ ] Criar matriz de roteamento físico ↔ buses internos.
-- [ ] Tratar entradas/saídas assimétricas (por exemplo, 1-in/2-out ou 2-in/4-out).
-- [ ] Implementar conversão de formato e resampling somente onde necessário.
-- [ ] Exibir claramente taxa/canais solicitados versus efetivamente negociados.
+## Nova Fase — Arquitetura Modular e Fidelidade por Equipamento (Specs 053–084, em revisão)
 
-**Aceite:** testes cobrem diferentes layouts; nenhum canal é duplicado, descartado ou somado sem regra explícita; troca de formato recria/prepara o pipeline fora da callback.
+Ordem recomendada de implementação após aprovação manual das Specs:
 
-## Épico D — Instrumento, linha e reamp
+1. **Épico M1 — Contrato Central Modular (Spec 053):**
+   - Extrair traits `AudioProcessor`, `AudioSpec`, `ModelDescriptor`, `ParamDescriptor`, `ChannelLayout`, `ModuleId`+revisão e registro tipado de fábricas em `ampforge-dsp`.
+   - Unificar primitivas `Biquad64` (TDF-II / SVF) e desacoplar orquestração do grafo executável de `sonix-desktop`.
+2. **Épico M2 — Componentes Compartilhados (Specs 076–084):**
+   - Consolidar módulos reutilizáveis: Entrada/Impedância/Captadores (076), Estágios Valvulados/Power/Sag/Carga Reativa (077), Redes Passivas Tone Stack com Top Boost real (078), Oversampling Polifásico Unificado (079), Gabinete/IR/Microfones (080), Motor de Delay (081), Motor de Reverb (082), Afinador/Looper (083) e DAG/Split/Merge/Modifiers/Queues (084).
+3. **Épico M3 — Amplificadores Independentes por Circuito (Specs 054–058):**
+   - Extrair cada amplificador da struct monolítica `WhiteBoxAmpProcessor` para módulo próprio com parâmetros, revisão e testes de fidelidade dedicados: Marshall 1959 SLP (054), Marshall JCM800 2203 (055), Fender Twin Reverb AB763 (056), Mesa/Boogie Dual Rectifier Rev F (057) e Vox AC30/6 Top Boost (058).
+4. **Épico M4 — Pedais e Unidades de Efeito Independentes (Specs 059–075):**
+   - Desacoplar cada pedal de drive (059–064), dinâmica (065–066), EQ (067), tape echo (068), modulação (069–074) e pitch (075) em processadores independentes com identidade elétrica fiel.
 
-- [ ] Criar modo de entrada Instrument/Hi-Z com orientação para conexão correta.
-- [ ] Criar modo Line com calibração de nível e indicador de clipping.
-- [ ] Implementar captura DI limpa sem processamento destrutivo.
-- [ ] Implementar reprodução de DI para saída física selecionada.
-- [ ] Implementar captura do retorno reampado e alinhamento/registro de latência.
-- [ ] Incluir ajuste de nível/atenuação e avisos de impedância/nível.
+---
 
-**Aceite:** uma DI gravada pode ser reproduzida de forma repetível pela saída selecionada; o retorno é gravado e alinhado; clipping ADC/DAC é detectável; usuário não é induzido a conectar nível de linha diretamente a entrada de amp sem verificar nível e impedância.
+## Pendências de Hardware, SDK e Validação Externa
 
-## Épico E — Motor real-time
-
-- [ ] Implementar callback sem alocação, locks bloqueantes, I/O, logging ou operações imprevisíveis.
-- [ ] Preparar grafos, IRs e coeficientes em thread de controle.
-- [ ] Trocar grafos sem destruir objetos na callback.
-- [ ] Implementar smoothing de parâmetros e política para filas cheias.
-- [ ] Expor métricas atômicas de underrun, peak/RMS e tempo de processamento.
-
-**Aceite:** testes de estresse não identificam alocações/locks na callback; troca de preset/IR não causa clique ou bloqueio perceptível; nenhuma panic atravessa a fronteira do callback.
-
-## Épico F — DSP e modelos
-
-- [ ] Implementar gain, filtros, bypass, mixer e roteamento.
-- [ ] Implementar primeiro pedal comportamental e pré-amplificador de referência.
-- [ ] Implementar tone stack específico com dados/revisão documentados.
-- [ ] Implementar convolução IR e validação de WAV/metadados.
-- [ ] Adicionar oversampling seletivo e medir aliasing.
-- [ ] Evoluir power amp, fonte/sag, transformador e carga reativa em etapas.
-- [ ] Adicionar circuit-level (WDF/MNA ou método justificado) para estágios selecionados.
-
-**Aceite:** cada modelo tem documentação, parâmetros, fixtures e testes; comparação A/B é level-matched; simplificações e limitações são explícitas.
-
-## Épico G — Preparação para VST3 futuro
-
-- [ ] Manter `ampforge-dsp` e `ampforge-engine` sem dependência da aplicação desktop.
-- [ ] Definir API pública estável para preparar, processar, resetar e consultar latência.
-- [ ] Separar estado serializável do estado interno DSP.
-- [ ] Definir política de parâmetros, automação, canais e latência compatível com adaptação a host.
-- [ ] Avaliar framework/SDK VST3, licenças e estratégia de distribuição quando o produto standalone estiver estável.
-
-**Aceite:** um host futuro poderá adaptar o engine sem copiar algoritmos DSP nem importar código da GUI; não é necessário entregar plugin no primeiro release.
-
-## Ordem recomendada de releases
-
-1. **Prototype 0:** DSP offline, contrato de áudio e GUI mínima.
-2. **Alpha 1:** WASAPI + ASIO, negociação de formatos e monitoramento.
-3. **Alpha 2:** canais dinâmicos, entrada Hi-Z/linha, DI e reamp.
-4. **Beta 1:** grafo DSP, primeiro amp, pedal e IR.
-5. **Beta 2:** dinâmica avançada, power amp, sag, circuit-level e biblioteca de presets.
-6. **Release 1.0:** matriz Windows 10/11 validada, instalação, documentação, telemetria e critérios de latência/estabilidade publicados.
-7. **Futuro:** avaliação e implementação de host VST3 sobre o núcleo reutilizável.
-
-## Pendências que exigem hardware/medição
-
-- Interfaces e drivers ASIO de referência para certificação.
-- Taxas e buffers mínimos/máximos a declarar como suportados.
-- Limite de canais simultâneos e formatos PCM suportados.
-- Hardware mínimo de CPU/RAM.
-- Política de compensação de latência e calibração para reamp.
-- Requisitos de WASAPI shared/exclusive e comportamento de troca de dispositivo.
+- **ASIO (`Spec 049 CA-36`):** compilação e teste com `CPAL_ASIO_DIR` + Steinberg ASIO SDK + LLVM/Clang + interface física ASIO + revisão formal de licenciamento para distribuição.
+- **WASAPI Exclusivo:** implementação nativa e validação em hardware real (atualmente reportado como indisponível em `DesktopAudioHost::has_mode_support`).
+- **Medição física por cabo loopback (`T-25`):** aferição de latência round-trip real em interface de referência.
+- **Validadores externos DAW (`Spec 049 CA-16`):** execução de `clap-validator` e Steinberg VST3 SDK `validator` sobre o artefato compilado de `sonix-plugin`.
+- **Comparação A/B com hardware real / DI de referência:** captura controlada level-matched para validação auditiva e espectral fina de cada modelo (Specs 054–075).

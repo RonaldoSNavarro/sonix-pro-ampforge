@@ -1,24 +1,27 @@
-# SONIX PRO – AMPFORGE Expert Skill
+# SONIX PRO // AMPFORGE™ — Expert Skill (`sonix-pro-ampforge-expert`)
 
-Skill de domínio para agentes de desenvolvimento que trabalham com simulação de amplificadores valvulados, pedais, efeitos, guitarras, captadores, gabinetes, microfonação, IR e DSP.
+Skill especialista de domínio e engenharia para agentes que projetam, especificam, implementam, depuram e validam o **SONIX PRO // AMPFORGE™** — cobrindo amplificadores valvulados, circuitos analógicos, pedais, guitarras/captadores, gabinetes/microfones/IR, DSP avançado, Rust em tempo real e integração desktop com Tauri v2.
 
-## Conteúdo
+## Conteúdo da Skill
 
-- `SKILL.md` — instruções principais para o agente.
-- `references/architecture-rust-windows.md` — arquitetura Rust/Windows, WASAPI/ASIO, áudio em tempo real, canais dinâmicos, Hi-Z/linha/reamp e DSP híbrido.
-- `references/engineering-backlog.md` — backlog técnico, entregáveis e critérios de aceite.
+- `SKILL.md` — instruções centrais, hierarquia de autoridade, fundamentos de amplificadores/pedais/IR, diretrizes de DSP, Rust, Tauri v2, pesquisa e checklist.
+- `references/architecture-rust-windows.md` — arquitetura efetiva do workspace Rust (`ampforge-dsp`, `sonix-core`, `sonix-desktop`, `sonix-plugin`, `apps/sonix-app`), Tauri v2, `cpal` WASAPI/ASIO, pipeline em tempo real e evolução modular (Spec 053).
+- `references/dsp-engineering.md` — guia técnico de modelagem de circuitos (MNA, WDF, State-Space, ADAA, solvers não lineares), filtros, oversampling, convolução particionada, tempo real e validação objetiva.
+- `references/rust-tauri-best-practices.md` — padrões de engenharia Rust para áudio RT e boas práticas de integração desktop Tauri v2 (IPC, `Channel`, `capabilities`, segurança e as 7 regras obrigatórias).
+- `references/engineering-backlog.md` — estado real dos marcos implementados (Specs 001–051), aprovados (Spec 052) e roadmap modular (Specs 053–084).
 
-## Perfil tecnológico confirmado
+## Perfil Tecnológico Efetivo do Repositório
 
-- Rust.
-- Aplicação standalone para Windows 10 e 11.
-- WASAPI e ASIO desde o primeiro release.
-- Múltiplas taxas de amostragem, negociadas conforme os dispositivos.
-- Canais de entrada e saída configuráveis dinamicamente.
-- Entrada Hi-Z e de linha; captura DI e fluxo de reamp.
-- Modelagem híbrida: circuit-level + modelagem comportamental + IR.
-- Núcleo DSP desacoplado da aplicação, considerando VST3 futuramente.
+- **Núcleo e host:** Rust (edition 2021, `rustc 1.99.x`, licença `CC-BY-NC-4.0`).
+- **Desktop Standalone (Windows 10/11):** Tauri v2 (`tauri 2.12.5`, `@tauri-apps/api 2.12.4`) + Vite 8 + TypeScript 7 (UI vanilla sem framework) embutido via `custom-protocol` (sem HTTP/TCP no release; servidor local apenas com feature `dev-http`).
+- **Áudio Windows:** `cpal 0.18.2` com WASAPI ativo por padrão e ASIO via feature `asio` (`CPAL_ASIO_DIR` + LLVM/Clang; requisito confirmado de produto com verificação em hardware/SDK/licenciamento registrada como pendente em Spec 049 CA-36).
+- **Plugins DAW:** `crates/sonix-plugin` (`nih_plug`) expondo VST3 e CLAP sobre o mesmo núcleo `RealtimeDspChain` (validadores externos `clap-validator` / VST3 SDK `validator` pendentes).
+- **Modelagem DSP:** estratégia híbrida (circuit-level/nodal KCL + behavioral com memória/ADAA + convolução IR particionada zero-latency).
 
-## Instalação
+## Localização e Carregamento no Antigravity
 
-Adicione a pasta `sonix-pro-ampforge-skill` ao diretório de skills do seu agente e habilite a skill no projeto. Se a ferramenta exigir outro formato de manifesto, preserve o conteúdo do `SKILL.md` e adapte apenas o cabeçalho/metadados.
+A skill está ativa no repositório no caminho canônico:
+
+`.agents/skills/sonix-pro-ampforge-expert/`
+
+O Antigravity carrega automaticamente o manifesto YAML presente no topo de `SKILL.md` (`name: sonix-pro-ampforge-expert`). Ao evoluir esta skill, mantenha todos os caminhos relativos dentro de `references/` válidos e sincronizados com `AGENTS.md`, `CLAUDE.md` e `specs/README.md`.

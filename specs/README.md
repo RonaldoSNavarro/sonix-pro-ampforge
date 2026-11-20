@@ -7,7 +7,7 @@ Este arquivo é, além das regras, o **índice** — e o índice é o changelog 
 
 ## Fluxo
 
-1. **Spec** — crie `specs/NNN-nome-da-feature.md` a partir do `_template.md`, com objetivo,
+1. **Spec** — crie `specs/NNN-nome-da-feature.md` a partir do `_template.md` (ou `_template-modulo-dsp.md` para specs de arquitetura DSP, amplificadores, pedais e componentes compartilhados), com objetivo,
    contexto (com evidência), comportamento esperado e **critérios de aceite numerados**.
 2. **Índice** — registre a spec na tabela abaixo. Spec fora do índice é spec que ninguém acha.
 3. **Código** — implemente o comportamento descrito. Comportamento não previsto que aparecer
@@ -103,6 +103,38 @@ Este arquivo é, além das regras, o **índice** — e o índice é o changelog 
 | [050](050-correcao-inicializacao-tauri-e-chiado-audio.md) | Correção da inicialização do shell Tauri release (frontend embutido sem `localhost:1420`) e eliminação de chiado ao abrir (Standby inicial sem calibração e alinhamento de taxa duplex) | Implementada | `tests/contract/050-release-embedded-ui.test.js`, `apps/sonix-app/src-tauri/tests/contract_050_startup_safety.rs`, `crates/sonix-desktop/tests/contract_050_duplex_rate_alignment.rs` |
 | [051](051-correcao-contratos-e-controles-teste-manual-2026-11-16.md) | Correção de contratos UI↔backend, controles sem efeito e usabilidade do teste manual de 2026-11-16 (itens T-00 a T-26; auditoria e revisão de fidelidade DSP/tempo real em 2026-11-18) | Implementada | `crates/sonix-desktop/tests/contract_051_manual_test_fixes.rs` (15/15 ok), `tests/contract/051-correcao-contratos-e-controles-ui.test.js` (24/24 ok) |
 | [052](052-abertura-animada-pedais-faltantes-e-amp2-visivel.md) | Abertura animada com emblema SVG vetorial, designs skeuomórficos dos pedais faltantes e mini-cabeça AMP 2 no Estúdio (itens T-27 a T-29) | Aprovada | `crates/ampforge-dsp/tests/contract_052_wah_and_pedals.rs`, `tests/contract/052-abertura-pedais-amp2.test.js` |
+| [053](053-arquitetura-dsp-modular-e-contratos-de-processadores.md) | Arquitetura DSP Modular e Contratos Comuns de Processadores (`DspModule`, `ModelDescriptor`, `ModuleRegistry`, `ProcessContext`, ciclo de vida e tempo real) | Rascunho | `crates/ampforge-dsp/tests/contract_053_modular_architecture.rs` (planejado) |
+| [054](054-amp-marshall-1959-super-lead-plexi.md) | Amplificador Marshall 1959 Super Lead / Plexi (Rev. 1968–1969) | Rascunho | `crates/ampforge-dsp/tests/contract_054_amp_marshall_1959_plexi.rs` (planejado) |
+| [055](055-amp-marshall-jcm800-2203.md) | Amplificador Marshall JCM800 2203 (Rev. 1981 Master Volume Lead) | Rascunho | `crates/ampforge-dsp/tests/contract_055_amp_marshall_jcm800_2203.rs` (planejado) |
+| [056](056-amp-fender-twin-reverb-ab763.md) | Amplificador Fender Twin Reverb AB763 (Rev. 1963–1967 Blackface) | Rascunho | `crates/ampforge-dsp/tests/contract_056_amp_fender_twin_ab763.rs` (planejado) |
+| [057](057-amp-mesa-boogie-dual-rectifier-rev-f.md) | Amplificador Mesa/Boogie Dual Rectifier Solo Head (Rev. F, 1992) | Rascunho | `crates/ampforge-dsp/tests/contract_057_amp_dual_rectifier_rev_f.rs` (planejado) |
+| [058](058-amp-vox-ac30-top-boost.md) | Amplificador Vox AC30/6 Top Boost (Rev. 1964 JMI) | Rascunho | `crates/ampforge-dsp/tests/contract_058_amp_vox_ac30_top_boost.rs` (planejado) |
+| [059](059-pedal-ibanez-ts808-tube-screamer.md) | Pedal Ibanez TS808 Tube Screamer (Rev. 1979 JRC4558D) | Rascunho | `crates/ampforge-dsp/tests/contract_059_pedal_ts808.rs` (planejado) |
+| [060](060-pedal-klon-centaur.md) | Pedal Klon Centaur (Rev. 1994–2000) | Rascunho | `crates/ampforge-dsp/tests/contract_060_pedal_klon_centaur.rs` (planejado) |
+| [061](061-pedal-proco-rat-lm308.md) | Pedal ProCo RAT Distortion (Rev. 1984–1988 LM308N) | Rascunho | `crates/ampforge-dsp/tests/contract_061_pedal_proco_rat.rs` (planejado) |
+| [062](062-pedal-ehx-big-muff-pi.md) | Pedal Electro-Harmonix Big Muff Pi (Rev. V3 / NYC 4 Estágios) | Rascunho | `crates/ampforge-dsp/tests/contract_062_pedal_big_muff_pi.rs` (planejado) |
+| [063](063-pedal-dallas-arbiter-fuzz-face-ge.md) | Pedal Dallas Arbiter Fuzz Face Germanium (Rev. 1966–1968) | Rascunho | `crates/ampforge-dsp/tests/contract_063_pedal_fuzz_face_ge.rs` (planejado) |
+| [064](064-pedal-boss-ds1-distortion.md) | Pedal Boss DS-1 Distortion (Rev. Clássica) | Rascunho | `crates/ampforge-dsp/tests/contract_064_pedal_boss_ds1.rs` (planejado) |
+| [065](065-pedal-noise-gate-histerese-sidechain.md) | Pedal Noise Gate com Histerese e Sidechain (Ref. Boss NS-2 / ISP Decimator) | Rascunho | `crates/ampforge-dsp/tests/contract_065_pedal_noise_gate.rs` (planejado) |
+| [066](066-rack-compressor-fet-1176ln.md) | Compressor FET UREI 1176LN (Rev. D/E Blackface) | Rascunho | `crates/ampforge-dsp/tests/contract_066_rack_compressor_1176ln.rs` (planejado) |
+| [067](067-pedal-mxr-m108-equalizador-grafico-10-bandas.md) | Pedal MXR M108 10-Band Graphic EQ (e Modos de Equalização) | Rascunho | `crates/ampforge-dsp/tests/contract_067_pedal_mxr_m108_eq.rs` (planejado) |
+| [068](068-rack-roland-re201-space-echo.md) | Unidade Roland RE-201 Space Echo (Rev. 1974) | Rascunho | `crates/ampforge-dsp/tests/contract_068_rack_roland_re201.rs` (planejado) |
+| [069](069-pedal-boss-ce2-analog-bbd-chorus.md) | Pedal Boss CE-2 Analog BBD Chorus (Rev. 1979 MN3007) | Rascunho | `crates/ampforge-dsp/tests/contract_069_pedal_boss_ce2.rs` (planejado) |
+| [070](070-pedal-through-zero-flanger.md) | Pedal Through-Zero Flanger | Rascunho | `crates/ampforge-dsp/tests/contract_070_pedal_tzf_flanger.rs` (planejado) |
+| [071](071-pedal-mxr-phase-90.md) | Pedal MXR Phase 90 (Rev. 1974 Script Logo) | Rascunho | `crates/ampforge-dsp/tests/contract_071_pedal_mxr_phase90.rs` (planejado) |
+| [072](072-pedal-shinei-univibe.md) | Pedal Shin-Ei Uni-Vibe (Rev. 1968) | Rascunho | `crates/ampforge-dsp/tests/contract_072_pedal_univibe.rs` (planejado) |
+| [073](073-pedal-tremolo-optico-e-bias.md) | Pedal Tremolo Óptico / Bias | Rascunho | `crates/ampforge-dsp/tests/contract_073_pedal_tremolo.rs` (planejado) |
+| [074](074-efeito-rotary-speaker-leslie-147.md) | Efeito Rotary Speaker (Ref. Leslie 147) | Rascunho | `crates/ampforge-dsp/tests/contract_074_rotary_leslie_147.rs` (planejado) |
+| [075](075-bloco-pitch-whammy-drop-harmonizer-detune.md) | Bloco de Pitch (Whammy, Drop Capo, Harmonizer e Micro Detune) | Rascunho | `crates/ampforge-dsp/tests/contract_075_pitch_block.rs` (planejado) |
+| [076](076-componente-entrada-condicionamento-impedancia-captadores.md) | Componente de Entrada, Condicionamento, Calibração e Impedância de Captadores | Rascunho | `crates/ampforge-dsp/tests/contract_076_input_impedance.rs` (planejado) |
+| [077](077-componente-estagios-valvulados-power-amp-sag-carga-reativa.md) | Componente de Estágios Valvulados, Power Amp, Fonte/Sag e Carga Reativa | Rascunho | `crates/ampforge-dsp/tests/contract_077_tube_power_sag_load.rs` (planejado) |
+| [078](078-componente-redes-passivas-tone-stack.md) | Componente de Redes Passivas de Tone Stack (FMV, Top Boost e James/Baxandall) | Rascunho | `crates/ampforge-dsp/tests/contract_078_tone_stacks.rs` (planejado) |
+| [079](079-componente-oversampling-polifasico-e-anti-aliasing.md) | Componente de Oversampling Polifásico Seletivo e Anti-Aliasing | Rascunho | `crates/ampforge-dsp/tests/contract_079_oversampling.rs` (planejado) |
+| [080](080-componente-gabinete-convolucao-ir-e-microfonacao.md) | Componente de Gabinete, Convolução IR Particionada e Microfonação Dupla | Rascunho | `crates/ampforge-dsp/tests/contract_080_cab_ir_mics.rs` (planejado) |
+| [081](081-componente-motor-de-delay-e-spillover.md) | Componente de Motor de Delay, Ducking e Spillover | Rascunho | `crates/ampforge-dsp/tests/contract_081_delay_engine.rs` (planejado) |
+| [082](082-componente-motor-de-reverb-mola-placa-sala-shimmer.md) | Componente de Motor de Reverb (Mola, Plate, Hall, Chamber e Shimmer) | Rascunho | `crates/ampforge-dsp/tests/contract_082_reverb_engine.rs` (planejado) |
+| [083](083-componente-afinador-yin-e-looper-de-performance.md) | Componente de Afinador (YIN / Polifônico) e Looper de Performance | Rascunho | `crates/ampforge-dsp/tests/contract_083_tuner_looper.rs` (planejado) |
+| [084](084-componente-roteamento-dag-split-merge-e-modifiers.md) | Componente de Roteamento DAG 4×12, Split/Merge, Modifiers e Filas SPSC Lock-Free | Rascunho | `crates/ampforge-dsp/tests/contract_084_dag_modifiers_spsc.rs` (planejado) |
 
 **Ordem de implementação recomendada (specs anteriores já concluídas):**
 1. **028** e **027** — implementadas.
@@ -122,3 +154,9 @@ acima onde a entrega não está no caminho de produção. Ordem recomendada:
 6. **042**: implementar o bloco de pitch (decidido pelo usuário em 2026-11-14).
 
 **Review da entrega 034–048 (2026-11-15) → Spec 049**, spec única por decisão do usuário. Ordem das partes: A (CA-7 e CA-14 primeiro) → A′ → F (ASIO, instrumento/linha, reamp) → C (DAG) → D (Setlists/Modifiers/footswitches) → B (plugins CLAP + VST3, evolução futura; licença resolvida: projeto sob CC BY-NC 4.0 - Atribuição e Não-Comercial).
+
+**Evolução da Arquitetura DSP Modular (2026-11-19) → Specs 053–084 (`Rascunho`, aguardando revisão manual antes da implementação).** Baseadas no template técnico estendido [`_template-modulo-dsp.md`](_template-modulo-dsp.md) (22 seções obrigatórias) com rastreabilidade de fontes e desacoplamento real por equipamento:
+1. **Fundação central:** `053` (contratos comuns `DspModule`, `ModelDescriptor`, `ModuleRegistry`, `ProcessContext`).
+2. **Componentes compartilhados reutilizáveis:** `076`–`084` (entrada/impedância, válvulas/power/sag/carga reativa, tone stacks, oversampling polifásico, gabinete/IR/mics, motor de delay, motor de reverb, afinador/looper, DAG/modifiers/SPSC).
+3. **Amplificadores individuais:** `054`–`058` (Marshall 1959 Plexi, JCM800 2203, Fender Twin Reverb AB763, Mesa Dual Rectifier Rev F, Vox AC30/6 Top Boost).
+4. **Pedais, unidades de rack e efeitos individuais:** `059`–`075` (6 drives, noise gate, compressor 1176LN, EQ gráfico M108, Roland RE-201, 6 modulações/rotary e bloco de pitch; pedal Wah coberto pela Spec `052` já aprovada).

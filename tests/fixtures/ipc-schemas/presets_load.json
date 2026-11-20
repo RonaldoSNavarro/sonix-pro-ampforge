@@ -55,7 +55,7 @@
     "cab_1.mic2.phase_invert": false,
     "cab_1.mic2.position": 0.5,
     "cab_1.resonance_hz": 98.0,
-    "cab_1.speaker": "v30_4x12_closed",
+    "cab_1.speaker": "v30_4x12",
     "cab_2.enabled": false,
     "cab_2.hicut_khz": 9.0,
     "cab_2.resonance_hz": 90.0,
