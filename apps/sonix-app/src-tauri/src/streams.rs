@@ -120,6 +120,7 @@ impl StreamCoordinator {
         telemetry: Channel<TelemetryFrame>,
         tuner: Channel<TunerFrame>,
         scope: Channel<ScopeFrame>,
+        app_handle: Option<tauri::AppHandle>,
     ) {
         if let Ok(mut guard) = self.channels.lock() {
             *guard = Some(ActiveChannels {
@@ -140,6 +141,15 @@ impl StreamCoordinator {
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_millis(33));
+                if let Some(count) = sonix_desktop::audio::recover_dsp_chain_if_faulted(&ctx) {
+                    if let Some(ref handle) = app_handle {
+                        use tauri::Emitter;
+                        let _ = handle.emit(
+                            "engine_recovered",
+                            serde_json::json!({ "recovery_count": count }),
+                        );
+                    }
+                }
                 if !coordinator.is_visible() {
                     continue;
                 }

@@ -18,6 +18,7 @@ getrandom = "0.3"
 default = ["dev-http"]
 dev-http = []
 asio = ["cpal/asio"]
+fault-injection = []
 
 [[test]]
 name = "contract_013_desktop_realtime_audio"
@@ -86,4 +87,8 @@ required-features = ["dev-http"]
 [[test]]
 name = "auditoria_2026_11_20_seguranca"
 required-features = ["dev-http"]
+
+[[test]]
+name = "auditoria_2026_11_20_fault_injection"
+required-features = ["fault-injection"]
 

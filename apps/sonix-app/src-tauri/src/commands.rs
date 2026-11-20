@@ -483,13 +483,18 @@ pub fn set_stream_visible(
 
 #[tauri::command]
 pub fn start_streams(
+    app: tauri::AppHandle,
     on_telemetry: Channel<TelemetryFrame>,
     on_tuner: Channel<TunerFrame>,
     on_scope: Channel<ScopeFrame>,
     state: State<'_, AppRuntime>,
 ) -> Result<Value, String> {
-    state
-        .streams
-        .start_channels(state.api_ctx.clone(), on_telemetry, on_tuner, on_scope);
+    state.streams.start_channels(
+        state.api_ctx.clone(),
+        on_telemetry,
+        on_tuner,
+        on_scope,
+        Some(app),
+    );
     Ok(json!({ "ok": true, "interval_ms": 33 }))
 }

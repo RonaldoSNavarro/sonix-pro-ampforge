@@ -317,3 +317,254 @@ fn aud_03_post_sem_content_length_411() {
         status, body
     );
 }
+
+#[test]
+fn aud_04_dispatch_nunca_entra_em_panico() {
+    use sonix_desktop::api::{dispatch, ApiContext, AppState};
+    use sonix_desktop::audio::{LockFreeParamQueue, RealtimeDspChain, TelemetryBuffer};
+    use std::sync::{Arc, Mutex};
+
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 256);
+    let dsp = Arc::new(Mutex::new(chain));
+    let pq = Arc::new(LockFreeParamQueue::new());
+    let ctx = ApiContext::new(
+        Arc::new(Mutex::new(None)),
+        Arc::new(Mutex::new(AppState::default())),
+        Arc::new(TelemetryBuffer::new(128)),
+        Some(dsp),
+        Some(pq),
+        None,
+        None,
+    );
+
+    let keys = [
+        "amp_1.bass",
+        "amp_1.bias_ma",
+        "amp_1.bright",
+        "amp_1.channel_mode",
+        "amp_1.cut",
+        "amp_1.depth",
+        "amp_1.enabled",
+        "amp_1.gain",
+        "amp_1.impedance_ohms",
+        "amp_1.input_jack",
+        "amp_1.is_modded",
+        "amp_1.jumpered",
+        "amp_1.master",
+        "amp_1.middle",
+        "amp_1.model",
+        "amp_1.nfb",
+        "amp_1.overdrive",
+        "amp_1.power",
+        "amp_1.power_tube",
+        "amp_1.preamp_plate_v",
+        "amp_1.preamp_tube",
+        "amp_1.presence",
+        "amp_1.rectifier",
+        "amp_1.reverb",
+        "amp_1.sag",
+        "amp_1.spongy",
+        "amp_1.standby",
+        "amp_1.tonestack",
+        "amp_1.treble",
+        "amp_1.triode_asym",
+        "amp_1.vibrato_depth",
+        "amp_1.vibrato_speed",
+        "amp_1.volume_2",
+        "amp_1.xformer_sat",
+        "amp_2.bass",
+        "amp_2.enabled",
+        "amp_2.gain",
+        "amp_2.master",
+        "amp_2.middle",
+        "amp_2.model",
+        "amp_2.treble",
+        "cab_1.enabled",
+        "cab_1.hicut_khz",
+        "cab_1.ir_enabled",
+        "cab_1.mic",
+        "cab_1.mic1.angle_deg",
+        "cab_1.mic1.distance_cm",
+        "cab_1.mic1.enabled",
+        "cab_1.mic1.level_db",
+        "cab_1.mic1.model",
+        "cab_1.mic1.phase_invert",
+        "cab_1.mic1.position",
+        "cab_1.mic2.angle_deg",
+        "cab_1.mic2.distance_cm",
+        "cab_1.mic2.enabled",
+        "cab_1.mic2.level_db",
+        "cab_1.mic2.model",
+        "cab_1.mic2.phase_invert",
+        "cab_1.mic2.position",
+        "cab_1.model",
+        "cab_1.resonance_hz",
+        "cab_1.speaker",
+        "cab_2.enabled",
+        "cab_2.hicut_khz",
+        "cab_2.model",
+        "cab_2.resonance_hz",
+        "cab_2.speaker",
+        "comp_2.attack",
+        "comp_2.enabled",
+        "comp_2.input",
+        "comp_2.output",
+        "comp_2.ratio",
+        "comp_2.release",
+        "dly_1.bass",
+        "dly_1.echo_volume",
+        "dly_1.enabled",
+        "dly_1.feedback",
+        "dly_1.heads",
+        "dly_1.intensity",
+        "dly_1.mix_pct",
+        "dly_1.mode",
+        "dly_1.repeat_rate",
+        "dly_1.reverb_volume",
+        "dly_1.spillover",
+        "dly_1.time_ms",
+        "dly_1.treble",
+        "drive.bias",
+        "drive.drive",
+        "drive.enabled",
+        "drive.level",
+        "drive.model",
+        "drive.tone",
+        "engine.oversampling",
+        "eq_1.band",
+        "eq_1.bands_db",
+        "eq_1.enabled",
+        "eq_1.gain_db",
+        "eq_1.input_gain_db",
+        "eq_1.mode",
+        "eq_1.output_level_db",
+        "eq_1.volume_db",
+        "footswitch.mode",
+        "gate.attack_ms",
+        "gate.enabled",
+        "gate.hold_ms",
+        "gate.hysteresis_db",
+        "gate.key_hpf_hz",
+        "gate.key_lpf_hz",
+        "gate.mode",
+        "gate.range_db",
+        "gate.release_ms",
+        "gate.threshold_db",
+        "input.boost",
+        "input.mode",
+        "input.source",
+        "looper.action",
+        "looper.half_speed",
+        "looper.position",
+        "looper.reverse",
+        "master.level_db",
+        "merge.level_a_db",
+        "merge.level_b_db",
+        "merge.phase_invert_b",
+        "merge.row_1_level_db",
+        "merge.row_1_phase_invert",
+        "mod_2.depth",
+        "mod_2.enabled",
+        "mod_2.mix",
+        "mod_2.mix_pct",
+        "mod_2.model",
+        "mod_2.rate_hz",
+        "palco.exp_1",
+        "pitch_1.enabled",
+        "pitch_1.key",
+        "pitch_1.mix",
+        "pitch_1.mix_pct",
+        "pitch_1.model",
+        "pitch_1.scale",
+        "pitch_1.semitones",
+        "preset.active",
+        "preset.name",
+        "rev_1.damping",
+        "rev_1.decay_s",
+        "rev_1.enabled",
+        "rev_1.mix",
+        "rev_1.mix_pct",
+        "rev_1.predelay_ms",
+        "rev_1.spillover",
+        "scene.active",
+        "split.balance",
+        "split.crossover_hz",
+        "split.enabled",
+        "split.mode",
+        "split.ratio",
+        "tuner.enabled",
+        "tuner.output",
+        "tuner.ref_hz",
+        "wah_1.enabled",
+        "wah_1.mode",
+        "wah_1.position",
+        "wah_1.q",
+    ];
+
+    let adversarial_raw = [
+        "true",
+        "false",
+        "0",
+        "-1",
+        "1e308",
+        "-1e308",
+        "\"x\"",
+        "\"\"",
+        "null",
+        "[]",
+        "{}",
+        "\"NaN\"",
+    ];
+
+    for key in keys {
+        for raw_val in adversarial_raw {
+            let body = format!("{{\"{}\":{}}}", key, raw_val);
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                dispatch(&ctx, "/api/params", "POST", body.as_bytes())
+            }));
+            let (status, _, resp_bytes) = res.unwrap_or_else(|_| {
+                panic!("AUD-04: dispatch entrou em pânico para {}", body);
+            });
+            assert!(
+                (200..300).contains(&status) || (400..500).contains(&status),
+                "AUD-04: status inválido {} para {}: {}",
+                status,
+                body,
+                String::from_utf8_lossy(&resp_bytes)
+            );
+        }
+    }
+}
+
+#[test]
+fn aud_04_api_sem_unwrap() {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir.parent().unwrap().parent().unwrap();
+    let targets = [
+        manifest_dir.join("src/api.rs"),
+        root.join("apps/sonix-app/src-tauri/src/commands.rs"),
+    ];
+
+    let mut violations = Vec::new();
+    for path in targets {
+        let content = std::fs::read_to_string(&path).expect("ler fonte para lint");
+        let prod_section = content.split("#[cfg(test)]").next().unwrap_or(&content);
+        for (idx, line) in prod_section.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains(".unwrap(") || line.contains(".expect(") {
+                violations.push(format!("{}:{}: {}", path.display(), idx + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "AUD-04: encontrados {} unwrap/expect em código não-teste:\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
+}

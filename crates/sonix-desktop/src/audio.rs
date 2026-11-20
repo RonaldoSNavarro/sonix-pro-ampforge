@@ -952,8 +952,8 @@ impl DesktopAudioHost {
         telemetry.update_input_peak(peak_db);
     }
 
-    /// Processa saída F32 em fatias de `mono_in.len()` sem truncar callbacks > 4096 frames e sem silêncio por contenção (Spec 034, CA-5 & CA-6).
-    pub fn process_output_callback_f32(
+    /// Processa saída F32 usando um processador customizável e captura de pânico no callback (AUD-04 / Spec 018 CA-11).
+    pub fn process_output_callback_f32_with_processor<F>(
         data: &mut [f32],
         out_channels: usize,
         out_sample_rate: f32,
@@ -963,7 +963,10 @@ impl DesktopAudioHost {
         dsp_chain: &Mutex<RealtimeDspChain>,
         telemetry: &TelemetryBuffer,
         observed_period: Option<&AtomicU32>,
-    ) {
+        mut processor: F,
+    ) where
+        F: FnMut(&mut RealtimeDspChain, &[f32], &mut [f32]),
+    {
         let ch = out_channels.max(1);
         let total_frames = data.len() / ch;
         if total_frames == 0 {
@@ -978,6 +981,12 @@ impl DesktopAudioHost {
             }
         }
 
+        if telemetry.is_engine_faulted() {
+            data.fill(0.0);
+            telemetry.update_peaks(telemetry.input_peak_db(), -120.0, 0.0);
+            return;
+        }
+
         let chunk_cap = mono_in.len().min(mono_out.len()).max(1);
         let mut offset = 0usize;
         let mut peak = 0.0f32;
@@ -987,13 +996,32 @@ impl DesktopAudioHost {
         while offset < total_frames {
             let frames = (total_frames - offset).min(chunk_cap);
             duplex.pop_samples_for_processing(&mut mono_in[..frames]);
+            let mut faulted = false;
             if let Ok(mut dsp) = dsp_chain.try_lock() {
-                dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
-                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    processor(&mut dsp, &mono_in[..frames], &mut mono_out[..frames]);
+                }));
+                match res {
+                    Ok(()) => {
+                        gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
+                    }
+                    Err(_payload) => {
+                        mono_out[..frames].fill(0.0);
+                        telemetry.mark_engine_faulted();
+                        faulted = true;
+                    }
+                }
             } else {
                 // Contenção não silencia áudio: encaminha o sinal de entrada em bypass sem zeros (Spec 034, CA-6)
                 telemetry.record_dsp_contention_silence();
                 mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+            }
+            if faulted {
+                data.fill(0.0);
+                telemetry.push_waveform(&mono_out[..frames]);
+                peak = 0.0;
+                gate_telemetry = None;
+                break;
             }
             for f in 0..frames {
                 let s = mono_out[f];
@@ -1016,6 +1044,32 @@ impl DesktopAudioHost {
             telemetry.update_gate_telemetry(gs, ggr);
             telemetry.update_b_plus_v(b_plus_v);
         }
+    }
+
+    /// Processa saída F32 em fatias de `mono_in.len()` sem truncar callbacks > 4096 frames e sem silêncio por contenção (Spec 034, CA-5 & CA-6).
+    pub fn process_output_callback_f32(
+        data: &mut [f32],
+        out_channels: usize,
+        out_sample_rate: f32,
+        mono_in: &mut [f32],
+        mono_out: &mut [f32],
+        duplex: &RealtimeDuplexEngine,
+        dsp_chain: &Mutex<RealtimeDspChain>,
+        telemetry: &TelemetryBuffer,
+        observed_period: Option<&AtomicU32>,
+    ) {
+        Self::process_output_callback_f32_with_processor(
+            data,
+            out_channels,
+            out_sample_rate,
+            mono_in,
+            mono_out,
+            duplex,
+            dsp_chain,
+            telemetry,
+            observed_period,
+            |dsp, inp, out| dsp.process(inp, out),
+        );
     }
 
     /// Processa saída I16 em fatias de `mono_in.len()` sem truncamento e sem silêncio por contenção (Spec 034, CA-5 & CA-6).
@@ -1044,6 +1098,12 @@ impl DesktopAudioHost {
             }
         }
 
+        if telemetry.is_engine_faulted() {
+            data.fill(0);
+            telemetry.update_peaks(telemetry.input_peak_db(), -120.0, 0.0);
+            return;
+        }
+
         let chunk_cap = mono_in.len().min(mono_out.len()).max(1);
         let mut offset = 0usize;
         let mut peak = 0.0f32;
@@ -1053,12 +1113,31 @@ impl DesktopAudioHost {
         while offset < total_frames {
             let frames = (total_frames - offset).min(chunk_cap);
             duplex.pop_samples_for_processing(&mut mono_in[..frames]);
+            let mut faulted = false;
             if let Ok(mut dsp) = dsp_chain.try_lock() {
-                dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
-                gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
+                }));
+                match res {
+                    Ok(()) => {
+                        gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
+                    }
+                    Err(_payload) => {
+                        mono_out[..frames].fill(0.0);
+                        telemetry.mark_engine_faulted();
+                        faulted = true;
+                    }
+                }
             } else {
                 telemetry.record_dsp_contention_silence();
                 mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+            }
+            if faulted {
+                data.fill(0);
+                telemetry.push_waveform(&mono_out[..frames]);
+                peak = 0.0;
+                gate_telemetry = None;
+                break;
             }
             for f in 0..frames {
                 let s = mono_out[f];
@@ -2272,6 +2351,8 @@ pub enum DspParamUpdate {
     Amp2Master(f32),
     BeginPresetCrossfade,
     TriggerPresetCrossfade,
+    #[cfg(feature = "fault-injection")]
+    DebugInjectPanic,
 }
 
 /// Comandos discretos de transporte para o Looper (Spec 033)
@@ -2649,6 +2730,8 @@ pub struct RealtimeDspChain {
     pending_shadow_sync: [DspParamUpdate; 256],
     pending_shadow_len: usize,
     mxcsr_no_process: u32,
+    #[cfg(feature = "fault-injection")]
+    inject_panic_next: bool,
 
     // Spec 026 / 029: Afinador ao vivo e captura limpa SPSC lock-free/zero-alloc
     tuner: TunerProcessor,
@@ -2903,6 +2986,8 @@ impl RealtimeDspChain {
             pending_shadow_sync: [DspParamUpdate::TriggerPresetCrossfade; 256],
             pending_shadow_len: 0,
             mxcsr_no_process: 0,
+            #[cfg(feature = "fault-injection")]
+            inject_panic_next: false,
 
             tuner,
             tuner_enabled: false,
@@ -3566,6 +3651,10 @@ impl RealtimeDspChain {
                 }
             }
             DspParamUpdate::BeginPresetCrossfade | DspParamUpdate::TriggerPresetCrossfade => {}
+            #[cfg(feature = "fault-injection")]
+            DspParamUpdate::DebugInjectPanic => {
+                self.inject_panic_next = true;
+            }
         }
     }
 
@@ -4537,6 +4626,11 @@ impl RealtimeDspChain {
         let rt_start = std::time::Instant::now();
         self.drain_param_queue();
         self.drain_resource_queue();
+        #[cfg(feature = "fault-injection")]
+        if self.inject_panic_next {
+            self.inject_panic_next = false;
+            panic!("AUD-04 fault-injection: debug.inject_panic");
+        }
 
         let total = input.len().min(output.len());
         let chunk_max = self.max_block.max(1);
@@ -5004,6 +5098,139 @@ impl RealtimeDspChain {
             }
         }
     }
+
+    pub fn handles(&self) -> RealtimeDspChainHandles {
+        RealtimeDspChainHandles {
+            sample_rate: self.sample_rate,
+            max_block: self.max_block,
+            shared_sample_rate_bits: self.shared_sample_rate_bits.clone(),
+            shared_algo_latency_samples: self.shared_algo_latency_samples.clone(),
+            shared_b_plus_v_bits: self.shared_b_plus_v_bits.clone(),
+            adc_clips: self.adc_clips.clone(),
+            clean_input_ring: self.clean_input_ring.clone(),
+            scope_output_ring: self.scope_output_ring.clone(),
+            param_queue: self.param_queue.clone(),
+            resource_queue: self.resource_queue.clone(),
+            shared_topology_id: self.shared_topology_id.clone(),
+        }
+    }
+
+    #[inline(never)]
+    fn build_boxed_inner(sample_rate: f32) -> Box<Self> {
+        Box::new(Self::new_inner(sample_rate, false))
+    }
+
+    #[inline(never)]
+    pub fn rebuild_boxed_from_handles(handles: RealtimeDspChainHandles) -> Box<Self> {
+        let mut chain = Self::build_boxed_inner(handles.sample_rate);
+        let mut shadow = Self::build_boxed_inner(handles.sample_rate);
+
+        chain.shared_sample_rate_bits = handles.shared_sample_rate_bits.clone();
+        chain.shared_algo_latency_samples = handles.shared_algo_latency_samples.clone();
+        chain.shared_b_plus_v_bits = handles.shared_b_plus_v_bits.clone();
+        chain.adc_clips = handles.adc_clips.clone();
+        chain.clean_input_ring = handles.clean_input_ring.clone();
+        chain.scope_output_ring = handles.scope_output_ring.clone();
+        chain.param_queue = handles.param_queue.clone();
+        chain.resource_queue = handles.resource_queue.clone();
+        chain.shared_topology_id = handles.shared_topology_id.clone();
+        chain.test_riff_buffer =
+            crate::calibration::generate_karplus_strong_riff(handles.sample_rate, 12345);
+        chain.tuner_scratch_read = vec![0.0; 4096];
+        chain.retired_reaper = RetiredReaper::with_queue(
+            handles.resource_queue.retired_queue(),
+            handles.resource_queue.retired_reclaimed(),
+            handles.resource_queue.retired_consumer_lock(),
+        );
+
+        shadow.shared_sample_rate_bits = handles.shared_sample_rate_bits;
+        shadow.shared_algo_latency_samples = handles.shared_algo_latency_samples;
+        shadow.shared_b_plus_v_bits = handles.shared_b_plus_v_bits;
+        shadow.adc_clips = handles.adc_clips;
+        shadow.clean_input_ring = handles.clean_input_ring;
+        shadow.scope_output_ring = handles.scope_output_ring;
+        shadow.param_queue = handles.param_queue;
+        shadow.resource_queue = handles.resource_queue;
+        shadow.shared_topology_id = handles.shared_topology_id;
+
+        chain.shadow = Some(shadow);
+        chain.shadow_out_buf = vec![0.0; handles.max_block.max(2048)];
+        chain.prepare(handles.sample_rate, handles.max_block);
+        chain
+    }
+
+    pub fn apply_param_updates(&mut self, updates: &[DspParamUpdate]) {
+        for &u in updates {
+            self.apply_param_update(u);
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RealtimeDspChainHandles {
+    pub sample_rate: f32,
+    pub max_block: usize,
+    pub shared_sample_rate_bits: Arc<AtomicU32>,
+    pub shared_algo_latency_samples: Arc<AtomicU32>,
+    pub shared_b_plus_v_bits: Arc<AtomicU32>,
+    pub adc_clips: Arc<AtomicU64>,
+    pub clean_input_ring: Arc<CleanInputRing>,
+    pub scope_output_ring: Arc<CleanInputRing>,
+    pub param_queue: Arc<LockFreeParamQueue>,
+    pub resource_queue: Arc<LockFreeResourceQueue>,
+    pub shared_topology_id: Arc<AtomicU64>,
+}
+
+/// Reconstrói `RealtimeDspChain` fora da thread de áudio usando o estado atual e limpa `engine_faulted` (AUD-04).
+#[inline(never)]
+pub fn recover_dsp_chain_with_state(
+    dsp_ref: &Arc<Mutex<RealtimeDspChain>>,
+    telemetry: &TelemetryBuffer,
+    st: &crate::api::AppState,
+) -> Option<u64> {
+    if !telemetry.is_engine_faulted() {
+        return None;
+    }
+    let handles = {
+        let guard = dsp_ref.lock().unwrap_or_else(|e| e.into_inner());
+        guard.handles()
+    };
+    let mut fresh = RealtimeDspChain::rebuild_boxed_from_handles(handles);
+    let updates = crate::api::app_state_to_dsp_updates(st);
+    fresh.apply_param_updates(&updates);
+    let mods = crate::api::compile_modifiers_table(&st.modifiers);
+    *fresh.active_topology = st.dag_topology;
+    fresh.shared_topology_id.store(st.dag_topology.id, Ordering::Release);
+    *fresh.active_modifiers = mods;
+    if let Some(ref mut shadow) = fresh.shadow {
+        *shadow.active_topology = st.dag_topology;
+        *shadow.active_modifiers = mods;
+    }
+    {
+        let mut guard = dsp_ref.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: ambos são referências mutáveis distintas; ptr::swap evita colocar duas cadeias na pilha em debug.
+        unsafe {
+            std::ptr::swap(&mut *guard as *mut RealtimeDspChain, &mut *fresh as *mut RealtimeDspChain);
+        }
+    }
+    drop(fresh);
+    let count = telemetry.clear_engine_faulted_and_record_recovery();
+    Some(count)
+}
+
+/// Versão ligada ao `ApiContext` para os laços de telemetria (AUD-04).
+pub fn recover_dsp_chain_if_faulted(ctx: &crate::api::ApiContext) -> Option<u64> {
+    if !ctx.telemetry.is_engine_faulted() {
+        return None;
+    }
+    let dsp_ref = ctx.dsp_chain.as_ref()?;
+    let st = ctx
+        .app_state
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    recover_dsp_chain_with_state(dsp_ref, &ctx.telemetry, &st)
 }
 
 /// Snapshot de Telemetria para UI / VU / Osciloscópio CRT (Spec 013, CA-6 & Spec 037, CA-5/8)
@@ -5018,6 +5245,9 @@ pub struct TelemetrySnapshot {
     pub waveform: Vec<f32>,
     pub waveform_seq: u64,
     pub dsp_contention_silence_blocks: u64,
+    pub engine_faulted: bool,
+    pub panic_count: u64,
+    pub recovery_count: u64,
 }
 
 /// Buffer atômico circular para telemetria sem bloqueio nem alocação da thread de áudio (Spec 013, CA-6 & Spec 037, CA-5)
@@ -5034,6 +5264,9 @@ pub struct TelemetryBuffer {
     dsp_contention_silence_blocks: AtomicU64,
     observed_input_period_frames: AtomicU32,
     observed_output_period_frames: AtomicU32,
+    engine_faulted: AtomicBool,
+    panic_count: AtomicU64,
+    recovery_count: AtomicU64,
 }
 
 impl TelemetryBuffer {
@@ -5053,7 +5286,38 @@ impl TelemetryBuffer {
             dsp_contention_silence_blocks: AtomicU64::new(0),
             observed_input_period_frames: AtomicU32::new(0),
             observed_output_period_frames: AtomicU32::new(0),
+            engine_faulted: AtomicBool::new(false),
+            panic_count: AtomicU64::new(0),
+            recovery_count: AtomicU64::new(0),
         }
+    }
+
+    #[inline]
+    pub fn is_engine_faulted(&self) -> bool {
+        self.engine_faulted.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    pub fn mark_engine_faulted(&self) {
+        self.panic_count.fetch_add(1, Ordering::Relaxed);
+        self.engine_faulted.store(true, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn clear_engine_faulted_and_record_recovery(&self) -> u64 {
+        let c = self.recovery_count.fetch_add(1, Ordering::Relaxed) + 1;
+        self.engine_faulted.store(false, Ordering::Release);
+        c
+    }
+
+    #[inline]
+    pub fn panic_count(&self) -> u64 {
+        self.panic_count.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn recovery_count(&self) -> u64 {
+        self.recovery_count.load(Ordering::Relaxed)
     }
 
     #[inline]
@@ -5193,6 +5457,9 @@ impl TelemetryBuffer {
             waveform,
             waveform_seq: seq,
             dsp_contention_silence_blocks: self.dsp_contention_silence_blocks.load(Ordering::Relaxed),
+            engine_faulted: self.engine_faulted.load(Ordering::Acquire),
+            panic_count: self.panic_count.load(Ordering::Relaxed),
+            recovery_count: self.recovery_count.load(Ordering::Relaxed),
         }
     }
 }

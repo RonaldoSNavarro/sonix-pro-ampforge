@@ -154,11 +154,35 @@ fn main() {
                 let mut out_buf = vec![0.0f32; block];
                 while r_worker.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_millis(3));
-                    duplex_clone.pop_samples_for_processing(&mut read_buf);
-                    if let Ok(mut dsp) = dsp_chain_clone.lock() {
-                        dsp.process(&read_buf, &mut out_buf);
+                    if telemetry_clone.is_engine_faulted() {
+                        let mut st = sonix_desktop::api::AppState::default();
+                        st.input_boost = 2.5;
+                        st.gate_threshold_db = -65.0;
+                        let _ = sonix_desktop::audio::recover_dsp_chain_with_state(
+                            &dsp_chain_clone,
+                            &telemetry_clone,
+                            &st,
+                        );
+                        continue;
                     }
-                    let peak = out_buf.iter().fold(0.0f32, |acc, &s| acc.max(s.abs()));
+                    duplex_clone.pop_samples_for_processing(&mut read_buf);
+                    let mut faulted = false;
+                    if let Ok(mut dsp) = dsp_chain_clone.try_lock() {
+                        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            dsp.process(&read_buf, &mut out_buf);
+                        }))
+                        .is_err()
+                        {
+                            out_buf.fill(0.0);
+                            telemetry_clone.mark_engine_faulted();
+                            faulted = true;
+                        }
+                    }
+                    let peak = if faulted {
+                        0.0
+                    } else {
+                        out_buf.iter().fold(0.0f32, |acc, &s| acc.max(s.abs()))
+                    };
                     let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
                     telemetry_clone.update_peaks(peak_db - 6.0, peak_db, 1.2);
                     telemetry_clone.push_waveform(&out_buf);

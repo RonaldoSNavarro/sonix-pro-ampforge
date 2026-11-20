@@ -96,6 +96,8 @@ fn build_runtime_with_calibration(
         }
     }
 
+    let shared_app_state = Arc::new(Mutex::new(initial_state));
+
     let started_counter = AtomicUsize::new(0);
     let (active_streams, running, fallback_worker) = if start_audio_host && ensure_single_audio_host(&started_counter) {
         let streams = DesktopAudioHost::start_realtime_wasapi_duplex(
@@ -117,20 +119,47 @@ fn build_runtime_with_calibration(
             let duplex_clone = duplex.clone();
             let telemetry_clone = telemetry.clone();
             let dsp_clone = dsp_chain.clone();
+            let state_clone = shared_app_state.clone();
             let flag = run_flag.clone();
             Some(thread::spawn(move || {
                 let mut in_buf = vec![0.0f32; 4096];
                 let mut out_buf = vec![0.0f32; 4096];
                 while flag.load(Ordering::Relaxed) {
                     thread::park_timeout(Duration::from_millis(3));
+                    if telemetry_clone.is_engine_faulted() {
+                        let st = state_clone
+                            .lock()
+                            .ok()
+                            .map(|g| g.clone())
+                            .unwrap_or_default();
+                        let _ = sonix_desktop::audio::recover_dsp_chain_with_state(
+                            &dsp_clone,
+                            &telemetry_clone,
+                            &st,
+                        );
+                        continue;
+                    }
                     let period = duplex_clone.target_period().clamp(32, 4096);
                     duplex_clone.pop_samples_for_processing(&mut in_buf[..period]);
-                    if let Ok(mut dsp) = dsp_clone.lock() {
-                        dsp.process(&in_buf[..period], &mut out_buf[..period]);
+                    let mut faulted = false;
+                    if let Ok(mut dsp) = dsp_clone.try_lock() {
+                        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            dsp.process(&in_buf[..period], &mut out_buf[..period]);
+                        }))
+                        .is_err()
+                        {
+                            out_buf[..period].fill(0.0);
+                            telemetry_clone.mark_engine_faulted();
+                            faulted = true;
+                        }
                     }
-                    let peak = out_buf[..period]
-                        .iter()
-                        .fold(0.0f32, |acc, &x| acc.max(x.abs()));
+                    let peak = if faulted {
+                        0.0
+                    } else {
+                        out_buf[..period]
+                            .iter()
+                            .fold(0.0f32, |acc, &x| acc.max(x.abs()))
+                    };
                     let peak_db = if peak > 1e-6 {
                         20.0 * peak.log10()
                     } else {
@@ -163,7 +192,7 @@ fn build_runtime_with_calibration(
 
     let mut api_ctx = ApiContext::new(
         audio_telemetry,
-        Arc::new(Mutex::new(initial_state)),
+        shared_app_state,
         telemetry,
         Some(dsp_chain),
         param_queue,

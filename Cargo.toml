@@ -18,7 +18,7 @@ license = "CC-BY-NC-4.0"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 
 [profile.dev]
 opt-level = 1

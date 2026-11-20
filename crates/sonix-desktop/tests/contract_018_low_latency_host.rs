@@ -15,10 +15,12 @@
 //! CA-13: Não-regressão das Specs 001 e 013
 
 use sonix_desktop::audio::{
-    measure_loopback_latency, AudioMode, AudioStatusTelemetry,
-    InputChannel, LockFreeSpscRingBuffer, RealtimeDspChain,
-    SimulatedAudioHost,
+    measure_loopback_latency, recover_dsp_chain_if_faulted, AudioMode, AudioStatusTelemetry,
+    DesktopAudioHost, InputChannel, LockFreeSpscRingBuffer, RealtimeDspChain,
+    RealtimeDuplexEngine, SimulatedAudioHost, TelemetryBuffer,
 };
+use sonix_desktop::api::{ApiContext, AppState};
+use std::sync::{Arc, Mutex};
 use sonix_desktop::server::LocalAppServer;
 
 #[test]
@@ -261,27 +263,103 @@ fn test_ca_09_offline_loopback_latency_measurement() {
 
 #[test]
 fn test_ca_11_dsp_panic_catch_and_stream_resilience() {
-    // CA-11: Pânico provocado dentro do processamento gera silêncio, incrementa panics e o stream continua
-    let mut host = SimulatedAudioHost::new(48000, 128);
-    assert_eq!(host.panic_count(), 0);
-    
-    // Injeta hook que entra em pânico na próxima chamada
-    host.trigger_test_panic();
-    
-    let output = host.tick_sine_1khz();
+    // CA-11 (AUD-04): Pânico provocado dentro do processamento gera silêncio no callback real,
+    // liga engine_faulted sem envenenar o Mutex, incrementa panic_count e recupera com a rotina real.
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 128);
+    chain.set_gate_enabled(false);
+    chain.set_amp_standby(false);
+    let pq = chain.param_queue();
+    let dsp = Arc::new(Mutex::new(chain));
+    let telemetry = Arc::new(TelemetryBuffer::new(512));
+    let duplex = Arc::new(RealtimeDuplexEngine::new(4096));
+
+    let mut st = AppState::default();
+    st.gate_enabled = false;
+    st.amp_standby = false;
+    let ctx = ApiContext::new(
+        Arc::new(Mutex::new(None)),
+        Arc::new(Mutex::new(st)),
+        telemetry.clone(),
+        Some(dsp.clone()),
+        Some(pq),
+        None,
+        None,
+    );
+
+    assert_eq!(telemetry.panic_count(), 0);
+    assert!(!telemetry.is_engine_faulted());
+
+    let input_block: Vec<f32> = (0..128)
+        .map(|i| (2.0 * std::f32::consts::PI * 440.0 * (i as f32 / 48000.0)).sin() * 0.25)
+        .collect();
+    duplex.push_captured_samples(&input_block);
+
+    let mut output = vec![0.99_f32; 256];
+    let mut mono_in = vec![0.0_f32; 128];
+    let mut mono_out = vec![0.0_f32; 128];
+
+    DesktopAudioHost::process_output_callback_f32_with_processor(
+        &mut output,
+        2,
+        48000.0,
+        &mut mono_in,
+        &mut mono_out,
+        &duplex,
+        &dsp,
+        &telemetry,
+        None,
+        |_dsp, _inp, _out| panic!("CA-11 fault injection"),
+    );
+
     assert!(output.iter().all(|&s| s == 0.0), "Bloco em que houve pânico deve sair em silêncio");
-    assert_eq!(host.panic_count(), 1, "Contador de panics deve ser incrementado");
-    
+    assert_eq!(telemetry.panic_count(), 1, "Contador de panics deve ser incrementado");
+    assert!(telemetry.is_engine_faulted(), "Flag engine_faulted deve ligar após pânico");
+    assert!(dsp.try_lock().is_ok(), "Mutex não pode ficar envenenado após catch_unwind");
+
+    // Enquanto faulted, blocos adicionais continuam silenciosos
+    duplex.push_captured_samples(&input_block);
+    output.fill(0.5);
+    DesktopAudioHost::process_output_callback_f32(
+        &mut output,
+        2,
+        48000.0,
+        &mut mono_in,
+        &mut mono_out,
+        &duplex,
+        &dsp,
+        &telemetry,
+        None,
+    );
+    assert!(output.iter().all(|&s| s == 0.0), "Com engine_faulted, callback sai em silêncio");
+
+    // Rotina real de recuperação reconstrói a cadeia a partir de AppState e limpa a flag
+    let recovery = recover_dsp_chain_if_faulted(&ctx);
+    assert_eq!(recovery, Some(1));
+    assert!(!telemetry.is_engine_faulted());
+
     // Os 100 blocos seguintes devem ser processados normalmente sem pânico
     let mut normal_blocks = 0;
     for _ in 0..100 {
-        let out = host.tick_sine_1khz();
-        if out.iter().any(|&s| s != 0.0) {
+        duplex.push_captured_samples(&input_block);
+        output.fill(0.0);
+        DesktopAudioHost::process_output_callback_f32(
+            &mut output,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &dsp,
+            &telemetry,
+            None,
+        );
+        if output.iter().any(|&s| s != 0.0) {
             normal_blocks += 1;
         }
     }
     assert_eq!(normal_blocks, 100, "Todos os 100 blocos seguintes devem operar normalmente");
-    assert_eq!(host.panic_count(), 1, "Contador de panics não deve subir além de 1");
+    assert_eq!(telemetry.panic_count(), 1, "Contador de panics não deve subir além de 1");
 }
 
 #[test]

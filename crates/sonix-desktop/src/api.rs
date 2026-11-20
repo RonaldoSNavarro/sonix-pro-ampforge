@@ -852,6 +852,83 @@ impl ApiContext {
     }
 }
 
+fn json_response<T: serde::Serialize>(status: u16, value: &T) -> (u16, &'static str, Vec<u8>) {
+    match serde_json::to_vec(value) {
+        Ok(bytes) => (status, "application/json", bytes),
+        Err(e) => (
+            500,
+            "application/json",
+            format!("{{\"error\":\"E_INTERNAL: {}\"}}", e).into_bytes(),
+        ),
+    }
+}
+
+fn json_error_response(status: u16, msg: &str) -> (u16, &'static str, Vec<u8>) {
+    let payload = serde_json::json!({ "error": msg });
+    match serde_json::to_vec(&payload) {
+        Ok(bytes) => (status, "application/json", bytes),
+        Err(_) => (
+            500,
+            "application/json",
+            br#"{"error":"E_INTERNAL: serialization failed"}"#.to_vec(),
+        ),
+    }
+}
+
+pub fn compile_modifiers_table(modifiers: &[ModifierBindingDto]) -> crate::audio::CompiledModifierTable {
+    let mut table = crate::audio::CompiledModifierTable::empty();
+    for m in modifiers.iter().take(16) {
+        if let (Some((target, _, _)), Some(source)) = (
+            crate::audio::ModifierTargetParam::from_str_name(&m.target_param),
+            crate::audio::CompiledModifierSource::from_str_name(&m.source),
+        ) {
+            let idx = table.len;
+            table.bindings[idx] = crate::audio::CompiledModifierBinding {
+                active: true,
+                target,
+                source,
+                min_val: m.min_val,
+                max_val: m.max_val,
+                curve_slope: m.curve_slope,
+                damping_ms: m.damping_ms,
+            };
+            table.len += 1;
+        }
+    }
+    table
+}
+
+pub fn app_state_to_dsp_updates(st: &AppState) -> Vec<DspParamUpdate> {
+    let mut updates = Vec::new();
+    if let Some(m) = ampforge_dsp::amp::find_model_by_name(&st.amp_model) {
+        updates.push(DspParamUpdate::AmpModel(m));
+    }
+    if let Some(m) = ampforge_dsp::amp::find_model_by_name(&st.amp_2_model) {
+        updates.push(DspParamUpdate::Amp2Model(m));
+    }
+    if let Some(spk) = parse_speaker_model(&st.cab_speaker) {
+        updates.push(DspParamUpdate::Cab1Speaker(spk));
+    }
+    if let Some(spk) = parse_speaker_model(&st.cab_2_speaker) {
+        updates.push(DspParamUpdate::Cab2Speaker(spk));
+    }
+    if let Ok(serde_json::Value::Object(map)) = serde_json::to_value(st) {
+        for (k, v) in &map {
+            if matches!(
+                k.as_str(),
+                "amp_1.model" | "amp_2.model" | "cab_1.speaker" | "cab_2.speaker" | "looper.action"
+            ) {
+                continue;
+            }
+            json_kv_to_dsp_updates(k.as_str(), v, &mut updates);
+        }
+    }
+    for (idx, &gain_db) in st.eq_1_bands_db.iter().enumerate() {
+        updates.push(DspParamUpdate::Eq1BandGain(idx, gain_db));
+    }
+    updates
+}
+
 /// Despachante puro da API (sem dependência de socket HTTP).
 /// Retorna `(status_http, content_type, body_bytes)`.
 pub fn dispatch(
@@ -886,7 +963,7 @@ pub fn dispatch(
                 "version": "1.0.0",
                 "backend": backend
             });
-            (200, "application/json", serde_json::to_vec(&body).unwrap())
+            json_response(200, &body)
         }
         "/api/audio/status" => {
             let clips = ctx
@@ -1029,9 +1106,21 @@ pub fn dispatch(
                     "dsp_contention_silence_blocks".to_string(),
                     serde_json::json!(contention_silences),
                 );
+                obj.insert(
+                    "panics".to_string(),
+                    serde_json::json!(ctx.telemetry.panic_count()),
+                );
+                obj.insert(
+                    "engine_faulted".to_string(),
+                    serde_json::json!(ctx.telemetry.is_engine_faulted()),
+                );
+                obj.insert(
+                    "recovery_count".to_string(),
+                    serde_json::json!(ctx.telemetry.recovery_count()),
+                );
                 obj.insert("mode_capabilities".to_string(), caps);
             }
-            (200, "application/json", serde_json::to_vec(&val).unwrap())
+            json_response(200, &val)
         }
         "/api/telemetry" => {
             let mut snap = ctx.telemetry.snapshot();
@@ -1061,13 +1150,14 @@ pub fn dispatch(
                 })
                 .collect();
             let resp = serde_json::json!({ "devices": mapped });
-            (200, "application/json", serde_json::to_vec(&resp).unwrap())
+            json_response(200, &resp)
         }
         "/api/state" => {
             if method == "GET" {
-                let st = ctx.app_state.lock().unwrap();
-                let json = serde_json::to_string(&*st).unwrap();
-                (200, "application/json", json.into_bytes())
+                match ctx.app_state.lock() {
+                    Ok(st) => json_response(200, &*st),
+                    Err(_) => json_error_response(500, "E_INTERNAL: app_state lock poisoned"),
+                }
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -1156,7 +1246,7 @@ pub fn dispatch(
                     "muted": is_muted,
                     "ref_hz": ref_hz,
                 });
-                (200, "application/json", serde_json::to_vec(&resp).unwrap())
+                json_response(200, &resp)
             } else {
                 (405, "text/plain", b"Method Not Allowed".to_vec())
             }
@@ -1315,14 +1405,10 @@ pub fn dispatch(
                         }
                     ]
                 });
-                (200, "application/json", serde_json::to_vec(&graph).unwrap())
+                json_response(200, &graph)
             } else if method == "POST" {
                 let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
-                    return (
-                        400,
-                        "application/json",
-                        serde_json::to_vec(&serde_json::json!({"error": "JSON inválido em /api/graph"})).unwrap(),
-                    );
+                    return json_error_response(400, "E_VALIDATION: JSON inválido em /api/graph");
                 };
                 if let Some(conns) = v.get("connections").and_then(|c| c.as_array()) {
                     if conns.len() > 256 {
@@ -1335,28 +1421,19 @@ pub fn dispatch(
                         let tr = c.get("to").and_then(|x| x.get("row")).and_then(|x| x.as_u64());
                         let tc = c.get("to").and_then(|x| x.get("col")).and_then(|x| x.as_u64());
                         let (Some(fr), Some(fc), Some(tr), Some(tc)) = (fr, fc, tr, tc) else {
-                            return (
-                                400,
-                                "application/json",
-                                serde_json::to_vec(&serde_json::json!({"error": "Conexão inválida em /api/graph"})).unwrap(),
-                            );
+                            return json_error_response(400, "E_VALIDATION: Conexão inválida em /api/graph");
                         };
                         if fr >= 4 || fc >= 12 || tr >= 4 || tc >= 12 {
-                            return (
-                                400,
-                                "application/json",
-                                serde_json::to_vec(&serde_json::json!({"error": "Coordenada fora da grade 4x12"})).unwrap(),
-                            );
+                            return json_error_response(400, "E_VALIDATION: Coordenada fora da grade 4x12");
                         }
-                        if let Err(err) = dag.add_connection(
-                            ampforge_dsp::dag::SlotId::new(fr as usize, fc as usize).unwrap(),
-                            ampforge_dsp::dag::SlotId::new(tr as usize, tc as usize).unwrap(),
-                        ) {
-                            return (
-                                400,
-                                "application/json",
-                                serde_json::to_vec(&serde_json::json!({"error": format!("DagCycleError: {:?}", err)})).unwrap(),
-                            );
+                        let (Ok(from_slot), Ok(to_slot)) = (
+                            ampforge_dsp::dag::SlotId::new(fr as usize, fc as usize),
+                            ampforge_dsp::dag::SlotId::new(tr as usize, tc as usize),
+                        ) else {
+                            return json_error_response(400, "E_VALIDATION: Coordenada fora da grade 4x12");
+                        };
+                        if let Err(err) = dag.add_connection(from_slot, to_slot) {
+                            return json_error_response(400, &format!("DagCycleError: {:?}", err));
                         }
                     }
                 }
@@ -1387,11 +1464,7 @@ pub fn dispatch(
                                 }
                                 Some(serde_json::Value::String(s)) => {
                                     let Some(kind) = crate::audio::DagBlockKind::from_str_name(s) else {
-                                        return (
-                                            400,
-                                            "application/json",
-                                            serde_json::to_vec(&serde_json::json!({"error": format!("Bloco desconhecido: {}", s)})).unwrap(),
-                                        );
+                                        return json_error_response(400, &format!("Bloco desconhecido: {}", s));
                                     };
                                     for slot in next.slots.iter_mut() {
                                         if *slot == Some(kind) {
@@ -1414,11 +1487,7 @@ pub fn dispatch(
                     if let Some(ref rq) = ctx.resource_queue {
                         let _ = rq.push_topology(Box::new(topo));
                     }
-                    (
-                        200,
-                        "application/json",
-                        serde_json::to_vec(&serde_json::json!({"ok": true, "topology_id": topo.id})).unwrap(),
-                    )
+                    json_response(200, &serde_json::json!({"ok": true, "topology_id": topo.id}))
                 } else {
                     (500, "application/json", b"{\"error\":\"Falha ao atualizar topologia\"}".to_vec())
                 }
@@ -1499,7 +1568,7 @@ pub fn dispatch(
                             }));
                         }
                         let resp = serde_json::json!({ "transfer": pts });
-                        (200, "application/json", serde_json::to_vec(&resp).unwrap())
+                        json_response(200, &resp)
                     }
                     "waveform" => {
                         let max_n = 1024usize;
@@ -1543,7 +1612,7 @@ pub fn dispatch(
                                 "output": out_json
                             }
                         });
-                        (200, "application/json", serde_json::to_vec(&resp).unwrap())
+                        json_response(200, &resp)
                     }
                     "tonestack" => {
                         let parsed_ts = parse_tonestack(&ts_str);
@@ -1599,7 +1668,7 @@ pub fn dispatch(
                             "tonestack": ts,
                             "speaker_z": z_curve
                         });
-                        (200, "application/json", serde_json::to_vec(&resp).unwrap())
+                        json_response(200, &resp)
                     }
                     _ => (400, "application/json", b"{\"error\":\"Modo de osciloscopio invalido\"}".to_vec()),
                 }
@@ -2081,6 +2150,8 @@ fn json_kv_to_dsp_updates(k: &str, v: &serde_json::Value, out: &mut Vec<DspParam
             if let Some(sc) = parse_pitch_scale(s) { out.push(DspParamUpdate::Pitch1Scale(sc)); }
         },
         "pitch_1.mix" | "pitch_1.mix_pct" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Pitch1Mix(num as f32)); },
+        #[cfg(feature = "fault-injection")]
+        "debug.inject_panic" => if v.as_bool() == Some(true) { out.push(DspParamUpdate::DebugInjectPanic); },
         _ if k.starts_with("eq_1.band") => {
             let rest = &k["eq_1.band".len()..];
             let mut parts = rest.split('.');
@@ -3367,6 +3438,15 @@ pub fn handle_post_params(
                             break;
                         }
                     }
+                    #[cfg(feature = "fault-injection")]
+                    "debug.inject_panic" => {
+                        if v.is_boolean() {
+                            applied.push(k.clone());
+                        } else {
+                            validation_error = Some("debug.inject_panic deve ser booleano".to_string());
+                            break;
+                        }
+                    }
                     _ => {
                         ignored.push(k.clone());
                     }
@@ -3374,8 +3454,7 @@ pub fn handle_post_params(
             }
 
             if let Some(err) = validation_error {
-                let err_json = format!("{{\"error\":\"{}\"}}", err);
-                (400, "application/json", err_json.into_bytes())
+                json_error_response(400, &format!("E_VALIDATION: {}", err))
             } else {
                 // Constrói o lote SPSC antes de mutar AppState (Spec 034, CA-1, CA-2, CA-10)
                 let mut updates = Vec::with_capacity(applied.len() + 2);
@@ -3424,62 +3503,64 @@ pub fn handle_post_params(
                             continue;
                         }
                         match k.as_str() {
-                            "amp_1.gain" => st.amp_gain = v.as_f64().unwrap() as f32,
-                            "amp_1.overdrive" => st.amp_overdrive = v.as_f64().unwrap() as f32,
-                            "amp_1.bass" => st.amp_bass = v.as_f64().unwrap() as f32,
-                            "amp_1.middle" => st.amp_middle = v.as_f64().unwrap() as f32,
-                            "amp_1.treble" => st.amp_treble = v.as_f64().unwrap() as f32,
-                            "amp_1.presence" => st.amp_presence = v.as_f64().unwrap() as f32,
-                            "amp_1.depth" => st.amp_depth = v.as_f64().unwrap() as f32,
-                            "amp_1.master" => st.amp_master = v.as_f64().unwrap() as f32,
-                            "amp_1.volume_2" => st.amp_volume_2 = v.as_f64().unwrap() as f32,
-                            "amp_1.cut" => st.amp_cut = v.as_f64().unwrap() as f32,
-                            "amp_1.reverb" => st.amp_reverb = v.as_f64().unwrap() as f32,
-                            "amp_1.vibrato_speed" => st.amp_vibrato_speed = v.as_f64().unwrap() as f32,
-                            "amp_1.vibrato_depth" => st.amp_vibrato_depth = v.as_f64().unwrap() as f32,
-                            "amp_1.power" => st.amp_power = v.as_bool().unwrap(),
-                            "amp_1.standby" => st.amp_standby = v.as_bool().unwrap(),
-                            "amp_1.jumpered" => st.amp_jumpered = v.as_bool().unwrap(),
-                            "amp_1.spongy" => st.amp_spongy = v.as_bool().unwrap(),
-                            "amp_1.input_jack" => st.amp_input_jack = v.as_str().unwrap().to_string(),
-                            "amp_1.channel_mode" => st.amp_channel_mode = v.as_str().unwrap().to_string(),
-                            "amp_1.impedance_ohms" => st.amp_impedance_ohms = v.as_str().unwrap().to_string(),
+                            "amp_1.gain" => if let Some(n) = v.as_f64() { st.amp_gain = n as f32; },
+                            "amp_1.overdrive" => if let Some(n) = v.as_f64() { st.amp_overdrive = n as f32; },
+                            "amp_1.bass" => if let Some(n) = v.as_f64() { st.amp_bass = n as f32; },
+                            "amp_1.middle" => if let Some(n) = v.as_f64() { st.amp_middle = n as f32; },
+                            "amp_1.treble" => if let Some(n) = v.as_f64() { st.amp_treble = n as f32; },
+                            "amp_1.presence" => if let Some(n) = v.as_f64() { st.amp_presence = n as f32; },
+                            "amp_1.depth" => if let Some(n) = v.as_f64() { st.amp_depth = n as f32; },
+                            "amp_1.master" => if let Some(n) = v.as_f64() { st.amp_master = n as f32; },
+                            "amp_1.volume_2" => if let Some(n) = v.as_f64() { st.amp_volume_2 = n as f32; },
+                            "amp_1.cut" => if let Some(n) = v.as_f64() { st.amp_cut = n as f32; },
+                            "amp_1.reverb" => if let Some(n) = v.as_f64() { st.amp_reverb = n as f32; },
+                            "amp_1.vibrato_speed" => if let Some(n) = v.as_f64() { st.amp_vibrato_speed = n as f32; },
+                            "amp_1.vibrato_depth" => if let Some(n) = v.as_f64() { st.amp_vibrato_depth = n as f32; },
+                            "amp_1.power" => if let Some(b) = v.as_bool() { st.amp_power = b; },
+                            "amp_1.standby" => if let Some(b) = v.as_bool() { st.amp_standby = b; },
+                            "amp_1.jumpered" => if let Some(b) = v.as_bool() { st.amp_jumpered = b; },
+                            "amp_1.spongy" => if let Some(b) = v.as_bool() { st.amp_spongy = b; },
+                            "amp_1.input_jack" => if let Some(s) = v.as_str() { st.amp_input_jack = s.to_string(); },
+                            "amp_1.channel_mode" => if let Some(s) = v.as_str() { st.amp_channel_mode = s.to_string(); },
+                            "amp_1.impedance_ohms" => if let Some(s) = v.as_str() { st.amp_impedance_ohms = s.to_string(); },
                             "amp_1.model" => {}
-                            "engine.oversampling" => st.engine_oversampling = v.as_str().unwrap().to_string(),
-                            "input.boost" => st.input_boost = v.as_f64().unwrap() as f32,
-                            "gate.threshold_db" => st.gate_threshold_db = v.as_f64().unwrap() as f32,
-                            "amp_1.bright" => st.amp_bright = v.as_bool().unwrap(),
-                            "drive.enabled" => st.drive_enabled = v.as_bool().unwrap(),
-                            "drive.model" => st.drive_model = v.as_str().unwrap().to_string(),
-                            "drive.drive" => st.drive_drive = v.as_f64().unwrap() as f32,
-                            "drive.tone" => st.drive_tone = v.as_f64().unwrap() as f32,
-                            "drive.level" => st.drive_level = v.as_f64().unwrap() as f32,
-                            "drive.bias" => st.drive_bias = v.as_f64().unwrap() as f32,
-                            "gate.enabled" => st.gate_enabled = v.as_bool().unwrap(),
-                            "gate.mode" => st.gate_mode = v.as_str().unwrap().to_string(),
-                            "gate.hysteresis_db" => st.gate_hysteresis_db = v.as_f64().unwrap() as f32,
-                            "gate.attack_ms" => st.gate_attack_ms = v.as_f64().unwrap() as f32,
-                            "gate.hold_ms" => st.gate_hold_ms = v.as_f64().unwrap() as f32,
-                            "gate.release_ms" => st.gate_release_ms = v.as_f64().unwrap() as f32,
-                            "gate.range_db" => st.gate_range_db = v.as_f64().unwrap() as f32,
-                            "gate.key_hpf_hz" => st.gate_key_hpf_hz = v.as_f64().unwrap() as f32,
-                            "gate.key_lpf_hz" => st.gate_key_lpf_hz = v.as_f64().unwrap() as f32,
-                            "amp_1.enabled" => st.amp_enabled = v.as_bool().unwrap(),
-                            "cab_1.enabled" => st.cab_enabled = v.as_bool().unwrap(),
-                            "input.source" => st.input_source = v.as_str().unwrap().to_string(),
-                            "input.mode" => st.input_mode = v.as_str().unwrap().to_string(),
-                            "amp_1.bias_ma" => st.bias_ma = v.as_f64().unwrap() as f32,
-                            "amp_1.sag" => st.sag = v.as_f64().unwrap() as f32,
-                            "amp_1.nfb" => st.nfb = v.as_f64().unwrap() as f32,
-                            "amp_1.xformer_sat" => st.xformer_sat = v.as_f64().unwrap() as f32,
-                            "amp_1.preamp_plate_v" => st.preamp_plate_v = v.as_f64().unwrap() as f32,
-                            "amp_1.triode_asym" => st.triode_asym = v.as_f64().unwrap() as f32,
-                            "amp_1.preamp_tube" => st.preamp_tube = v.as_str().unwrap().to_string(),
-                            "amp_1.power_tube" => st.power_tube = v.as_str().unwrap().to_string(),
-                            "amp_1.rectifier" => st.rectifier = v.as_str().unwrap().to_string(),
-                            "amp_1.tonestack" => st.tonestack = v.as_str().unwrap().to_string(),
+                            "engine.oversampling" => if let Some(s) = v.as_str() { st.engine_oversampling = s.to_string(); },
+                            "input.boost" => if let Some(n) = v.as_f64() { st.input_boost = n as f32; },
+                            "gate.threshold_db" => if let Some(n) = v.as_f64() { st.gate_threshold_db = n as f32; },
+                            "amp_1.bright" => if let Some(b) = v.as_bool() { st.amp_bright = b; },
+                            "drive.enabled" => if let Some(b) = v.as_bool() { st.drive_enabled = b; },
+                            "drive.model" => if let Some(s) = v.as_str() { st.drive_model = s.to_string(); },
+                            "drive.drive" => if let Some(n) = v.as_f64() { st.drive_drive = n as f32; },
+                            "drive.tone" => if let Some(n) = v.as_f64() { st.drive_tone = n as f32; },
+                            "drive.level" => if let Some(n) = v.as_f64() { st.drive_level = n as f32; },
+                            "drive.bias" => if let Some(n) = v.as_f64() { st.drive_bias = n as f32; },
+                            "gate.enabled" => if let Some(b) = v.as_bool() { st.gate_enabled = b; },
+                            "gate.mode" => if let Some(s) = v.as_str() { st.gate_mode = s.to_string(); },
+                            "gate.hysteresis_db" => if let Some(n) = v.as_f64() { st.gate_hysteresis_db = n as f32; },
+                            "gate.attack_ms" => if let Some(n) = v.as_f64() { st.gate_attack_ms = n as f32; },
+                            "gate.hold_ms" => if let Some(n) = v.as_f64() { st.gate_hold_ms = n as f32; },
+                            "gate.release_ms" => if let Some(n) = v.as_f64() { st.gate_release_ms = n as f32; },
+                            "gate.range_db" => if let Some(n) = v.as_f64() { st.gate_range_db = n as f32; },
+                            "gate.key_hpf_hz" => if let Some(n) = v.as_f64() { st.gate_key_hpf_hz = n as f32; },
+                            "gate.key_lpf_hz" => if let Some(n) = v.as_f64() { st.gate_key_lpf_hz = n as f32; },
+                            "amp_1.enabled" => if let Some(b) = v.as_bool() { st.amp_enabled = b; },
+                            "cab_1.enabled" => if let Some(b) = v.as_bool() { st.cab_enabled = b; },
+                            "input.source" => if let Some(s) = v.as_str() { st.input_source = s.to_string(); },
+                            "input.mode" => if let Some(s) = v.as_str() { st.input_mode = s.to_string(); },
+                            "amp_1.bias_ma" => if let Some(n) = v.as_f64() { st.bias_ma = n as f32; },
+                            "amp_1.sag" => if let Some(n) = v.as_f64() { st.sag = n as f32; },
+                            "amp_1.nfb" => if let Some(n) = v.as_f64() { st.nfb = n as f32; },
+                            "amp_1.xformer_sat" => if let Some(n) = v.as_f64() { st.xformer_sat = n as f32; },
+                            "amp_1.preamp_plate_v" => if let Some(n) = v.as_f64() { st.preamp_plate_v = n as f32; },
+                            "amp_1.triode_asym" => if let Some(n) = v.as_f64() { st.triode_asym = n as f32; },
+                            "amp_1.preamp_tube" => if let Some(s) = v.as_str() { st.preamp_tube = s.to_string(); },
+                            "amp_1.power_tube" => if let Some(s) = v.as_str() { st.power_tube = s.to_string(); },
+                            "amp_1.rectifier" => if let Some(s) = v.as_str() { st.rectifier = s.to_string(); },
+                            "amp_1.tonestack" => if let Some(s) = v.as_str() { st.tonestack = s.to_string(); },
                             "cab_1.speaker" | "cab_1.model" => {
-                                st.cab_speaker = v.as_str().unwrap().to_string();
+                                if let Some(s) = v.as_str() {
+                                    st.cab_speaker = s.to_string();
+                                }
                                 st.cab_resonance_hz = match st.cab_speaker.as_str() {
                                     "greenback_4x12" => 98.0,
                                     "v30_4x12" => 108.0,
@@ -3488,61 +3569,64 @@ pub fn handle_post_params(
                                     _ => 98.0,
                                 };
                             }
-                            "cab_1.resonance_hz" => st.cab_resonance_hz = v.as_f64().unwrap() as f32,
-                            "cab_1.hicut_khz" => st.cab_hicut_khz = v.as_f64().unwrap() as f32,
-                            "cab_1.ir_enabled" => st.cab_ir_enabled = v.as_bool().unwrap(),
-                            "cab_1.mic1.model" => st.cab_mic1_model = v.as_str().unwrap().to_string(),
-                            "cab_1.mic1.position" => st.cab_mic1_position = v.as_f64().unwrap() as f32,
-                            "cab_1.mic1.distance_cm" => st.cab_mic1_distance_cm = v.as_f64().unwrap() as f32,
-                            "cab_1.mic1.level_db" => st.cab_mic1_level_db = v.as_f64().unwrap() as f32,
-                            "cab_1.mic1.enabled" => st.cab_mic1_enabled = v.as_bool().unwrap(),
+                            "cab_1.resonance_hz" => if let Some(n) = v.as_f64() { st.cab_resonance_hz = n as f32; },
+                            "cab_1.hicut_khz" => if let Some(n) = v.as_f64() { st.cab_hicut_khz = n as f32; },
+                            "cab_1.ir_enabled" => if let Some(b) = v.as_bool() { st.cab_ir_enabled = b; },
+                            "cab_1.mic1.model" => if let Some(s) = v.as_str() { st.cab_mic1_model = s.to_string(); },
+                            "cab_1.mic1.position" => if let Some(n) = v.as_f64() { st.cab_mic1_position = n as f32; },
+                            "cab_1.mic1.distance_cm" => if let Some(n) = v.as_f64() { st.cab_mic1_distance_cm = n as f32; },
+                            "cab_1.mic1.level_db" => if let Some(n) = v.as_f64() { st.cab_mic1_level_db = n as f32; },
+                            "cab_1.mic1.enabled" => if let Some(b) = v.as_bool() { st.cab_mic1_enabled = b; },
                             "cab_1.mic1.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) {
                                 st.cab_mic1_angle_deg = if deg >= 22.5 { "45".to_string() } else { "0".to_string() };
                             },
-                            "cab_1.mic1.phase_invert" => st.cab_mic1_phase_invert = v.as_bool().unwrap(),
-                            "cab_1.mic2.model" => st.cab_mic2_model = v.as_str().unwrap().to_string(),
-                            "cab_1.mic2.position" => st.cab_mic2_position = v.as_f64().unwrap() as f32,
-                            "cab_1.mic2.distance_cm" => st.cab_mic2_distance_cm = v.as_f64().unwrap() as f32,
-                            "cab_1.mic2.level_db" => st.cab_mic2_level_db = v.as_f64().unwrap() as f32,
-                            "cab_1.mic2.enabled" => st.cab_mic2_enabled = v.as_bool().unwrap(),
+                            "cab_1.mic1.phase_invert" => if let Some(b) = v.as_bool() { st.cab_mic1_phase_invert = b; },
+                            "cab_1.mic2.model" => if let Some(s) = v.as_str() { st.cab_mic2_model = s.to_string(); },
+                            "cab_1.mic2.position" => if let Some(n) = v.as_f64() { st.cab_mic2_position = n as f32; },
+                            "cab_1.mic2.distance_cm" => if let Some(n) = v.as_f64() { st.cab_mic2_distance_cm = n as f32; },
+                            "cab_1.mic2.level_db" => if let Some(n) = v.as_f64() { st.cab_mic2_level_db = n as f32; },
+                            "cab_1.mic2.enabled" => if let Some(b) = v.as_bool() { st.cab_mic2_enabled = b; },
                             "cab_1.mic2.angle_deg" => if let Some(deg) = parse_mic_angle_deg(v) {
                                 st.cab_mic2_angle_deg = if deg >= 22.5 { "45".to_string() } else { "0".to_string() };
                             },
-                            "cab_1.mic2.phase_invert" => st.cab_mic2_phase_invert = v.as_bool().unwrap(),
-                            "split.enabled" => st.split_enabled = v.as_bool().unwrap(),
-                            "split.mode" => st.split_mode = v.as_str().unwrap().to_string(),
-                            "split.crossover_hz" => st.split_crossover_hz = v.as_f64().unwrap() as f32,
-                            "merge.row_1_level_db" => st.merge_row_1_level_db = v.as_f64().unwrap() as f32,
-                            "merge.row_1_phase_invert" => st.merge_row_1_phase_invert = v.as_bool().unwrap(),
-                            "comp_2.enabled" => st.comp_2_enabled = v.as_bool().unwrap(),
-                            "comp_2.input" => st.comp_2_input = v.as_f64().unwrap() as f32,
-                            "comp_2.output" => st.comp_2_output = v.as_f64().unwrap() as f32,
-                            "comp_2.attack" => st.comp_2_attack = v.as_f64().unwrap() as f32,
-                            "comp_2.release" => st.comp_2_release = v.as_f64().unwrap() as f32,
-                            "comp_2.ratio" => st.comp_2_ratio = v.as_str().unwrap().to_string(),
-                            "eq_1.enabled" => st.eq_1_enabled = v.as_bool().unwrap(),
-                            "eq_1.mode" => st.eq_1_mode = v.as_str().unwrap().to_string(),
-                            "eq_1.gain_db" | "eq_1.input_gain_db" => st.eq_1_gain_db = v.as_f64().unwrap() as f32,
-                            "eq_1.volume_db" | "eq_1.output_level_db" => st.eq_1_volume_db = v.as_f64().unwrap() as f32,
+                            "cab_1.mic2.phase_invert" => if let Some(b) = v.as_bool() { st.cab_mic2_phase_invert = b; },
+                            "split.enabled" => if let Some(b) = v.as_bool() { st.split_enabled = b; },
+                            "split.mode" => if let Some(s) = v.as_str() { st.split_mode = s.to_string(); },
+                            "split.crossover_hz" => if let Some(n) = v.as_f64() { st.split_crossover_hz = n as f32; },
+                            "merge.row_1_level_db" => if let Some(n) = v.as_f64() { st.merge_row_1_level_db = n as f32; },
+                            "merge.row_1_phase_invert" => if let Some(b) = v.as_bool() { st.merge_row_1_phase_invert = b; },
+                            "comp_2.enabled" => if let Some(b) = v.as_bool() { st.comp_2_enabled = b; },
+                            "comp_2.input" => if let Some(n) = v.as_f64() { st.comp_2_input = n as f32; },
+                            "comp_2.output" => if let Some(n) = v.as_f64() { st.comp_2_output = n as f32; },
+                            "comp_2.attack" => if let Some(n) = v.as_f64() { st.comp_2_attack = n as f32; },
+                            "comp_2.release" => if let Some(n) = v.as_f64() { st.comp_2_release = n as f32; },
+                            "comp_2.ratio" => if let Some(s) = v.as_str() { st.comp_2_ratio = s.to_string(); },
+                            "eq_1.enabled" => if let Some(b) = v.as_bool() { st.eq_1_enabled = b; },
+                            "eq_1.mode" => if let Some(s) = v.as_str() { st.eq_1_mode = s.to_string(); },
+                            "eq_1.gain_db" | "eq_1.input_gain_db" => if let Some(n) = v.as_f64() { st.eq_1_gain_db = n as f32; },
+                            "eq_1.volume_db" | "eq_1.output_level_db" => if let Some(n) = v.as_f64() { st.eq_1_volume_db = n as f32; },
                             k if k.starts_with("eq_1.band") && k.ends_with(".gain_db") => {
-                                if let Some(n) = k["eq_1.band".len()..].split('.').next().and_then(|s| s.parse::<usize>().ok()) {
+                                if let (Some(n), Some(val)) = (
+                                    k["eq_1.band".len()..].split('.').next().and_then(|s| s.parse::<usize>().ok()),
+                                    v.as_f64(),
+                                ) {
                                     if (1..=10).contains(&n) {
-                                        st.eq_1_bands_db[n - 1] = v.as_f64().unwrap() as f32;
+                                        st.eq_1_bands_db[n - 1] = val as f32;
                                     }
                                 }
                             }
-                            "mod_2.enabled" => st.mod_2_enabled = v.as_bool().unwrap(),
-                            "mod_2.model" => st.mod_2_model = v.as_str().unwrap().to_string(),
-                            "mod_2.rate_hz" => st.mod_2_rate_hz = v.as_f64().unwrap() as f32,
-                            "mod_2.depth" => st.mod_2_depth = v.as_f64().unwrap() as f32,
-                            "mod_2.mix" | "mod_2.mix_pct" => st.mod_2_mix = v.as_f64().unwrap() as f32,
-                            "pitch_1.enabled" => st.pitch_1_enabled = v.as_bool().unwrap(),
-                            "pitch_1.model" => st.pitch_1_model = v.as_str().unwrap().to_string(),
-                            "pitch_1.semitones" => st.pitch_1_semitones = v.as_f64().unwrap() as f32,
-                            "pitch_1.key" => st.pitch_1_key = v.as_str().unwrap().to_string(),
-                            "pitch_1.scale" => st.pitch_1_scale = v.as_str().unwrap().to_string(),
-                            "pitch_1.mix" | "pitch_1.mix_pct" => st.pitch_1_mix = v.as_f64().unwrap() as f32,
-                            "dly_1.enabled" => st.dly_1_enabled = v.as_bool().unwrap(),
+                            "mod_2.enabled" => if let Some(b) = v.as_bool() { st.mod_2_enabled = b; },
+                            "mod_2.model" => if let Some(s) = v.as_str() { st.mod_2_model = s.to_string(); },
+                            "mod_2.rate_hz" => if let Some(n) = v.as_f64() { st.mod_2_rate_hz = n as f32; },
+                            "mod_2.depth" => if let Some(n) = v.as_f64() { st.mod_2_depth = n as f32; },
+                            "mod_2.mix" | "mod_2.mix_pct" => if let Some(n) = v.as_f64() { st.mod_2_mix = n as f32; },
+                            "pitch_1.enabled" => if let Some(b) = v.as_bool() { st.pitch_1_enabled = b; },
+                            "pitch_1.model" => if let Some(s) = v.as_str() { st.pitch_1_model = s.to_string(); },
+                            "pitch_1.semitones" => if let Some(n) = v.as_f64() { st.pitch_1_semitones = n as f32; },
+                            "pitch_1.key" => if let Some(s) = v.as_str() { st.pitch_1_key = s.to_string(); },
+                            "pitch_1.scale" => if let Some(s) = v.as_str() { st.pitch_1_scale = s.to_string(); },
+                            "pitch_1.mix" | "pitch_1.mix_pct" => if let Some(n) = v.as_f64() { st.pitch_1_mix = n as f32; },
+                            "dly_1.enabled" => if let Some(b) = v.as_bool() { st.dly_1_enabled = b; },
                             "dly_1.mode" => {
                                 if let Some(s) = v.as_str() {
                                     st.dly_1_mode = s.to_string();
@@ -3550,50 +3634,51 @@ pub fn handle_post_params(
                                     st.dly_1_mode = n.to_string();
                                 }
                             }
-                            "dly_1.heads" => st.dly_1_heads = v.as_str().unwrap().to_string(),
-                            "dly_1.repeat_rate" => st.dly_1_repeat_rate = v.as_f64().unwrap() as f32,
-                            "dly_1.intensity" => st.dly_1_intensity = v.as_f64().unwrap() as f32,
-                            "dly_1.echo_volume" => st.dly_1_echo_volume = v.as_f64().unwrap() as f32,
-                            "dly_1.reverb_volume" => st.dly_1_reverb_volume = v.as_f64().unwrap() as f32,
-                            "dly_1.bass" => st.dly_1_bass = v.as_f64().unwrap() as f32,
-                            "dly_1.treble" => st.dly_1_treble = v.as_f64().unwrap() as f32,
-                            "dly_1.spillover" => st.dly_1_spillover = v.as_bool().unwrap(),
-                            "rev_1.enabled" => st.rev_1_enabled = v.as_bool().unwrap(),
-                            "rev_1.decay_s" => st.rev_1_decay_s = v.as_f64().unwrap() as f32,
-                            "rev_1.predelay_ms" => st.rev_1_predelay_ms = v.as_f64().unwrap() as f32,
-                            "rev_1.damping" => st.rev_1_damping = v.as_f64().unwrap() as f32,
-                            "rev_1.mix" | "rev_1.mix_pct" => st.rev_1_mix = v.as_f64().unwrap() as f32,
-                            "rev_1.spillover" => st.rev_1_spillover = v.as_bool().unwrap(),
-                            "amp_2.enabled" => st.amp_2_enabled = v.as_bool().unwrap(),
-                            "amp_2.model" => st.amp_2_model = v.as_str().unwrap().to_string(),
-                            "amp_2.gain" => st.amp_2_gain = v.as_f64().unwrap() as f32,
-                            "amp_2.bass" => st.amp_2_bass = v.as_f64().unwrap() as f32,
-                            "amp_2.middle" => st.amp_2_middle = v.as_f64().unwrap() as f32,
-                            "amp_2.treble" => st.amp_2_treble = v.as_f64().unwrap() as f32,
-                            "amp_2.master" => st.amp_2_master = v.as_f64().unwrap() as f32,
-                            "wah_1.enabled" => st.wah_1_enabled = v.as_bool().unwrap(),
-                            "wah_1.position" => st.wah_1_position = v.as_f64().unwrap() as f32,
-                            "wah_1.q" => st.wah_1_q = v.as_f64().unwrap() as f32,
-                            "wah_1.mode" => st.wah_1_mode = v.as_str().unwrap().to_string(),
-                            "cab_2.enabled" => st.cab_2_enabled = v.as_bool().unwrap(),
-                            "cab_2.speaker" | "cab_2.model" => st.cab_2_speaker = v.as_str().unwrap().to_string(),
-                            "cab_2.resonance_hz" => st.cab_2_resonance_hz = v.as_f64().unwrap() as f32,
-                            "cab_2.hicut_khz" => st.cab_2_hicut_khz = v.as_f64().unwrap() as f32,
-                            "master.level_db" => st.master_level_db = v.as_f64().unwrap() as f32,
-                            "palco.exp_1" => st.palco_exp_1 = v.as_f64().unwrap() as f32,
-                            "scene.active" => st.scene_active = v.as_str().unwrap().to_string(),
-                            "footswitch.mode" => st.footswitch_mode = v.as_str().unwrap().to_string(),
-                            "tuner.enabled" => st.tuner_enabled = v.as_bool().unwrap(),
-                            "tuner.output" => st.tuner_output = v.as_str().unwrap().to_string(),
-                            "tuner.ref_hz" => st.tuner_ref_hz = v.as_f64().unwrap() as f32,
-                            "looper.position" => st.looper_position = v.as_str().unwrap().to_string(),
+                            "dly_1.heads" => if let Some(s) = v.as_str() { st.dly_1_heads = s.to_string(); },
+                            "dly_1.repeat_rate" => if let Some(n) = v.as_f64() { st.dly_1_repeat_rate = n as f32; },
+                            "dly_1.intensity" => if let Some(n) = v.as_f64() { st.dly_1_intensity = n as f32; },
+                            "dly_1.echo_volume" => if let Some(n) = v.as_f64() { st.dly_1_echo_volume = n as f32; },
+                            "dly_1.reverb_volume" => if let Some(n) = v.as_f64() { st.dly_1_reverb_volume = n as f32; },
+                            "dly_1.bass" => if let Some(n) = v.as_f64() { st.dly_1_bass = n as f32; },
+                            "dly_1.treble" => if let Some(n) = v.as_f64() { st.dly_1_treble = n as f32; },
+                            "dly_1.spillover" => if let Some(b) = v.as_bool() { st.dly_1_spillover = b; },
+                            "rev_1.enabled" => if let Some(b) = v.as_bool() { st.rev_1_enabled = b; },
+                            "rev_1.decay_s" => if let Some(n) = v.as_f64() { st.rev_1_decay_s = n as f32; },
+                            "rev_1.predelay_ms" => if let Some(n) = v.as_f64() { st.rev_1_predelay_ms = n as f32; },
+                            "rev_1.damping" => if let Some(n) = v.as_f64() { st.rev_1_damping = n as f32; },
+                            "rev_1.mix" | "rev_1.mix_pct" => if let Some(n) = v.as_f64() { st.rev_1_mix = n as f32; },
+                            "rev_1.spillover" => if let Some(b) = v.as_bool() { st.rev_1_spillover = b; },
+                            "amp_2.enabled" => if let Some(b) = v.as_bool() { st.amp_2_enabled = b; },
+                            "amp_2.model" => if let Some(s) = v.as_str() { st.amp_2_model = s.to_string(); },
+                            "amp_2.gain" => if let Some(n) = v.as_f64() { st.amp_2_gain = n as f32; },
+                            "amp_2.bass" => if let Some(n) = v.as_f64() { st.amp_2_bass = n as f32; },
+                            "amp_2.middle" => if let Some(n) = v.as_f64() { st.amp_2_middle = n as f32; },
+                            "amp_2.treble" => if let Some(n) = v.as_f64() { st.amp_2_treble = n as f32; },
+                            "amp_2.master" => if let Some(n) = v.as_f64() { st.amp_2_master = n as f32; },
+                            "wah_1.enabled" => if let Some(b) = v.as_bool() { st.wah_1_enabled = b; },
+                            "wah_1.position" => if let Some(n) = v.as_f64() { st.wah_1_position = n as f32; },
+                            "wah_1.q" => if let Some(n) = v.as_f64() { st.wah_1_q = n as f32; },
+                            "wah_1.mode" => if let Some(s) = v.as_str() { st.wah_1_mode = s.to_string(); },
+                            "cab_2.enabled" => if let Some(b) = v.as_bool() { st.cab_2_enabled = b; },
+                            "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() { st.cab_2_speaker = s.to_string(); },
+                            "cab_2.resonance_hz" => if let Some(n) = v.as_f64() { st.cab_2_resonance_hz = n as f32; },
+                            "cab_2.hicut_khz" => if let Some(n) = v.as_f64() { st.cab_2_hicut_khz = n as f32; },
+                            "master.level_db" => if let Some(n) = v.as_f64() { st.master_level_db = n as f32; },
+                            "palco.exp_1" => if let Some(n) = v.as_f64() { st.palco_exp_1 = n as f32; },
+                            "scene.active" => if let Some(s) = v.as_str() { st.scene_active = s.to_string(); },
+                            "footswitch.mode" => if let Some(s) = v.as_str() { st.footswitch_mode = s.to_string(); },
+                            "tuner.enabled" => if let Some(b) = v.as_bool() { st.tuner_enabled = b; },
+                            "tuner.output" => if let Some(s) = v.as_str() { st.tuner_output = s.to_string(); },
+                            "tuner.ref_hz" => if let Some(n) = v.as_f64() { st.tuner_ref_hz = n as f32; },
+                            "looper.position" => if let Some(s) = v.as_str() { st.looper_position = s.to_string(); },
                             "looper.action" => {
-                                let act = v.as_str().unwrap();
-                                match act {
-                                    "reverse" => st.looper_reverse = !st.looper_reverse,
-                                    "half_speed" => st.looper_half_speed = !st.looper_half_speed,
-                                    "rec" => st.looper_action = "record".to_string(),
-                                    other => st.looper_action = other.to_string(),
+                                if let Some(act) = v.as_str() {
+                                    match act {
+                                        "reverse" => st.looper_reverse = !st.looper_reverse,
+                                        "half_speed" => st.looper_half_speed = !st.looper_half_speed,
+                                        "rec" => st.looper_action = "record".to_string(),
+                                        other => st.looper_action = other.to_string(),
+                                    }
                                 }
                             }
                             _ => {}
@@ -3719,7 +3804,7 @@ fn handle_post_cab_ir(
                 "channels_used": 1,
                 "source_channels": source_channels
             });
-            (200, "application/json", serde_json::to_vec(&resp).unwrap())
+            json_response(200, &resp)
         }
         Err(e) => {
             let err_msg = format!("{}", e);
@@ -3733,7 +3818,7 @@ fn handle_post_cab_ir(
                 "message": err_msg,
                 "limit_ms": 500
             });
-            (400, "application/json", serde_json::to_vec(&resp).unwrap())
+            json_response(400, &resp)
         }
     }
 }
@@ -3837,8 +3922,7 @@ fn handle_get_presets() -> (u16, &'static str, Vec<u8>) {
         scan_dir(std::path::PathBuf::from(appdata).join("SonixPro").join("presets"));
     }
 
-    let body = serde_json::to_vec(&serde_json::json!({ "presets": list })).unwrap();
-    (200, "application/json", body)
+    json_response(200, &serde_json::json!({ "presets": list }))
 }
 
 fn find_preset_file(id: &str) -> Option<std::path::PathBuf> {
@@ -3920,16 +4004,14 @@ fn handle_post_presets_load(
         serde_json::json!({})
     };
 
-    (
+    json_response(
         200,
-        "application/json",
-        serde_json::to_vec(&serde_json::json!({
+        &serde_json::json!({
             "status": "ok",
             "loaded": id,
             "name": doc.metadata.name,
             "state": state_json
-        }))
-        .unwrap(),
+        }),
     )
 }
 
@@ -4034,14 +4116,12 @@ fn handle_post_presets_save(
         );
     }
 
-    (
+    json_response(
         200,
-        "application/json",
-        serde_json::to_vec(&serde_json::json!({
+        &serde_json::json!({
             "status": "ok",
             "saved": id
-        }))
-        .unwrap(),
+        }),
     )
 }
 
@@ -4111,14 +4191,12 @@ fn handle_post_presets_import(
         }
     }
 
-    (
+    json_response(
         200,
-        "application/json",
-        serde_json::to_vec(&serde_json::json!({
+        &serde_json::json!({
             "status": "ok",
             "imported": doc.metadata.id
-        }))
-        .unwrap(),
+        }),
     )
 }
 
@@ -4219,11 +4297,7 @@ fn handle_post_scenes_select(
     {
         Ok(()) => {}
         Err(PresetApplyError::Validation(msg)) => {
-            return (
-                400,
-                "application/json",
-                serde_json::to_vec(&serde_json::json!({ "error": msg })).unwrap(),
-            );
+            return json_error_response(400, &msg);
         }
         Err(PresetApplyError::QueueFull) => {
             return (
@@ -4242,16 +4316,14 @@ fn handle_post_scenes_select(
         .and_then(|st| serde_json::to_value(&*st).ok())
         .unwrap_or_else(|| serde_json::json!({}));
 
-    (
+    json_response(
         200,
-        "application/json",
-        serde_json::to_vec(&serde_json::json!({
+        &serde_json::json!({
             "status": "ok",
             "scene": scene,
             "state": state_json,
             "transition_ms": (elapsed_ms * 10.0).round() / 10.0
-        }))
-        .unwrap(),
+        }),
     )
 }
 
@@ -4659,7 +4731,9 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
     match phase {
         // Spec 051 T-01: marca o início da captura do assistente (descarta o que veio antes).
         "begin" => {
-            let mut sess = ctx.calibration_session.lock().unwrap();
+            let Ok(mut sess) = ctx.calibration_session.lock() else {
+                return json_error_response(500, "E_INTERNAL: calibration_session lock failed");
+            };
             sess.noise_samples.clear();
             sess.cursor_pos = ctx
                 .clean_input_ring
@@ -4667,11 +4741,13 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
                 .map(|r| r.total_written())
                 .unwrap_or(0);
             let resp = serde_json::json!({ "phase": "begin", "cursor": sess.cursor_pos });
-            (200, "application/json", serde_json::to_vec(&resp).unwrap())
+            json_response(200, &resp)
         }
         "silence" => {
             let samples = if let Some(ref ring) = ctx.clean_input_ring {
-                let mut sess = ctx.calibration_session.lock().unwrap();
+                let Ok(mut sess) = ctx.calibration_session.lock() else {
+                    return json_error_response(500, "E_INTERNAL: calibration_session lock failed");
+                };
                 let max_samples = (sr * 3.0).clamp(1024.0, 200_000.0) as usize;
                 let captured = ring.read_range(sess.cursor_pos, max_samples);
                 sess.cursor_pos = ring.total_written();
@@ -4681,7 +4757,9 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
                 0
             };
             let noise_rms_db = {
-                let sess = ctx.calibration_session.lock().unwrap();
+                let Ok(sess) = ctx.calibration_session.lock() else {
+                    return json_error_response(500, "E_INTERNAL: calibration_session lock failed");
+                };
                 if sess.noise_samples.is_empty() {
                     -90.0f32
                 } else {
@@ -4695,11 +4773,13 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
                 "captured_samples": samples,
                 "noise_floor_rms_db": noise_rms_db,
             });
-            (200, "application/json", serde_json::to_vec(&resp).unwrap())
+            json_response(200, &resp)
         }
         "strum" => {
             let (noise_samples, strum_samples) = {
-                let mut sess = ctx.calibration_session.lock().unwrap();
+                let Ok(mut sess) = ctx.calibration_session.lock() else {
+                    return json_error_response(500, "E_INTERNAL: calibration_session lock failed");
+                };
                 let strum = if let Some(ref ring) = ctx.clean_input_ring {
                     let max_samples = (sr * 5.0).clamp(1024.0, 260_000.0) as usize;
                     let captured = ring.read_range(sess.cursor_pos, max_samples);
@@ -4734,7 +4814,7 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
                 store.save(dev_id, result.proposed_boost, result.proposed_gate_threshold_db);
             }
 
-            (200, "application/json", serde_json::to_vec(&result).unwrap())
+            json_response(200, &result)
         }
         _ => (
             400,
@@ -4956,15 +5036,13 @@ fn handle_get_setlist(ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
         .or_else(|| store.setlists.first())
         .cloned();
     let active_idx = ctx.app_state.lock().map(|s| s.setlist_active_index).unwrap_or(0);
-    (
+    json_response(
         200,
-        "application/json",
-        serde_json::to_vec(&serde_json::json!({
+        &serde_json::json!({
             "active_setlist": active,
             "active_index": active_idx,
             "setlists": store.setlists,
-        }))
-        .unwrap(),
+        }),
     )
 }
 
@@ -4977,14 +5055,7 @@ fn handle_post_setlist(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec
     }
     for pid in &dto.presets {
         if !preset_exists_in(ctx.custom_presets_dir.as_deref(), pid) {
-            return (
-                400,
-                "application/json",
-                serde_json::to_vec(&serde_json::json!({
-                    "error": format!("Preset inexistente no setlist: {}", pid)
-                }))
-                .unwrap(),
-            );
+            return json_error_response(400, &format!("Preset inexistente no setlist: {}", pid));
         }
     }
     let mut store = read_setlist_store(ctx.custom_presets_dir.as_deref());
@@ -4995,12 +5066,12 @@ fn handle_post_setlist(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec
     }
     store.active_setlist_id = Some(dto.id.clone());
     if let Err(e) = write_setlist_store(ctx.custom_presets_dir.as_deref(), &store) {
-        return (500, "application/json", serde_json::to_vec(&serde_json::json!({"error": e})).unwrap());
+        return json_error_response(500, &e);
     }
     if let Ok(mut st) = ctx.app_state.lock() {
         st.setlist_active_index = 0;
     }
-    (200, "application/json", serde_json::to_vec(&serde_json::json!({"ok": true, "setlist": dto})).unwrap())
+    json_response(200, &serde_json::json!({"ok": true, "setlist": dto}))
 }
 
 fn handle_post_setlist_step(delta: isize, ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
@@ -5020,7 +5091,9 @@ fn handle_post_setlist_step(delta: isize, ctx: &ApiContext) -> (u16, &'static st
     let len = active.presets.len() as isize;
     let next_idx = ((cur_idx as isize + delta).rem_euclid(len)) as usize;
     let preset_id = &active.presets[next_idx];
-    let load_body = serde_json::to_vec(&serde_json::json!({ "id": preset_id })).unwrap();
+    let Ok(load_body) = serde_json::to_vec(&serde_json::json!({ "id": preset_id })) else {
+        return json_error_response(500, "E_INTERNAL: serialization failed");
+    };
     let (st, ct, resp) = handle_post_presets_load(&load_body, ctx);
     if st != 200 {
         return (st, ct, resp);
@@ -5028,16 +5101,14 @@ fn handle_post_setlist_step(delta: isize, ctx: &ApiContext) -> (u16, &'static st
     if let Ok(mut st_lock) = ctx.app_state.lock() {
         st_lock.setlist_active_index = next_idx;
     }
-    (
+    json_response(
         200,
-        "application/json",
-        serde_json::to_vec(&serde_json::json!({
+        &serde_json::json!({
             "ok": true,
             "index": next_idx,
             "preset_id": preset_id,
             "loaded": true,
-        }))
-        .unwrap(),
+        }),
     )
 }
 
@@ -5072,7 +5143,7 @@ fn handle_get_modifiers(ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
         .lock()
         .map(|s| s.modifiers.clone())
         .unwrap_or_default();
-    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "modifiers": mods })).unwrap())
+    json_response(200, &serde_json::json!({ "modifiers": mods }))
 }
 
 fn handle_post_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
@@ -5083,26 +5154,18 @@ fn handle_post_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, V
         return (400, "application/json", b"{\"error\":\"modifier_id_invalido\"}".to_vec());
     }
     let Some((_, min_bound, max_bound)) = crate::audio::ModifierTargetParam::from_str_name(&dto.target_param) else {
-        return (
+        return json_error_response(
             400,
-            "application/json",
-            serde_json::to_vec(&serde_json::json!({
-                "error": format!("Parâmetro inválido ou discreto para Modifier: {}", dto.target_param)
-            }))
-            .unwrap(),
+            &format!("Parâmetro inválido ou discreto para Modifier: {}", dto.target_param),
         );
     };
     if crate::audio::CompiledModifierSource::from_str_name(&dto.source).is_none() {
         return (400, "application/json", b"{\"error\":\"invalid_modifier_source\"}".to_vec());
     }
     if dto.min_val < min_bound || dto.max_val > max_bound || dto.min_val > dto.max_val {
-        return (
+        return json_error_response(
             400,
-            "application/json",
-            serde_json::to_vec(&serde_json::json!({
-                "error": format!("min_val/max_val fora da faixa [{}, {}] de {}", min_bound, max_bound, dto.target_param)
-            }))
-            .unwrap(),
+            &format!("min_val/max_val fora da faixa [{}, {}] de {}", min_bound, max_bound, dto.target_param),
         );
     }
     let snapshot = if let Ok(mut st) = ctx.app_state.lock() {
@@ -5123,7 +5186,7 @@ fn handle_post_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, V
         return (500, "application/json", b"{\"error\":\"lock_failed\"}".to_vec());
     };
     compile_and_push_modifiers(&snapshot, ctx);
-    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "ok": true, "modifiers": snapshot })).unwrap())
+    json_response(200, &serde_json::json!({ "ok": true, "modifiers": snapshot }))
 }
 
 fn handle_delete_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
@@ -5140,7 +5203,7 @@ fn handle_delete_modifiers(body: &[u8], ctx: &ApiContext) -> (u16, &'static str,
         return (500, "application/json", b"{\"error\":\"lock_failed\"}".to_vec());
     };
     compile_and_push_modifiers(&snapshot, ctx);
-    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "ok": true, "modifiers": snapshot })).unwrap())
+    json_response(200, &serde_json::json!({ "ok": true, "modifiers": snapshot }))
 }
 
 fn handle_get_footswitch(ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
@@ -5168,7 +5231,7 @@ fn handle_get_footswitch(ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
             })
         })
         .collect();
-    (200, "application/json", serde_json::to_vec(&serde_json::json!({ "mode": mode_str, "units": units })).unwrap())
+    json_response(200, &serde_json::json!({ "mode": mode_str, "units": units }))
 }
 
 fn handle_post_footswitch_press(body: &[u8], ctx: &ApiContext) -> (u16, &'static str, Vec<u8>) {
@@ -5209,7 +5272,9 @@ fn handle_post_footswitch_press(body: &[u8], ctx: &ApiContext) -> (u16, &'static
         }
         "SCENE" | "SCENES" => {
             let letter = scene_letters[(index as usize) - 1];
-            let req = serde_json::to_vec(&serde_json::json!({ "scene": letter })).unwrap();
+            let Ok(req) = serde_json::to_vec(&serde_json::json!({ "scene": letter })) else {
+                return json_error_response(500, "E_INTERNAL: serialization failed");
+            };
             handle_post_scenes_select(&req, ctx)
         }
         "STOMP" => {
@@ -5221,7 +5286,9 @@ fn handle_post_footswitch_press(body: &[u8], ctx: &ApiContext) -> (u16, &'static
                 .and_then(|st| serde_json::to_value(&*st).ok())
                 .and_then(|val| val.get(key).and_then(|b| b.as_bool()))
                 .unwrap_or(false);
-            let patch = serde_json::to_vec(&serde_json::json!({ key: !cur })).unwrap();
+            let Ok(patch) = serde_json::to_vec(&serde_json::json!({ key: !cur })) else {
+                return json_error_response(500, "E_INTERNAL: serialization failed");
+            };
             dispatch(ctx, "/api/params", "POST", &patch)
         }
         _ => {
@@ -5235,11 +5302,15 @@ fn handle_post_footswitch_press(body: &[u8], ctx: &ApiContext) -> (u16, &'static
                     .and_then(|st| serde_json::to_value(&*st).ok())
                     .and_then(|val| val.get(key).and_then(|b| b.as_bool()))
                     .unwrap_or(false);
-                let patch = serde_json::to_vec(&serde_json::json!({ key: !cur })).unwrap();
+                let Ok(patch) = serde_json::to_vec(&serde_json::json!({ key: !cur })) else {
+                    return json_error_response(500, "E_INTERNAL: serialization failed");
+                };
                 dispatch(ctx, "/api/params", "POST", &patch)
             } else {
                 let letter = scene_letters[(index as usize) - 5];
-                let req = serde_json::to_vec(&serde_json::json!({ "scene": letter })).unwrap();
+                let Ok(req) = serde_json::to_vec(&serde_json::json!({ "scene": letter })) else {
+                    return json_error_response(500, "E_INTERNAL: serialization failed");
+                };
                 handle_post_scenes_select(&req, ctx)
             }
         }
