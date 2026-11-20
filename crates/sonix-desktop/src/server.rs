@@ -22,6 +22,8 @@ struct RawRequest {
     method: String,
     url: String,
     headers: Vec<(String, String)>,
+    content_length: Option<usize>,
+    invalid_content_length: bool,
     body: Vec<u8>,
 }
 
@@ -49,6 +51,7 @@ fn reason_phrase(status: u16) -> &'static str {
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        411 => "Length Required",
         413 => "Payload Too Large",
         415 => "Unsupported Media Type",
         421 => "Misdirected Request",
@@ -58,7 +61,7 @@ fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
-fn read_http_request(stream: &mut TcpStream) -> Option<RawRequest> {
+fn read_http_headers(stream: &mut TcpStream) -> Option<RawRequest> {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
     let mut buf = Vec::with_capacity(2048);
     let mut tmp = [0u8; 2048];
@@ -87,44 +90,107 @@ fn read_http_request(stream: &mut TcpStream) -> Option<RawRequest> {
     let url = parts.next()?.to_string();
 
     let mut headers = Vec::new();
-    let mut content_length: usize = 0;
+    let mut content_length: Option<usize> = None;
+    let mut invalid_content_length = false;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
             let key = k.trim().to_ascii_lowercase();
             let val = v.trim().to_string();
             if key == "content-length" {
-                content_length = val.parse::<usize>().unwrap_or(0);
+                match val.parse::<usize>() {
+                    Ok(n) => {
+                        if let Some(prev) = content_length {
+                            if prev != n {
+                                invalid_content_length = true;
+                            }
+                        } else {
+                            content_length = Some(n);
+                        }
+                    }
+                    Err(_) => {
+                        invalid_content_length = true;
+                    }
+                }
             }
             headers.push((key, val));
         }
     }
 
     let body_start = header_end + 4;
-    let mut body = Vec::new();
-    let path = url.split('?').next().unwrap_or("/");
-    let max_read = if path == "/api/params" { 4097 } else { 20 * 1024 * 1024 + 1 };
-    let target_len = content_length.min(max_read);
-
-    if buf.len() > body_start {
-        let available = &buf[body_start..];
-        let take = available.len().min(target_len.max(available.len()).min(max_read));
-        body.extend_from_slice(&available[..take]);
-    }
-
-    while body.len() < target_len {
-        let to_read = (target_len - body.len()).min(tmp.len());
-        match stream.read(&mut tmp[..to_read]) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => body.extend_from_slice(&tmp[..n]),
-        }
-    }
+    let body = if buf.len() > body_start {
+        buf[body_start..].to_vec()
+    } else {
+        Vec::new()
+    };
 
     Some(RawRequest {
         method,
         url,
         headers,
+        content_length,
+        invalid_content_length,
         body,
     })
+}
+
+fn finish_read_body(stream: &mut TcpStream, request: &mut RawRequest, declared_len: usize) {
+    if request.body.len() > declared_len {
+        request.body.truncate(declared_len);
+        return;
+    }
+    if request.body.len() == declared_len {
+        return;
+    }
+    let missing = declared_len - request.body.len();
+    let _ = request.body.try_reserve(missing);
+    let mut tmp = [0u8; 8192];
+    while request.body.len() < declared_len {
+        let to_read = (declared_len - request.body.len()).min(tmp.len());
+        match stream.read(&mut tmp[..to_read]) {
+            Ok(0) => break,
+            Ok(n) => request.body.extend_from_slice(&tmp[..n]),
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+}
+
+fn send_response_and_drain(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+    remaining_to_drain: usize,
+) {
+    let header_block = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        status,
+        reason_phrase(status),
+        content_type,
+        body.len()
+    );
+    let mut frame = Vec::with_capacity(header_block.len() + body.len());
+    frame.extend_from_slice(header_block.as_bytes());
+    frame.extend_from_slice(body);
+    let _ = stream.write_all(&frame);
+    let _ = stream.flush();
+    let _ = stream.shutdown(Shutdown::Write);
+
+    if remaining_to_drain > 0 {
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(2000)));
+        let deadline = std::time::Instant::now() + Duration::from_millis(2000);
+        let mut sink = [0u8; 16384];
+        let mut drained = 0usize;
+        while drained < remaining_to_drain && std::time::Instant::now() < deadline {
+            let to_read = (remaining_to_drain - drained).min(sink.len());
+            match stream.read(&mut sink[..to_read]) {
+                Ok(0) => break,
+                Ok(n) => drained += n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+    }
 }
 
 pub struct LocalAppServer {
@@ -286,13 +352,28 @@ impl LocalAppServer {
                     }
                     let _ = stream.set_nodelay(true);
 
-                    let Some(request) = read_http_request(&mut stream) else {
+                    let Some(mut request) = read_http_headers(&mut stream) else {
                         continue;
                     };
 
-                    let method = request.method.as_str();
-                    let url = request.url.as_str();
+                    let method = request.method.clone();
+                    let url = request.url.clone();
                     let path = url.split('?').next().unwrap_or("/");
+                    let remaining_to_drain = request
+                        .content_length
+                        .unwrap_or(0)
+                        .saturating_sub(request.body.len());
+
+                    if request.invalid_content_length {
+                        send_response_and_drain(
+                            &mut stream,
+                            400,
+                            "text/plain",
+                            b"Bad Request: invalid Content-Length",
+                            0,
+                        );
+                        continue;
+                    }
 
                     // 1. Validação estrita de Host contra DNS Rebinding e Request Smuggling em todas as rotas (Specs 015 CA-2, 046 CA-1, AUD-01)
                     let hosts: Vec<&str> = request.headers("host").collect();
@@ -313,53 +394,103 @@ impl LocalAppServer {
                         }
                     };
 
-                    let (status, content_type, body) = if let Err(err_resp) = host_validation {
-                        err_resp
-                    } else if method != "GET" && method != "HEAD" {
-                        // Regra geral (AUD-01): todo pedido mutante passa por CSRF + Token + limite + Content-Type antes do roteador
-                        Self::verify_csrf_and_token(&request, &session_token_clone, actual_port, |req| {
-                            let content_len = req
-                                .header("content-length")
-                                .and_then(|v| v.parse::<usize>().ok());
-                            let max_body = if path == "/api/params" { 4096 } else { 20 * 1024 * 1024 };
-                            if content_len.map(|l| l > max_body).unwrap_or(false)
-                                || req.body.len() > max_body
-                            {
-                                return (413, "text/plain", b"Payload Too Large".to_vec());
-                            }
+                    if let Err((status, content_type, body)) = host_validation {
+                        send_response_and_drain(
+                            &mut stream,
+                            status,
+                            content_type,
+                            &body,
+                            remaining_to_drain,
+                        );
+                        continue;
+                    }
 
-                            let ct_hdr = req.header("content-type").map(|v| v.to_ascii_lowercase());
-                            let valid_ct = match path {
-                                "/api/input/di" | "/api/cab/ir" => ct_hdr
-                                    .as_deref()
-                                    .map(|ct| {
-                                        ct.contains("audio/wav")
-                                            || ct.contains("audio/x-wav")
-                                            || ct.contains("audio/wave")
-                                            || ct.contains("application/octet-stream")
-                                    })
-                                    .unwrap_or(false),
-                                "/api/params" => ct_hdr
-                                    .as_deref()
-                                    .map(|ct| ct.contains("application/json"))
-                                    .unwrap_or(false),
-                                _ => {
-                                    if !req.body.is_empty() || ct_hdr.is_some() {
-                                        ct_hdr
-                                            .as_deref()
-                                            .map(|ct| ct.contains("application/json"))
-                                            .unwrap_or(false)
-                                    } else {
-                                        true
-                                    }
+                    let (status, content_type, body) = if method != "GET" && method != "HEAD" {
+                        if matches!(method.as_str(), "POST" | "PUT" | "PATCH")
+                            && request.content_length.is_none()
+                        {
+                            send_response_and_drain(
+                                &mut stream,
+                                411,
+                                "text/plain",
+                                b"Length Required",
+                                0,
+                            );
+                            continue;
+                        }
+
+                        // Regra geral (AUD-01 / AUD-03): valida headers (CSRF, token, limite, Content-Type) ANTES de ler o corpo
+                        let header_gate = Self::verify_csrf_and_token(
+                            &request,
+                            &session_token_clone,
+                            actual_port,
+                            |req| {
+                                let declared_len = req.content_length.unwrap_or(0);
+                                let max_body =
+                                    if path == "/api/params" { 4096 } else { 20 * 1024 * 1024 };
+                                if declared_len > max_body || req.body.len() > max_body {
+                                    return Err((
+                                        413,
+                                        "text/plain",
+                                        b"Payload Too Large".to_vec(),
+                                    ));
                                 }
-                            };
-                            if !valid_ct {
-                                return (415, "text/plain", b"Unsupported Media Type".to_vec());
-                            }
 
-                            api::dispatch(&api_ctx_clone, url, method, &req.body)
-                        })
+                                let ct_hdr =
+                                    req.header("content-type").map(|v| v.to_ascii_lowercase());
+                                let valid_ct = match path {
+                                    "/api/input/di" | "/api/cab/ir" => ct_hdr
+                                        .as_deref()
+                                        .map(|ct| {
+                                            ct.contains("audio/wav")
+                                                || ct.contains("audio/x-wav")
+                                                || ct.contains("audio/wave")
+                                                || ct.contains("application/octet-stream")
+                                        })
+                                        .unwrap_or(false),
+                                    "/api/params" => ct_hdr
+                                        .as_deref()
+                                        .map(|ct| ct.contains("application/json"))
+                                        .unwrap_or(false),
+                                    _ => {
+                                        if declared_len > 0
+                                            || !req.body.is_empty()
+                                            || ct_hdr.is_some()
+                                        {
+                                            ct_hdr
+                                                .as_deref()
+                                                .map(|ct| ct.contains("application/json"))
+                                                .unwrap_or(false)
+                                        } else {
+                                            true
+                                        }
+                                    }
+                                };
+                                if !valid_ct {
+                                    return Err((
+                                        415,
+                                        "text/plain",
+                                        b"Unsupported Media Type".to_vec(),
+                                    ));
+                                }
+                                Ok(())
+                            },
+                        );
+
+                        if let Err((err_status, err_ct, err_body)) = header_gate {
+                            send_response_and_drain(
+                                &mut stream,
+                                err_status,
+                                err_ct,
+                                &err_body,
+                                remaining_to_drain,
+                            );
+                            continue;
+                        }
+
+                        let declared_len = request.content_length.unwrap_or(0);
+                        finish_read_body(&mut stream, &mut request, declared_len);
+                        api::dispatch(&api_ctx_clone, &url, &method, &request.body)
                     } else {
                         match path {
                             "/" | "/index.html" => {
@@ -390,23 +521,11 @@ impl LocalAppServer {
                                     .unwrap_or_default();
                                 (200, "application/javascript; charset=utf-8", content.into_bytes())
                             }
-                            _ => api::dispatch(&api_ctx_clone, url, method, &request.body),
+                            _ => api::dispatch(&api_ctx_clone, &url, &method, &request.body),
                         }
                     };
 
-                    let header_block = format!(
-                        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        status,
-                        reason_phrase(status),
-                        content_type,
-                        body.len()
-                    );
-                    let mut frame = Vec::with_capacity(header_block.len() + body.len());
-                    frame.extend_from_slice(header_block.as_bytes());
-                    frame.extend_from_slice(&body);
-                    let _ = stream.write_all(&frame);
-                    let _ = stream.flush();
-                    let _ = stream.shutdown(Shutdown::Write);
+                    send_response_and_drain(&mut stream, status, content_type, &body, 0);
                 }
             });
             server_threads.push(th);
@@ -441,9 +560,9 @@ impl LocalAppServer {
         session_token: &str,
         server_port: u16,
         handler: F,
-    ) -> (u16, &'static str, Vec<u8>)
+    ) -> Result<(), (u16, &'static str, Vec<u8>)>
     where
-        F: FnOnce(&RawRequest) -> (u16, &'static str, Vec<u8>),
+        F: FnOnce(&RawRequest) -> Result<(), (u16, &'static str, Vec<u8>)>,
     {
         let origins: Vec<&str> = request.headers("origin").collect();
         let sec_fetches: Vec<&str> = request.headers("sec-fetch-site").collect();
@@ -463,14 +582,18 @@ impl LocalAppServer {
             .any(|s| s.trim().eq_ignore_ascii_case("cross-site"));
 
         if !origin_ok || !sec_fetch_ok {
-            return (403, "text/plain", b"Forbidden Origin".to_vec());
+            return Err((403, "text/plain", b"Forbidden Origin".to_vec()));
         }
 
         let tokens: Vec<&str> = request.headers("x-sonix-token").collect();
         let has_valid_token = tokens.len() == 1 && tokens[0] == session_token;
 
         if !has_valid_token {
-            return (401, "text/plain", b"Unauthorized: missing or invalid X-Sonix-Token".to_vec());
+            return Err((
+                401,
+                "text/plain",
+                b"Unauthorized: missing or invalid X-Sonix-Token".to_vec(),
+            ));
         }
 
         handler(request)

@@ -299,3 +299,21 @@ fn aud_01_reamp_grava_na_pasta_do_app() {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn aud_03_post_sem_content_length_411() {
+    let server = LocalAppServer::bind_port(0).unwrap();
+    let port = server.port();
+    let token = server.session_token();
+
+    let raw = format!(
+        "POST /api/params HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: http://127.0.0.1:{}\r\nX-Sonix-Token: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+        port, port, token
+    );
+    let (status, body) = send_raw(port, &raw);
+    assert_eq!(
+        status, 411,
+        "AUD-03: POST sem Content-Length deve retornar 411 Length Required, retornou {} ({})",
+        status, body
+    );
+}
