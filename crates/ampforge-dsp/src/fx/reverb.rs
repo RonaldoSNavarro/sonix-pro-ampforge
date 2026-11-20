@@ -271,11 +271,13 @@ impl ReverbProcessor {
                 wet_sum += out_c;
 
                 // One-pole low-pass damping in loop
-                let damp_out = (1.0 - damp_coeff) * out_c + damp_coeff * self.damp_states[c];
+                let damp_out =
+                    crate::denormal::flush_f32((1.0 - damp_coeff) * out_c + damp_coeff * self.damp_states[c]);
                 self.damp_states[c] = damp_out;
 
                 let fb_sig = damp_out * self.comb_feedbacks[c];
-                self.comb_buffers[c][pos] = (tank_input + fb_sig).clamp(-4.0, 4.0);
+                self.comb_buffers[c][pos] =
+                    crate::denormal::flush_f32((tank_input + fb_sig).clamp(-4.0, 4.0));
                 self.comb_positions[c] = if pos + 1 >= len { 0 } else { pos + 1 };
             }
 
@@ -284,10 +286,12 @@ impl ReverbProcessor {
             if self.model == ReverbModel::TubeSpringReverb {
                 // Dispersive spring all-pass chain controlled by spring_tension
                 for s in 0..8 {
-                    let y = -spring_disp_a * diffused
-                        + self.spring_disp_x1[s]
-                        + spring_disp_a * self.spring_disp_y1[s];
-                    self.spring_disp_x1[s] = diffused;
+                    let y = crate::denormal::flush_f32(
+                        -spring_disp_a * diffused
+                            + self.spring_disp_x1[s]
+                            + spring_disp_a * self.spring_disp_y1[s],
+                    );
+                    self.spring_disp_x1[s] = crate::denormal::flush_f32(diffused);
                     self.spring_disp_y1[s] = y;
                     diffused = y;
                 }
@@ -302,8 +306,9 @@ impl ReverbProcessor {
                     } else {
                         self.ap_buffers[a][pos]
                     };
-                    let y = -ap_g * diffused + buf_out;
-                    self.ap_buffers[a][pos] = (diffused + ap_g * y).clamp(-4.0, 4.0);
+                    let y = crate::denormal::flush_f32(-ap_g * diffused + buf_out);
+                    self.ap_buffers[a][pos] =
+                        crate::denormal::flush_f32((diffused + ap_g * y).clamp(-4.0, 4.0));
                     self.ap_positions[a] = if pos + 1 >= len { 0 } else { pos + 1 };
                     diffused = y;
                 }
@@ -311,15 +316,16 @@ impl ReverbProcessor {
 
             if self.has_shimmer_octave_generation() {
                 // Zero-alloc dual-grain +12 semitone pitch shifter fed by diffused tail
-                self.shimmer_buf[self.shimmer_write_pos] = diffused;
+                self.shimmer_buf[self.shimmer_write_pos] = crate::denormal::flush_f32(diffused);
                 let p0 = self.shimmer_phase;
                 let p1 = (p0 + 0.5) % 1.0;
                 let w0 = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * p0).cos();
                 let w1 = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * p1).cos();
                 let d0 = shimmer_grain * (1.0 - p0) + 1.0;
                 let d1 = shimmer_grain * (1.0 - p1) + 1.0;
-                let shifted =
-                    self.read_shimmer_linear(d0) * w0 + self.read_shimmer_linear(d1) * w1;
+                let shifted = crate::denormal::flush_f32(
+                    self.read_shimmer_linear(d0) * w0 + self.read_shimmer_linear(d1) * w1,
+                );
                 self.shimmer_last_out = shifted;
                 self.shimmer_write_pos = (self.shimmer_write_pos + 1) % SHIMMER_BUF_LEN;
                 self.shimmer_phase = (self.shimmer_phase + shimmer_inc) % 1.0;
@@ -327,11 +333,12 @@ impl ReverbProcessor {
             }
 
             self.samples_since_clear = self.samples_since_clear.saturating_add(1);
-            if self.bypassed && self.spillover_enabled {
-                output[i] = input[i] + diffused * wet_ratio;
+            let out_s = if self.bypassed && self.spillover_enabled {
+                input[i] + diffused * wet_ratio
             } else {
-                output[i] = input[i] * dry_ratio + diffused * wet_ratio;
-            }
+                input[i] * dry_ratio + diffused * wet_ratio
+            };
+            output[i] = crate::denormal::flush_f32(out_s);
         }
     }
 }

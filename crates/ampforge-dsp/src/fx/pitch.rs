@@ -344,10 +344,10 @@ impl PitchProcessor {
         for i in 0..len {
             let x = input[i];
             self.write_pos = (self.write_pos + 1) & PITCH_BUF_MASK;
-            self.buf[self.write_pos] = x;
+            self.buf[self.write_pos] = crate::denormal::flush_f32(x);
 
             if self.model == PitchModel::IntelligentDualHarmonizer {
-                self.analysis_buf[self.analysis_pos] = x;
+                self.analysis_buf[self.analysis_pos] = crate::denormal::flush_f32(x);
                 self.analysis_pos = (self.analysis_pos + 1) & (ANALYSIS_BUF_LEN - 1);
                 self.samples_since_detect += 1;
                 if self.samples_since_detect >= 512 {

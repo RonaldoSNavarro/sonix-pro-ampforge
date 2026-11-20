@@ -70,9 +70,9 @@ impl SidechainBiquad {
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
         let x = if x.is_finite() { x } else { 0.0 };
-        let y = self.b0 * x + self.z1;
-        self.z1 = self.b1 * x - self.a1 * y + self.z2;
-        self.z2 = self.b2 * x - self.a2 * y;
+        let y = crate::denormal::flush_f32(self.b0 * x + self.z1);
+        self.z1 = crate::denormal::flush_f32(self.b1 * x - self.a1 * y + self.z2);
+        self.z2 = crate::denormal::flush_f32(self.b2 * x - self.a2 * y);
         if !y.is_finite() {
             self.z1 = 0.0;
             self.z2 = 0.0;
@@ -480,35 +480,53 @@ impl CompressorProcessor {
             let det = match self.topology {
                 CompressorTopology::StudioFet1176 | CompressorTopology::PedalRossDyna => {
                     if abs_x > self.envelope {
-                        self.envelope = (1.0 - att_coeff) * abs_x + att_coeff * self.envelope;
+                        self.envelope = crate::denormal::flush_f32(
+                            (1.0 - att_coeff) * abs_x + att_coeff * self.envelope,
+                        );
                     } else {
-                        self.envelope = (1.0 - rel_coeff) * abs_x + rel_coeff * self.envelope;
+                        self.envelope = crate::denormal::flush_f32(
+                            (1.0 - rel_coeff) * abs_x + rel_coeff * self.envelope,
+                        );
                     }
                     self.envelope
                 }
                 CompressorTopology::OpticalLa2a => {
                     // Program-dependent T4 optical dual-stage release
                     if abs_x > self.envelope {
-                        self.envelope = (1.0 - att_coeff) * abs_x + att_coeff * self.envelope;
+                        self.envelope = crate::denormal::flush_f32(
+                            (1.0 - att_coeff) * abs_x + att_coeff * self.envelope,
+                        );
                     } else {
-                        self.envelope = (1.0 - rel_coeff) * abs_x + rel_coeff * self.envelope;
+                        self.envelope = crate::denormal::flush_f32(
+                            (1.0 - rel_coeff) * abs_x + rel_coeff * self.envelope,
+                        );
                     }
                     if self.envelope > self.opt_slow_env {
-                        self.opt_slow_env = 0.05 * self.envelope + 0.95 * self.opt_slow_env;
+                        self.opt_slow_env = crate::denormal::flush_f32(
+                            0.05 * self.envelope + 0.95 * self.opt_slow_env,
+                        );
                     } else {
-                        self.opt_slow_env =
-                            (1.0 - slow_rel_coeff) * self.envelope + slow_rel_coeff * self.opt_slow_env;
+                        self.opt_slow_env = crate::denormal::flush_f32(
+                            (1.0 - slow_rel_coeff) * self.envelope
+                                + slow_rel_coeff * self.opt_slow_env,
+                        );
                     }
                     0.55 * self.envelope + 0.45 * self.opt_slow_env
                 }
                 CompressorTopology::VcaMasterBus => {
                     // True-RMS power detector
-                    self.vca_rms_sq = (1.0 - rms_coeff) * (x * x) + rms_coeff * self.vca_rms_sq;
+                    self.vca_rms_sq = crate::denormal::flush_f32(
+                        (1.0 - rms_coeff) * (x * x) + rms_coeff * self.vca_rms_sq,
+                    );
                     let rms_est = self.vca_rms_sq.max(0.0).sqrt();
                     if rms_est > self.envelope {
-                        self.envelope = (1.0 - att_coeff) * rms_est + att_coeff * self.envelope;
+                        self.envelope = crate::denormal::flush_f32(
+                            (1.0 - att_coeff) * rms_est + att_coeff * self.envelope,
+                        );
                     } else {
-                        self.envelope = (1.0 - rel_coeff) * rms_est + rel_coeff * self.envelope;
+                        self.envelope = crate::denormal::flush_f32(
+                            (1.0 - rel_coeff) * rms_est + rel_coeff * self.envelope,
+                        );
                     }
                     self.envelope
                 }

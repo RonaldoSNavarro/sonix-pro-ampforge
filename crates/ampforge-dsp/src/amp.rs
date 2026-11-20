@@ -632,7 +632,7 @@ pub fn static_preamp_transfer(
 #[inline(always)]
 fn one_pole_hpf(state: &mut f64, x: f64, alpha: f64) -> f64 {
     let hp = x - *state;
-    *state += alpha * hp;
+    *state = crate::denormal::flush_f64(*state + alpha * hp);
     hp
 }
 
@@ -1401,7 +1401,8 @@ impl WhiteBoxAmpProcessor {
 
             // Keep parallel Normal channel low/mid contour state updated for Plexi Ch II
             // Note: s_in already includes input_pad (-6 dB on Low2), do not apply input_pad twice.
-            self.bright2_state += alpha_ch2 * (s_in - self.bright2_state);
+            self.bright2_state =
+                crate::denormal::flush_f64(self.bright2_state + alpha_ch2 * (s_in - self.bright2_state));
             let ch2_hp = s_in - self.bright2_state;
             let s_ch2_base = (s_in * 0.65 + self.bright2_state * 0.70 - ch2_hp * 0.10) * vol2_lin;
 
@@ -1476,7 +1477,9 @@ impl WhiteBoxAmpProcessor {
                         let base_drive = raw_drive / (1.0 + (raw_drive / 18.5).powi(4)).powf(0.25);
                         // Grid-stopper de 68 kΩ + capacitância de Miller de V1a (~6.4 kHz)
                         let alpha_grid_jcm = (2.0 * std::f64::consts::PI * 6400.0 / sr).clamp(0.01, 0.85);
-                        self.miller_lp2 += alpha_grid_jcm * (s - self.miller_lp2);
+                        self.miller_lp2 = crate::denormal::flush_f64(
+                            self.miller_lp2 + alpha_grid_jcm * (s - self.miller_lp2),
+                        );
                         let s_v1a_in = self.miller_lp2;
                         // V1a stage (Low jack skips V1a excess gain while matching -6dB input pad)
                         let s_after_v1a = if is_low {
@@ -1497,7 +1500,9 @@ impl WhiteBoxAmpProcessor {
                             * v1_headroom;
                         // Divisor 470k + capacitância de Miller entre V1b e V2a (~7.0 kHz) antes do cathode follower
                         let alpha_miller_jcm = (2.0 * std::f64::consts::PI * 7000.0 / sr).clamp(0.01, 0.85);
-                        self.miller_lp1 += alpha_miller_jcm * (v1b - self.miller_lp1);
+                        self.miller_lp1 = crate::denormal::flush_f64(
+                            self.miller_lp1 + alpha_miller_jcm * (v1b - self.miller_lp1),
+                        );
                         // V2a + V2b Cathode Follower
                         let v2_in = one_pole_hpf(&mut self.interstage_hp2, self.miller_lp1, alpha_hp_loose);
                         triode_adaa1((v2_in * 1.0) / v1_headroom, &mut self.adaa_s3_prev, kp_base, kn_base)
@@ -1533,7 +1538,9 @@ impl WhiteBoxAmpProcessor {
                             if n_stages == 3 {
                                 s3
                             } else {
-                                self.miller_lp1 += alpha_miller * (s3 - self.miller_lp1);
+                                self.miller_lp1 = crate::denormal::flush_f64(
+                                    self.miller_lp1 + alpha_miller * (s3 - self.miller_lp1),
+                                );
                                 let s4 = triode_adaa1((self.miller_lp1 * 2.1) / v1_headroom, &mut self.adaa_s4_prev, kp_base * 1.15, kn_base * 0.9) * v1_headroom;
                                 s4
                             }
@@ -1588,7 +1595,9 @@ impl WhiteBoxAmpProcessor {
 
                 // AC30 Tone Cut shunt low-pass after LTP PI (and mild active on others if desired, primary on AC30)
                 let v_post_cut = if self.model_id == AmpModelId::UkAc30TopBoost {
-                    self.ac30_cut_lp += alpha_cut * (v_with_rev - self.ac30_cut_lp);
+                    self.ac30_cut_lp = crate::denormal::flush_f64(
+                        self.ac30_cut_lp + alpha_cut * (v_with_rev - self.ac30_cut_lp),
+                    );
                     self.ac30_cut_lp
                 } else {
                     v_with_rev
@@ -1633,7 +1642,9 @@ impl WhiteBoxAmpProcessor {
                 // 6. Transformer Saturation (Feedforward Frequency-Dependent LF Core Saturation at 150 Hz)
                 if xf_val > 0.01 {
                     let lf_alpha = (150.0 * 2.0 * std::f64::consts::PI / sr).min(0.2);
-                    self.xformer_lf_state += lf_alpha * (power_sat - self.xformer_lf_state);
+                    self.xformer_lf_state = crate::denormal::flush_f64(
+                        self.xformer_lf_state + lf_alpha * (power_sat - self.xformer_lf_state),
+                    );
                     let lf_flux = self.xformer_lf_state;
                     let lf_k = 6.0;
                     let sat_flux = (lf_flux * lf_k).tanh() / lf_k;
@@ -1652,7 +1663,9 @@ impl WhiteBoxAmpProcessor {
                 } else {
                     1.0 - (-1.0 / (sr * tau_rel)).exp()
                 };
-                self.sag_state += alpha_sag * (target_drop - self.sag_state);
+                self.sag_state = crate::denormal::flush_f64(
+                    self.sag_state + alpha_sag * (target_drop - self.sag_state),
+                );
                 let b_plus_factor = ((1.0 - self.sag_state) * variac_scale).max(0.15);
 
                 // Safe output limiter inside oversampled loop (limiar 0.78 preserva ataque transiente; teto 0.85 evita Gibbs > 0.999 pós-AA)
@@ -1673,7 +1686,7 @@ impl WhiteBoxAmpProcessor {
             }
 
             if sub_count > 0 {
-                self.interstage_hp3 = rev_feed_acc / (sub_count as f64);
+                self.interstage_hp3 = crate::denormal::flush_f64(rev_feed_acc / (sub_count as f64));
             }
 
             if self.target_model_id.is_some() {

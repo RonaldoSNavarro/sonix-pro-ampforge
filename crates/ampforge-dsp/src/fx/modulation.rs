@@ -177,8 +177,8 @@ impl ModulationProcessor {
         for k in 0..4 {
             let w = (pi_over_sr * freqs_hz[k].clamp(20.0, self.sample_rate * 0.45)).tan();
             let a = (w - 1.0) / (w + 1.0);
-            let y = a * s + self.ap_x1[k] - a * self.ap_y1[k];
-            self.ap_x1[k] = s;
+            let y = crate::denormal::flush_f32(a * s + self.ap_x1[k] - a * self.ap_y1[k]);
+            self.ap_x1[k] = crate::denormal::flush_f32(s);
             self.ap_y1[k] = y;
             s = y;
         }
@@ -222,10 +222,11 @@ impl ModulationProcessor {
                     let mod_ms = 1.5 * depth_norm * lfo_sin;
                     let d_samples = ((center_ms + mod_ms) * 0.001 * self.sample_rate)
                         .clamp(1.0, (buf_len - 2) as f32);
-                    self.delay_buffer[self.write_pos] =
-                        (x + self.flanger_fb_state * self.feedback).clamp(-4.0, 4.0);
+                    self.delay_buffer[self.write_pos] = crate::denormal::flush_f32(
+                        (x + self.flanger_fb_state * self.feedback).clamp(-4.0, 4.0),
+                    );
                     let delayed = self.read_delay_linear(d_samples);
-                    self.flanger_fb_state = delayed;
+                    self.flanger_fb_state = crate::denormal::flush_f32(delayed);
                     self.write_pos = (self.write_pos + 1) % buf_len;
                     delayed
                 }
@@ -250,17 +251,19 @@ impl ModulationProcessor {
                 }
                 ModModel::AnalogBbdChorus => {
                     // Single modulated voice + BBD 4.5 kHz HF rolloff
-                    self.delay_buffer[self.write_pos] = x;
+                    self.delay_buffer[self.write_pos] = crate::denormal::flush_f32(x);
                     let base_d = 0.008 * self.sample_rate;
                     let mod_d = depth_norm * 0.0035 * self.sample_rate * lfo_sin;
                     let delayed = self.read_delay_linear(base_d + mod_d);
                     self.write_pos = (self.write_pos + 1) % buf_len;
-                    self.bbd_lp_state += bbd_lp_alpha * (delayed - self.bbd_lp_state);
+                    self.bbd_lp_state = crate::denormal::flush_f32(
+                        self.bbd_lp_state + bbd_lp_alpha * (delayed - self.bbd_lp_state),
+                    );
                     self.bbd_lp_state
                 }
                 ModModel::StereoTriChorus => {
                     // 3 voices offset by 0, 120, 240 deg summed
-                    self.delay_buffer[self.write_pos] = x;
+                    self.delay_buffer[self.write_pos] = crate::denormal::flush_f32(x);
                     let base_d = 0.008 * self.sample_rate;
                     let mod_amp = depth_norm * 0.0035 * self.sample_rate;
                     let p0 = self.lfo_phase.sin();
@@ -274,14 +277,16 @@ impl ModulationProcessor {
                 }
                 ModModel::RotarySpeaker => {
                     // Horn Doppler pitch shift + horn AM + cabinet HF dispersion
-                    self.delay_buffer[self.write_pos] = x;
+                    self.delay_buffer[self.write_pos] = crate::denormal::flush_f32(x);
                     let base_d = 0.003 * self.sample_rate;
                     let mod_d = depth_norm * 0.0015 * self.sample_rate * lfo_sin;
                     let delayed = self.read_delay_linear(base_d + mod_d);
                     self.write_pos = (self.write_pos + 1) % buf_len;
                     let horn_am = 1.0 - 0.35 * depth_norm * (0.5 + 0.5 * self.lfo_phase.cos());
                     let modulated = delayed * horn_am;
-                    self.rotary_lp_state += rotary_lp_alpha * (modulated - self.rotary_lp_state);
+                    self.rotary_lp_state = crate::denormal::flush_f32(
+                        self.rotary_lp_state + rotary_lp_alpha * (modulated - self.rotary_lp_state),
+                    );
                     self.rotary_lp_state
                 }
             };
@@ -291,7 +296,7 @@ impl ModulationProcessor {
                 self.lfo_phase -= two_pi;
             }
 
-            output[i] = x * dry_ratio + wet * wet_ratio;
+            output[i] = crate::denormal::flush_f32(x * dry_ratio + wet * wet_ratio);
         }
     }
 }

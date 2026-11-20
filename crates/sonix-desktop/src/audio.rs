@@ -2648,6 +2648,7 @@ pub struct RealtimeDspChain {
     shadow_out_buf: Vec<f32>,
     pending_shadow_sync: [DspParamUpdate; 256],
     pending_shadow_len: usize,
+    mxcsr_no_process: u32,
 
     // Spec 026 / 029: Afinador ao vivo e captura limpa SPSC lock-free/zero-alloc
     tuner: TunerProcessor,
@@ -2901,6 +2902,7 @@ impl RealtimeDspChain {
             shadow_out_buf: Vec::new(),
             pending_shadow_sync: [DspParamUpdate::TriggerPresetCrossfade; 256],
             pending_shadow_len: 0,
+            mxcsr_no_process: 0,
 
             tuner,
             tuner_enabled: false,
@@ -3178,6 +3180,10 @@ impl RealtimeDspChain {
 
     pub fn retired_drop_count(&self) -> u64 {
         self.retired_reaper.reclaimed_count()
+    }
+
+    pub fn mxcsr_observado(&self) -> u32 {
+        self.mxcsr_no_process
     }
 
     pub fn looper(&self) -> &LooperProcessor {
@@ -4526,6 +4532,8 @@ impl RealtimeDspChain {
 
     /// Processa bloco de áudio da guitarra passando pelo Grafo Completo do Grid (Spec 024 & Spec 037 Zero-Alloc)
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        let _ftz = ampforge_dsp::denormal::DenormalGuard::new();
+        self.mxcsr_no_process = ampforge_dsp::denormal::mxcsr_atual();
         let rt_start = std::time::Instant::now();
         self.drain_param_queue();
         self.drain_resource_queue();
@@ -4589,8 +4597,8 @@ impl RealtimeDspChain {
         for i in 0..len {
             let x = source_slice[i] as f64;
             let y = x - self.dc_x1 + r * self.dc_y1;
-            self.dc_x1 = x;
-            self.dc_y1 = y;
+            self.dc_x1 = ampforge_dsp::denormal::flush_f64(x);
+            self.dc_y1 = ampforge_dsp::denormal::flush_f64(y);
             let yf = y as f32;
             source_slice[i] = yf;
 

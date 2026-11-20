@@ -207,15 +207,17 @@ impl EqProcessor {
 
             let st = &mut self.filter_states[b_idx];
             for i in 0..output.len() {
-                let x = output[i] as f64;
-                let y = b0 * x + b1 * st[0] + b2 * st[1] - a1 * st[2] - a2 * st[3];
+                let x = crate::denormal::flush_f64(output[i] as f64);
+                let y = crate::denormal::flush_f64(
+                    b0 * x + b1 * st[0] + b2 * st[1] - a1 * st[2] - a2 * st[3],
+                );
 
                 st[1] = st[0];
                 st[0] = x;
                 st[3] = st[2];
                 st[2] = y;
 
-                output[i] = y as f32;
+                output[i] = crate::denormal::flush_f32(y as f32);
             }
         }
 

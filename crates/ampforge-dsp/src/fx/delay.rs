@@ -89,9 +89,9 @@ impl WetBiquad {
 
     #[inline(always)]
     fn process(&mut self, x: f32) -> f32 {
-        let y = self.b0 * x + self.z1;
-        self.z1 = self.b1 * x - self.a1 * y + self.z2;
-        self.z2 = self.b2 * x - self.a2 * y;
+        let y = crate::denormal::flush_f32(self.b0 * x + self.z1);
+        self.z1 = crate::denormal::flush_f32(self.b1 * x - self.a1 * y + self.z2);
+        self.z2 = crate::denormal::flush_f32(self.b2 * x - self.a2 * y);
         y
     }
 }
@@ -337,8 +337,10 @@ impl DelayProcessor {
             } else {
                 self.spring_combs[c][pos]
             };
-            self.spring_lp[c] += lp_alpha * (y - self.spring_lp[c]);
-            self.spring_combs[c][pos] = (x + self.spring_lp[c] * fb_gain).clamp(-1.5, 1.5);
+            self.spring_lp[c] =
+                crate::denormal::flush_f32(self.spring_lp[c] + lp_alpha * (y - self.spring_lp[c]));
+            self.spring_combs[c][pos] =
+                crate::denormal::flush_f32((x + self.spring_lp[c] * fb_gain).clamp(-1.5, 1.5));
             self.spring_pos[c] = if pos + 1 >= len { 0 } else { pos + 1 };
             sum += y;
         }
@@ -415,10 +417,11 @@ impl DelayProcessor {
             if self.ducking_enabled {
                 let abs_in = input[i].abs();
                 if abs_in > self.ducking_envelope {
-                    self.ducking_envelope = abs_in;
+                    self.ducking_envelope = crate::denormal::flush_f32(abs_in);
                 } else {
-                    self.ducking_envelope =
-                        (1.0 - duck_rel_coeff) * abs_in + duck_rel_coeff * self.ducking_envelope;
+                    self.ducking_envelope = crate::denormal::flush_f32(
+                        (1.0 - duck_rel_coeff) * abs_in + duck_rel_coeff * self.ducking_envelope,
+                    );
                 }
 
                 if self.ducking_envelope > threshold_lin {
@@ -472,7 +475,8 @@ impl DelayProcessor {
                         let b = self.wet_bass_bq.process(acc);
                         echo_eq = self.wet_treble_bq.process(b);
                         let fb_signal = (echo_eq * feedback_gain).tanh();
-                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.buffer[self.write_pos] =
+                            crate::denormal::flush_f32(in_sample + fb_signal);
                         self.write_pos = (self.write_pos + 1) % buf_len;
                     }
                     DelayModel::AnalogBbdDelay => {
@@ -480,9 +484,12 @@ impl DelayProcessor {
                         let b = self.wet_bass_bq.process(tap);
                         echo_eq = self.wet_treble_bq.process(b);
                         // BBD HF rolloff inside feedback loop + soft clipping
-                        self.bbd_fb_lp += bbd_lp_alpha * (echo_eq - self.bbd_fb_lp);
+                        self.bbd_fb_lp = crate::denormal::flush_f32(
+                            self.bbd_fb_lp + bbd_lp_alpha * (echo_eq - self.bbd_fb_lp),
+                        );
                         let fb_signal = (self.bbd_fb_lp * feedback_gain).tanh();
-                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.buffer[self.write_pos] =
+                            crate::denormal::flush_f32(in_sample + fb_signal);
                         self.write_pos = (self.write_pos + 1) % buf_len;
                     }
                     DelayModel::PristineDigitalDelay => {
@@ -490,7 +497,8 @@ impl DelayProcessor {
                         let b = self.wet_bass_bq.process(tap);
                         echo_eq = self.wet_treble_bq.process(b);
                         let fb_signal = (echo_eq * feedback_gain).clamp(-2.0, 2.0);
-                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.buffer[self.write_pos] =
+                            crate::denormal::flush_f32(in_sample + fb_signal);
                         self.write_pos = (self.write_pos + 1) % buf_len;
                     }
                     DelayModel::DualParallelDelay => {
@@ -501,7 +509,8 @@ impl DelayProcessor {
                         let b = self.wet_bass_bq.process(combined);
                         echo_eq = self.wet_treble_bq.process(b);
                         let fb_signal = (t2 * feedback_gain).clamp(-2.0, 2.0);
-                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.buffer[self.write_pos] =
+                            crate::denormal::flush_f32(in_sample + fb_signal);
                         self.write_pos = (self.write_pos + 1) % buf_len;
                     }
                     DelayModel::PingPongStereo => {
@@ -512,7 +521,8 @@ impl DelayProcessor {
                         let b = self.wet_bass_bq.process(combined);
                         echo_eq = self.wet_treble_bq.process(b);
                         let fb_signal = (t_pong * feedback_gain).clamp(-2.0, 2.0);
-                        self.buffer[self.write_pos] = in_sample + fb_signal;
+                        self.buffer[self.write_pos] =
+                            crate::denormal::flush_f32(in_sample + fb_signal);
                         self.write_pos = (self.write_pos + 1) % buf_len;
                     }
                     DelayModel::ReverseDelay => {
@@ -527,7 +537,8 @@ impl DelayProcessor {
                         let b = self.wet_bass_bq.process(rev_raw);
                         echo_eq = self.wet_treble_bq.process(b);
                         let fb_signal = (echo_eq * feedback_gain).clamp(-2.0, 2.0);
-                        self.rev_buffer[self.rev_write_pos] = in_sample + fb_signal;
+                        self.rev_buffer[self.rev_write_pos] =
+                            crate::denormal::flush_f32(in_sample + fb_signal);
                         self.rev_write_pos += 1;
                         if self.rev_write_pos >= grain_len {
                             self.rev_write_pos = 0;
@@ -546,14 +557,15 @@ impl DelayProcessor {
             self.samples_since_clear = self.samples_since_clear.saturating_add(1);
 
             let wet = (echo_eq + spring_wet) * self.duck_mult;
-            if self.bypassed && self.spillover_enabled {
-                output[i] = input[i] + wet * wet_ratio;
+            let out_s = if self.bypassed && self.spillover_enabled {
+                input[i] + wet * wet_ratio
             } else if !echo_on {
                 // Mode 12: Direct signal + Spring Reverb (echo_volume silencioso para eco, reverb_volume comanda a mola)
-                output[i] = input[i] * (1.0 - 0.35 * spring_mix) + spring_wet * self.duck_mult;
+                input[i] * (1.0 - 0.35 * spring_mix) + spring_wet * self.duck_mult
             } else {
-                output[i] = input[i] * dry_ratio + wet * wet_ratio;
-            }
+                input[i] * dry_ratio + wet * wet_ratio
+            };
+            output[i] = crate::denormal::flush_f32(out_s);
         }
     }
 }

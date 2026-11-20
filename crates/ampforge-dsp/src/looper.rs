@@ -241,7 +241,8 @@ impl LooperProcessor {
 
                     if self.state == LooperState::Overdub {
                         if self.half_speed {
-                            self.half_overdub_acc += input[i];
+                            self.half_overdub_acc =
+                                crate::denormal::flush_f32(self.half_overdub_acc + input[i]);
                             self.half_overdub_count = self.half_overdub_count.saturating_add(1);
                             let mut next_pos = self.play_pos + speed_step;
                             if next_pos >= len as f32 {
@@ -249,13 +250,17 @@ impl LooperProcessor {
                             }
                             let next_idx = (next_pos.floor() as usize) % len;
                             if next_idx != idx || self.half_overdub_count >= 2 {
-                                self.overdub_buffer[read_idx] +=
-                                    self.half_overdub_acc / (self.half_overdub_count as f32);
+                                self.overdub_buffer[read_idx] = crate::denormal::flush_f32(
+                                    self.overdub_buffer[read_idx]
+                                        + self.half_overdub_acc / (self.half_overdub_count as f32),
+                                );
                                 self.half_overdub_acc = 0.0;
                                 self.half_overdub_count = 0;
                             }
                         } else {
-                            self.overdub_buffer[read_idx] += input[i];
+                            self.overdub_buffer[read_idx] = crate::denormal::flush_f32(
+                                self.overdub_buffer[read_idx] + input[i],
+                            );
                         }
                     }
 
