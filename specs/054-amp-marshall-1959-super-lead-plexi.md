@@ -1,155 +1,176 @@
 ---
 spec: 054
-titulo: Amplificador Marshall 1959 Super Lead / Plexi (1968–1969 JMP, 100W)
+titulo: Amplificador Marshall 1959 Super Lead / Plexi (Rev. 1969 SL/A Pré-Julho 1969, 100W)
 status: rascunho
 tipo: amplificador
-atualizado: 2026-11-19
+atualizado: 2026-11-20
 dependencias: [053, 077, 078, 079]
 ---
-# 054 — Amplificador Marshall 1959 Super Lead / Plexi (Rev. 1968–1969)
+# 054 — Amplificador Marshall 1959 Super Lead / Plexi (Rev. 1969 SL/A)
 
 ## 1. Identificação e objetivo
-- **Identificador estável (`model_id`):** `amp.marshall.1959_super_lead` (alias legado: `plexi_1959`, `brit_plexi_1959`, `plexi`)
-- **Revisão (`model_revision`):** `1968-1969-jmp-sl-a`
-- **Categoria:** Amplificador valvulado (módulo independente)
-- **Objetivo:** Especificar de forma autônoma e rastreável o circuito real, os controles autênticos, o comportamento elétrico/dinâmico, a estratégia DSP e os critérios de validação do amplificador **Marshall 1959 Super Lead 100W (Plexi, rev. 1968–1969)**, desacoplando-o do processador monolítico atual (`amp.rs`).
+- **Identificador estável (`model_id`):** `amp.marshall.1959_super_lead` (aliases legados: `plexi_1959`, `brit_plexi_1959`, `plexi`)
+- **Revisão (`model_revision`):** `1969-jmp-sl-a-pre-july`
+- **Categoria:** Amplificador valvulado (`amplificador`)
+- **Natureza do módulo:** Equipamento físico real
+- **Objetivo:** Especificar o circuito elétrico real, os controles autênticos, o comportamento dinâmico e os critérios de validação do amplificador **Marshall Model 1959 Super Lead 100W ("Plexi", revisão SL/A pré-julho de 1969 documentada no manual oficial 1959HW e esquemas JMP 1968–1969)**, corrigindo acoplamentos e erros factuais do código atual.
 
 ## 2. Escopo
-- Modelagem dedicada dos dois canais paralelos independentes (Canal I High Treble e Canal II Normal), suas 4 entradas (`High I`, `Low I`, `High II`, `Low II`) e modo `Jumpered` (I-High + patch I-Low→II-High).
-- Estágios V1a/V1b paralelos, rede de mistura 470 kΩ, V2a + V2b Cathode Follower, Tone Stack passivo FMV Marshall (33 kΩ / 470 pF / 22 nF / 22 nF), inversor de fase LTP (ECC83), estágio de potência push-pull 4×EL34 fixed-bias, NFB global com `Presence`, fonte de estado sólido com sag dinâmico e interação com carga reativa.
-- Exposição estrita apenas dos controles reais da revisão (sem Master Volume fantasma) + overrides documentados da bancada Mod Shop (Spec 077).
+- Modelagem dos dois canais paralelos independentes: **Canal I (High Treble)** e **Canal II (Normal)**, com 4 jacks de entrada (`High I`, `Low I`, `High II`, `Low II`) e ligação em ponte `Jumpered` (`High I` + cabo patch `Low I → High II`).
+- Estágios V1b (Canal I, split-cathode `Rk = 2,7 kΩ || Ck = 0,68 µF`, bright cap `0,005 µF = 5000 pF` **exclusivo sobre Volume I**) e V1a (Canal II, `Rk = 820 Ω || Ck = 250–330 µF`, sem bright cap).
+- Rede passiva de mistura (`470 kΩ || 470 pF` no Canal I + `470 kΩ` no Canal II), 2º estágio de ganho comum V2a (`Rk = 820 Ω` com capacitor de bypass adicional `0,68 µF` conforme *Tonal Note 1* do manual 1959HW p. 3) acoplado diretamente ao seguidor de cátodo V2b (`Rk = 100 kΩ`).
+- Tone Stack passivo FMV Marshall (`R_slope = 33 kΩ`, `C1 = 470 pF`, `C2 = 22 nF`, `C3 = 22 nF`, `R_treble = 220 kΩ`, `R_bass = 1 MΩ`, `R_mid = 22–25 kΩ` com **taper 10% log** confirmado na *Tonal Note 2* do manual 1959HW p. 3).
+- Inversor de fase LTP (V3 `ECC83`), estágio de potência push-pull `4×EL34` fixed-bias, transformador de saída **Dagnall C1998** (agosto 1967) e transformador de força **Drake 1203-80** (fevereiro 1967) com NFB global retirado **diretamente da saída do alto-falante** (*Tonal Note 3*, p. 3).
 
 ## 3. Fora de escopo
-- Variantes 1959 anteriores (1965–1967 JTM100 com retificador/transformadores distintos e bright cap de 100 pF) ou posteriores (1959SLP reedição com FX Loop — o 1968–69 original não possui FX loop).
-- Master Volume pós-PI (PPIMV) ou modificações pós-fábrica (cobertos por presets/Mod Shop, não pelo painel padrão do 1959).
-- Modelagem de gabinete 4×12 Greenback (coberta pela Spec 080).
+- Variantes 1965–1967 JTM100 / early 1959 shared-cathode (`Rk = 820 Ω / 250–330 µF` compartilhado em V1 e bright cap de `100 pF` — registrado em §5).
+- Reedição padrão **Marshall 1959SLP** (que utiliza potenciômetro `Middle` linear, NFB fixo no tap de `8 Ω` e FX Loop traseiro — Manual 1959HW pp. 2–3).
+- Master Volume (inexistente no 1959 original) e gabinete 4×12 Greenback (coberto pela Spec 080).
 
 ## 4. Equipamento ou componente de referência
-- **Fabricante:** Marshall Amplification.
-- **Modelo exato:** Model 1959 Super Lead 100W ("Plexi").
-- **Período / Ano:** 1968–1969 (circuito JMP pré-julho de 1969, referência adicional na reedição handwired 1959HW).
-- **Papel na cadeia de sinal:** Cabeçote valvulado non-master volume de 100 W; depende da excitação dos canais paralelos e da saturação do inversor de fase e estágio de potência 4×EL34.
+- **Fabricante:** Marshall Amplification plc (Bletchley, Milton Keynes, England).
+- **Modelo exato:** Model 1959 Super Lead 100W Head (e reedição handwired 1959HW baseada na unidade de referência SL/A pré-julho de 1969).
+- **Período / Ano:** 1968 – junho de 1969 (painel Plexiglas dourado, circuito `SL/A`).
+- **Papel na cadeia de sinal:** Cabeçote valvulado non-master-volume de 100 W RMS; a saturação provém da interação entre os canais paralelos, o seguidor de cátodo V2b, o inversor LTP V3 e o quarteto de potência `4×EL34`.
 
 ## 5. Revisão e variantes
-- **Revisão de referência selecionada:** `1968-1969 JMP Super Lead (SL/A pré-julho 1969, split cathode V1)`.
-- **Variantes históricas relevantes (não misturadas):**
-  - *1965–1967 JTM100 / 1959 shared cathode:* V1a e V1b compartilham `Rk=820 Ω / Ck=250–330 µF`, bright cap menor (`100 pF`), resposta mais gorda e escura.
-  - *1968–1969 split cathode (selecionada):* Canal I `Rk=2.7 kΩ / Ck=0.68 µF` (ou `820 Ω / 0.68 µF` conforme sub-lote; ver §6/§7), bright cap `5000 pF` (`4.7 nF`) no Volume I, Canal II `Rk=820 Ω / Ck=250–330 µF`.
-  - *1959HW Reissue:* segue a topologia SL/A pré-julho 1969 e confirma ordem frontal dos controles no manual oficial em `docs/ui-desktop/fontes/`.
-- **Pendências de confirmação de revisão:** confirmar por medição física em unidade de referência a curva exata do transformador Drake 1202-119 e se o lote-alvo usa `Rk(V1b) = 2.7 kΩ` (pós-68) ou `820 Ω` (early-68).
+- **Revisão de referência selecionada:** `1969 SL/A pré-julho de 1969 (split-cathode V1, bright cap 0,005 µF em Volume I, bypass extra em V2a, Mid pot 10% log, NFB na saída do falante, OT Dagnall C1998, PT Drake 1203-80)`.
+- **Relação documentada entre 1959 original (1965–69), 1959SLP e 1959HW (conferida em F1, pp. 2–5):**
+  1. **1959 Original (final de 1965 – 1967):** shared cathode em V1 (`820 Ω || 250–330 µF`), bright cap de **`100 pF`** sobre Volume I (F1, p. 5, *Tonal Note 5*), filtragem B+ menor.
+  2. **1959 Original SL/A (1968 – pré-julho de 1969, revisão selecionada) & 1959HW Reissue:** split cathode em V1, bright cap de **`0,005 µF` (`5000 pF`)** sobre Volume I (F1, p. 5, *Tonal Note 5*), capacitor extra de bypass de cátodo no 2º estágio de ganho V2a elevando médios-agudos e agudos (F1, p. 3, *Tonal Note 1*), potenciômetro `Middle` **10% log** (F1, p. 3, *Tonal Note 2*), NFB retirado da saída real do alto-falante variando o amortecimento conforme a chave `4 / 8 / 16 Ω` (F1, p. 3, *Tonal Note 3*), transformador de saída **Dagnall C1998** (spec agosto 1967) e transformador de força **Drake 1203-80** (spec fevereiro 1967) (F1, p. 3).
+  3. **1959SLP Reissue (produção padrão posterior):** potenciômetro `Middle` **linear** (F1, p. 3, *Tonal Note 2*) e NFB fixo no tap de **`8 Ω`** do transformador de saída, tornando o fator de amortecimento independente da chave seletora `4 / 8 / 16 Ω` (F1, p. 3, *Tonal Note 3*).
+- **Divergências históricas resolvidas vs. mantidas pendentes:**
+  - **Resolvida (Transformadores):** corrigido o erro factual anterior que citava "Drake 1202-119" (transformador de 50W do modelo 1987); o manual primário F1 (p. 3) comprova que o 1959 100W utiliza OT **Dagnall C1998** e PT **Drake 1203-80**.
+  - **Resolvida (`Rk(V1b)` na revisão SL/A 1969):** fixado como **`2,7 kΩ || 0,68 µF`** para a revisão `1969-jmp-sl-a-pre-july` (`SECONDARY_TECHNICAL`: F2); a sub-variante transicional de início de 1968 (`Rk(V1b) = 820 Ω || 0,68 µF`) não é misturada na configuração padrão e fica registrada como variante histórica separada.
+  - **Pendente (`PENDING` / `UNKNOWN`):** curva de magnetização B-H não linear e indutância de dispersão primária-secundária exata do transformador de saída **Dagnall C1998** dependem de medição física em bancada.
 
-## 6. Fontes técnicas
-| ID | Fonte | Modelo / Revisão | Seção / Página | URL / Caminho | Consulta | Classificação | Dado sustentado |
+## 6. Fontes técnicas e evidência por informação
+
+### 6.1 Catálogo de fontes verificadas
+| ID | Fonte | Fabricante / Modelo / Revisão | Página / Folha / Seção | URL / Caminho direto | Consulta | Classificação | Limitações da fonte |
 |---|---|---|---|---|---|---|---|
-| F1 | *Marshall 1959HW Owners Manual* | 1959HW (circuito 1969 SL/A) | Painel frontal, itens 1–13, Figs. 1–2 | `docs/ui-desktop/fontes/marshall-1959HW-owners-manual.pdf` | 2026-11-19 | `[confirmado em documentação]` | Ordem frontal dos controles, 4 entradas (Low −6 dB), jumper I-Low→II-High, bright cap 0,005 µF em Vol I, Mid 10% log, NFB na saída do falante |
-| F2 | `docs/amps/voicing-fontes.md` | Marshall 1959SLP 1967–1969 | Seção 3 | `docs/amps/voicing-fontes.md` | 2026-11-19 | `[confirmado em documentação]` | Tone stack 33k/470pF/22nF/22nF, rede 470k||470pF, ausência de Master Volume |
-| F3 | Rob Robinette — *Marshall 1959 Super Lead Circuit Analysis* | 1959 1968–1969 | Preamp / Cathode Follower / LTP | https://robrobinette.com/ | 2026-11-19 | `[fonte secundária]` | Topologia paralela V1a/V1b, acoplamento DC V2a→V2b cathode follower, 4×EL34 push-pull |
-| F4 | D. T. Yeh & J. O. Smith, *Discretization of the '59 Fender Bassman Tone Stack* (DAFx-06) | Rede passiva FMV | Seções 2–4 | Proc. DAFx-06 (CCRMA Stanford) | 2026-11-19 | `[confirmado em documentação]` | Equacionamento nodal KCL + transformada bilinear do tone stack FMV |
-| F5 | Mullard / Philips Datasheets — `ECC83` e `EL34` | Válvulas padrão | Curvas de placa / ratings | Datasheets históricos Mullard | 2026-11-19 | `[confirmado em documentação]` | `µ≈100` (ECC83), limites e características de potência (EL34) |
+| F1 | *Marshall 1959HW — 100 Watt Head Owners Manual* | Marshall Amplification / 1959HW (circuito 1969 SL/A pré-julho 1969) | pp. 1–7 (Introduction, Technical Information, Tonal Notes 1–5, Front/Rear Panel itens 1–13, Figs. 1–2) | `docs/ui-desktop/fontes/marshall-1959HW-owners-manual.pdf` | 2026-11-20 | `PRIMARY_OFFICIAL` | Descreve topologia, transformadores (C1998 / 1203-80), bright cap 0,005 µF, Mid 10% log, NFB e entradas (-6 dB), mas não traz diagrama esquemático completo com todos os resistores de placa/cátodo |
+| F2 | Dr. Tube — *Marshall 1959 Super Lead Schematics Archive (1967–1969)* | Marshall Model 1959 100W Super Lead | Esquemas SL/A 100W Lead (V1, V2, V3, 4×EL34) | `https://drtube.com/marshall/` | 2026-11-20 | `SECONDARY_TECHNICAL` | Acervo de esquemas históricos digitalizados; valores internos sujeitos a variações de sub-lote (1968 vs 1969) |
+| F3 | Rob Robinette — *How the Marshall JCM800 / Plexi Preamp & Tone Stack Work* | Marshall 1959 / 2203 | Seções Preamp, Cathode Follower, Tone Stack, LTP | `https://robrobinette.com/How_the_Marshall_JCM800_Works.htm` e `https://robrobinette.com/How_The_TMB_Tone_Stack_Works.htm` | 2026-11-20 | `SECONDARY_TECHNICAL` | Análise técnica independente (não oficial da Marshall) |
+| F4 | D. T. Yeh & J. O. Smith — *Discretization of the '59 Fender Bassman Tone Stack* (DAFx-06) | Rede passiva FMV 3ª ordem | pp. 1–8 (Equações KCL e transformada bilinear) | `https://ccrma.stanford.edu/~dtyeh/papers/yeh06_dafx.pdf` | 2026-11-20 | `ACADEMIC` | Fundamenta a discretização matemática exata da rede FMV |
+| F5 | Mullard / Philips — *ECC83 (12AX7) & EL34 Vacuum Tube Datasheets* | Mullard `ECC83` e `EL34` | Curvas de transferência e características estáticas | Acervo de datasheets Mullard (`µ=100` ECC83; push-pull AB1 EL34) | 2026-11-20 | `PRIMARY_COMPONENT` | Parâmetros nominais de componente isolado |
+| F6 | Specs 003, 020, 031, 039 e `docs/amps/voicing-fontes.md` | Contratos internos AMPFORGE | `Spec 031 CA-1..CA-2`, `Spec 039 CA-1..CA-4, CA-9` | `specs/031-*.md`, `specs/039-*.md`, `docs/amps/voicing-fontes.md` | 2026-11-20 | `INTERNAL_REFERENCE` | Documenta requisitos internos e estado atual do código |
+
+### 6.2 Evidência por afirmação técnica
+| Informação / Parâmetro de Circuito | Fonte (ID) | Revisão | Página / Folha / Seção | Classificação | Status documental |
+|---|---|---|---|---|---|
+| 3× `ECC83` (V1, V2, V3) no pré/PI + 4× `EL34` em push-pull Classe AB (100W RMS) | F1 | 1969 SL/A (1959HW) | p. 2 (Intro) e p. 3 (*Valve compliment*) | `PRIMARY_OFFICIAL` | Confirmado |
+| V1 dividido em 2 canais paralelos (Ch I High Treble e Ch II Normal) somados passivamente antes de V2a; V2b como Cathode Follower acionando o Tone Stack | F1 | 1969 SL/A (1959HW) | p. 3 (*Technical Information*) | `PRIMARY_OFFICIAL` | Confirmado |
+| Capacitor extra de bypass de cátodo no 2º estágio de ganho (V2a) reforçando médios-agudos e agudos | F1 | 1969 SL/A (1959HW) | p. 3 (*Tonal Note 1*) | `PRIMARY_OFFICIAL` | Confirmado |
+| Potenciômetro `Middle` com curva **10% log** (diferente do linear da 1959SLP) | F1 | 1969 SL/A (1959HW) | p. 3 (*Tonal Note 2*) | `PRIMARY_OFFICIAL` | Confirmado |
+| Transformador de saída **Dagnall C1998** (spec Ago/1967) e transformador de força **Drake 1203-80** (spec Fev/1967) | F1 | 1969 SL/A (1959HW) | p. 3 (*Output Transformer* / *Mains Transformer*) | `PRIMARY_OFFICIAL` | Confirmado |
+| NFB retirado da saída real do alto-falante (4 Ω mais solto/ressonante, 16 Ω mais firme/amortecido) | F1 | 1969 SL/A (1959HW) | p. 3 (*Tonal Note 3*) | `PRIMARY_OFFICIAL` | Confirmado |
+| Capacitor de filtro B+ principal `50 µF` single-can + ponte de 4 diodos (com `47 nF/630V` EMC sem impacto sônico) | F1 | 1969 SL/A (1959HW) | p. 3 (*Components* / *Note*) | `PRIMARY_OFFICIAL` | Confirmado |
+| Bright cap de **`0,005 µF` (`5000 pF`)** sobre `Volume I` (vs `100 pF` em 1965–1967) | F1 | 1969 SL/A (1959HW) | p. 5 (*Item 8 — Tonal Note 5*) | `PRIMARY_OFFICIAL` | Confirmado |
+| Entradas `Low Sensitivity` (Itens 11 e 13) são **6 dB mais baixas** e mais escuras por menor impedância de entrada; ligação `Jumpered` em fase (Figs. 1–2) | F1 | 1969 SL/A (1959HW) | pp. 5–6 (*Itens 10–13*, *Performance Note*, Figs. 1–2) | `PRIMARY_OFFICIAL` | Confirmado |
+| Valores internos de pré: V1b `Rk = 2,7 kΩ || 0,68 µF`, acoplamento `2,2 nF`; V1a `Rk = 820 Ω || 250–330 µF`, acoplamento `22 nF`; rede de mistura `470 kΩ || 470 pF` + `470 kΩ` | F2, F3 | 1968–1969 JMP 1959 | Folha 1 do esquema 1959 SL/A | `SECONDARY_TECHNICAL` | Confirmado em fonte secundária |
+| Valores da rede Tone Stack FMV: `R_slope = 33 kΩ`, `C1 = 470 pF`, `C2 = 22 nF`, `C3 = 22 nF`, `R_treble = 220 kΩ`, `R_bass = 1 MΩ`, `R_mid = 22–25 kΩ` | F2, F3, F4 | 1968–1969 JMP 1959 | Folha 1 do esquema / DAFx-06 | `SECONDARY_TECHNICAL` / `ACADEMIC` | Confirmado em fonte secundária e artigo |
+| Curva de saturação magnética B-H física do transformador Dagnall C1998 | — | Dagnall C1998 | — | `UNKNOWN` | Pendente de medição física |
 
 ## 7. Fundamentação elétrica
-- **Entradas e Jacks (4 entradas 2×2):**
-  - Canal I (High Treble): `High I` (1 MΩ + grid stopper 68 kΩ) e `Low I` (divisor resistivo 68 kΩ/68 kΩ = **−6 dB** e impedância de entrada reduzida `[confirmado em documentação: F1]`).
-  - Canal II (Normal): `High II` e `Low II` (−6 dB `[confirmado em documentação: F1]`).
-  - `Jumpered`: guitarra em `High I` com cabo patch `Low I → High II`, alimentando ambos os canais em paralelo com interação de impedância `[confirmado em documentação: F1]`.
-- **Pré-amplificação (V1 = ECC83/12AX7, V2 = ECC83/12AX7):**
-  - **V1a (Canal II Normal):** `Rp = 100 kΩ`, `Rk = 820 Ω` com `Ck = 250–330 µF`, acoplamento `0.022 µF`, `Volume II` `1 MΩ` audio taper `[fonte secundária: F3]`.
-  - **V1b (Canal I High Treble):** `Rp = 100 kΩ`, `Rk = 2.7 kΩ` (ou `820 Ω` em unidades início-68) com `Ck = 0.68 µF` (ênfase > ~100–300 Hz), acoplamento `0.0022 µF` (`2.2 nF`), `Volume I` `1 MΩ` com **bright cap `0.005 µF` (`5000 pF`)** `[confirmado em documentação: F1, F3]`.
-  - **Rede de mistura:** dois resistores de `470 kΩ` somando Canal I e II; no ramo do Canal I há bypass `470 pF` (peaking em médios-agudos ~2,4 kHz) `[confirmado em documentação: F2]`.
-  - **V2a + V2b (Cathode Follower):** estágio de ganho V2a (`Rk = 820 Ω`, `Ck = 0.68 µF` opcional/revisão) acoplado em DC ao seguidor de cátodo V2b (`Rk = 100 kΩ`), que apresenta baixa impedância de saída para acionar o tone stack e produz compressão assimétrica suave em condução de grade quando sobrecarregado `[fonte secundária: F3]`.
-- **Tone Stack (FMV Marshall):** `R_slope = 33 kΩ`, `C1 = 470 pF`, `C2 = 22 nF`, `C3 = 22 nF`, `R_treble = 220–250 kΩ`, `R_bass = 1 MΩ`, `R_mid = 22–25 kΩ` (taper 10% log `[confirmado em documentação: F1]`), `R_load = 1 MΩ` `[confirmado em documentação: F2, F4]`.
-- **Inversor de fase e Potência:** LTP com `V3 = ECC83` (`R_tail`, `47 kΩ / 100 kΩ`), acoplando `4×EL34` em push-pull Classe AB fixed-bias (`B+ ≈ 460 V` nominal `[fonte secundária: F3]`, bias típico `~36 mA` por válvula `[aproximação DSP]`).
-- **NFB e Presence:** realimentação negativa global retirada da saída do alto-falante (tap de saída) com resistor de realimentação (`47 kΩ`/`100 kΩ` dependendo do ano) retornando ao cátodo do LTP; potenciômetro `Presence` com capacitor (`0.1 µF` ou `0.68 µF`) desviando agudos da malha NFB para terra `[confirmado em documentação: F1]`.
-- **Fonte, Transformador e Carga:** retificação por ponte de diodos de silício (`SolidStateDiode`), transformador de saída Drake `1202-119` (seleção `4 / 8 / 16 Ω`), interação reativa com gabinete 4×12.
+- **Entradas e Jacks (4 entradas 2×2 — F1 pp. 5–6; F2):**
+  - Canal I (High Treble): `High I` (`1 MΩ` leak + grid stopper `68 kΩ`) e `Low I` (divisor resistivo `68 kΩ / 68 kΩ` = **−6,02 dB** e menor impedância de entrada).
+  - Canal II (Normal): `High II` (`1 MΩ` + `68 kΩ`) e `Low II` (**−6,02 dB**).
+  - `Jumpered` (F1 p. 6, Fig. 1): guitarra em `High I` e cabo jumper de `Low I` para `High II`, excitando V1b e V1a em paralelo e em fase.
+- **Pré-amplificação (V1 = ECC83, V2 = ECC83 — F1 p. 3; F2):**
+  - **V1b (Canal I High Treble):** `Rp = 100 kΩ`, `Rk = 2,7 kΩ || Ck = 0,68 µF` (`f_c ≈ 86,8 Hz`), capacitor de acoplamento `2,2 nF` (`0,0022 µF`), potenciômetro `Volume I` (`1 MΩ` log) com **bright cap `0,005 µF` (`5000 pF`)** em paralelo entre a entrada e o cursor (exclusivo do Canal I!).
+  - **V1a (Canal II Normal):** `Rp = 100 kΩ`, `Rk = 820 Ω || Ck = 250–330 µF` (resposta plena em graves), capacitor de acoplamento `22 nF` (`0,022 µF`), potenciômetro `Volume II` (`1 MΩ` log) **sem bright cap**.
+  - **Rede de mistura passiva:** resistor `470 kΩ` em paralelo com `470 pF` vindo do cursor de `Volume I` somado ao resistor `470 kΩ` vindo do cursor de `Volume II` na grade de V2a.
+  - **V2a + V2b (Cathode Follower):** V2a (`Rp = 100 kΩ`, `Rk = 820 Ω || Ck = 0,68 µF` — F1 p. 3 *Tonal Note 1*) acoplado diretamente em DC à grade de V2b (`Rk = 100 kΩ`), que opera como buffer de ganho unitário e baixa impedância de saída (`R_src ≈ 1,3 kΩ`) com compressão assimétrica suave em sobrecarga para acionar a rede passiva de Tone Stack.
+- **Tone Stack (FMV Marshall pós-V2b — F1 p. 3; F2; F4):** `R_slope = 33 kΩ`, `C1 = 470 pF`, `C2 = 22 nF`, `C3 = 22 nF`, `R_treble = 220 kΩ`, `R_bass = 1 MΩ`, `R_mid = 22 kΩ` (**taper 10% log**, F1 p. 3 *Tonal Note 2*).
+- **Inversor de Fase, Potência, Fonte e NFB (F1 p. 3; F2):**
+  - V3 (`ECC83`) em configuração Long-Tailed Pair (LTP) acionando quarteto `4×EL34` em push-pull Classe AB fixed-bias.
+  - Realimentação negativa (NFB) retirada **da saída real do alto-falante** (F1 p. 3 *Tonal Note 3*): selecionar `4 Ω` reduz a tensão de realimentação e o fator de amortecimento (graves mais soltos e maior pico de ressonância), enquanto `16 Ω` aumenta o NFB e o amortecimento (graves mais firmes e controlados).
+  - Controle `Presence` na malha NFB desviando altas frequências da realimentação para terra.
 
 ## 8. Comportamento esperado
-- **Sem Master Volume:** o drive do estágio de potência e a abertura de dinâmica vêm diretamente da soma de `Volume I` (`gain`) e `Volume II` (`volume_2`). `amp_1.master` não existe neste amplificador e não pode afetar a saída (Spec 039 CA-3).
-- **Bright Cap dependente de Volume I:** com `Volume I` entre `1` e `4`, o capacitor de `5000 pF` eleva agudos acima de `2 kHz` em `+4 a +10 dB`; à medida que `Volume I → 10`, o efeito do bright cap desaparece (curto-circuito sobre o potenciômetro).
-- **Entradas Low:** `low1` e `low2` reduzem o sinal limpo em **`6,0 ± 0,3 dB`** relativamente a `high1` e `high2` (uma única atenuação, sem pad duplo).
-- **Interação Jumpered:** com `input_jack = "jumpered"`, elevar `Volume II` adiciona corpo em `100–400 Hz` e aumenta a saturação do V2a/LTP (`ΔRMS >= 3 dB` entre `vol2=0` e `vol2=10` com `vol1=2`).
-- **Dinâmica limpa → crunch:** com palhetada leve ou volume da guitarra reduzido em −12 dB, a distorção cai rapidamente (THD < 2% em `Volume I = 3`), passando a crunch aberto com harmônicos pares e ímpares equilibrados quando `Volume I >= 7` (saturação principal no V2b cathode follower, LTP e 4×EL34).
-- **Presence acoplado ao NFB:** eficácia de `Presence` em `4 kHz` reduz-se em `>= 3 dB` quando `nfb = 0` vs `nfb = 10` (Mod Shop).
+- **Ausência total de Master Volume:** o nível de excitação do inversor LTP e das `4×EL34` depende exclusivamente de `Volume I` (`amp_1.gain`) e `Volume II` (`amp_1.volume_2`).
+- **Isolamento do Bright Cap no Canal I:** o bright cap de `0,005 µF` atua **somente** sobre o Canal I (`High I`, `Low I`, e o ramo I do modo `Jumpered`), nunca adicionando brilho agudo artificial ao Canal II (`High II`, `Low II`) quando usado isoladamente!
+- **Atenuação exata das entradas Low:** `low1` e `low2` atenuam o sinal de entrada em **`6,0 ± 0,2 dB`** em relação a `high1` e `high2` (F1 p. 6).
+- **Dependência de impedância no NFB (`Tonal Note 3`):** em `4 Ω`, o amortecimento é menor e a interação com a ressonância do gabinete é mais pronunciada do que em `16 Ω`.
 
 ## 9. Parâmetros e controles
-> Ordem física do painel (da esquerda para a direita, Manual 1959HW F1): `POWER · STANDBY · INDICATOR · PRESENCE · BASS · MIDDLE · TREBLE · VOLUME I · VOLUME II · INPUTS (I-High/Low, II-High/Low)`.
+> Ordem física do painel frontal (Manual 1959HW F1, pp. 4–6, itens 1–13): `1. POWER · 2. STANDBY · 3. INDICATOR · 4. PRESENCE · 5. BASS · 6. MIDDLE · 7. TREBLE · 8. VOLUME I · 9. VOLUME II · 10–13. INPUTS (I High/Low, II High/Low)` + Painel traseiro: `OUTPUT IMPEDANCE SELECTOR (4 / 8 / 16 Ohm)`.
 
-| Nome | Chave estável (`backendKey`) | Tipo | Unidade | Faixa | Padrão | Taper / Escala | Efeito no circuito real | Implementação DSP |
-|---|---|---|---|---|---|---|---|---|
-| Power (Mains) | `amp_1.power` | boolean | bool | `false/true` | `true` | discreto | Liga/desliga alimentação AC | Mute suave `<= 2,5 ms` até `< 1e-6` |
-| Standby | `amp_1.standby` | boolean | bool | `false/true` | `false` | discreto | Corta alta tensão B+ mantendo filamentos | Rampa exponencial `tau` invariante à taxa |
-| Presence | `amp_1.presence` | number | scale | `0.0..=10.0` | `5.0` | log/reverso | Reduz NFB acima de ~2–4 kHz | Filtro na malha NFB escalado por `nfb` |
-| Bass | `amp_1.bass` | number | scale | `0.0..=10.0` | `5.5` | audio 10% log | Braço de graves do FMV 33k/22nF | KCL 5×5 + bilinear `f64` |
-| Middle | `amp_1.middle` | number | scale | `0.0..=10.0` | `5.0` | 10% log (F1) | Braço de médios 22kΩ FMV | KCL 5×5 + bilinear `f64` |
-| Treble | `amp_1.treble` | number | scale | `0.0..=10.0` | `6.0` | híbrido log | Divisor agudo 220kΩ/470pF FMV | KCL 5×5 + bilinear `f64` |
-| Volume I (High Treble) | `amp_1.gain` | number | scale | `0.0..=10.0` | `6.5` | audio log | Ganho Canal I + ação inversa do bright cap 5000pF | Ganho pré-V1b + filtro bright dependente do pot |
-| Volume II (Normal) | `amp_1.volume_2` | number | scale | `0.0..=10.0` | `4.5` | audio log | Ganho Canal II Normal (mais grave/cheio) | Ramo paralelo V1a somado antes de V2a |
-| Input Jack | `amp_1.input_jack` | enum | id | `high1, low1, high2, low2, jumpered` | `high1` | discreto | Seleciona canal, pad −6 dB ou jumper | Roteamento de ramos + pad único `-6.0 dB` |
-| Jumper | `amp_1.jumpered` | boolean | bool | `false/true` | `false` | discreto | Atalho para `input_jack = jumpered` | Habilita soma paralela Canal I + II |
+| Nome | Chave estável (`backendKey`) | Tipo | Unidade | Faixa | Padrão | Taper / Escala | Origem (`Físico` vs `Mod Shop`) | Efeito no circuito real | Implementação DSP |
+|---|---|---|---|---|---|---|---|---|---|
+| Power (Mains) | `amp_1.power` | boolean | bool | `false/true` | `true` | discreto | `Físico` (Item 1) | Liga alimentação AC | Mute suave `<= 2,5 ms` |
+| Standby | `amp_1.standby` | boolean | bool | `false/true` | `false` | discreto | `Físico` (Item 2) | Aplica alta tensão B+ | Rampa exponencial invariante à taxa |
+| Presence | `amp_1.presence` | number | scale | `0.0..=10.0` | `5.0` | log | `Físico` (Item 4) | Reduz NFB em altas frequências | Filtro acoplado ao `eff_nfb` |
+| Bass | `amp_1.bass` | number | scale | `0.0..=10.0` | `5.5` | audio 10% log | `Físico` (Item 5) | Braço de graves FMV `1 MΩ / 22 nF` | KCL 5×5 + bilinear `f64` |
+| Middle | `amp_1.middle` | number | scale | `0.0..=10.0` | `5.0` | **10% log** (F1 p.3) | `Físico` (Item 6) | Braço de médios FMV `22 kΩ` | KCL 5×5 + bilinear `f64` |
+| Treble | `amp_1.treble` | number | scale | `0.0..=10.0` | `6.0` | log | `Físico` (Item 7) | Braço agudo FMV `220 kΩ / 470 pF` | KCL 5×5 + bilinear `f64` |
+| Volume I | `amp_1.gain` | number | scale | `0.0..=10.0` | `6.5` | audio log | `Físico` (Item 8) | Volume do Canal I + bright cap `0,005 µF` | Ganho Canal I + bypass capacitivo inverso |
+| Volume II | `amp_1.volume_2` | number | scale | `0.0..=10.0` | `4.5` | audio log | `Físico` (Item 9) | Volume do Canal II (Normal, escuro/cheio) | Ganho Canal II paralelo sem bright cap |
+| Input Jack | `amp_1.input_jack` | enum | id | `high1, low1, high2, low2, jumpered` | `high1` | discreto | `Físico` (Itens 10–13) | Seleciona canal, pad `-6 dB` ou jumper Fig. 1 | Roteamento V1b/V1a + pad `-6,02 dB` |
+| Jumper | `amp_1.jumpered` | boolean | bool | `false/true` | `false` | discreto | `Físico` (Fig. 1) | Atalho para `input_jack = jumpered` | Habilita soma paralela V1b + V1a |
+| Output Impedance | `amp_1.impedance_ohms` | enum | Ω | `4, 8, 16` | `16` | discreto | `Físico` (Traseiro Item 2) | Altera tensão NFB e fator de amortecimento (F1 p.3) | Escala amortecimento e pico reativo |
 
-*(Controles avançados de chassi — `preamp_tube`, `power_tube`, `rectifier`, `impedance_ohms`, `bias_ma`, `sag`, `nfb`, `xformer_sat`, `preamp_plate_v`, `triode_asym`, `tonestack` — seguem contrato da Spec 077 com defaults nominais do 1959: `12ax7`, `el34`, `diode`, `16 Ω`, `36 mA`, `sag=4.0`, `nfb=6.0`, `xformer_sat=5.0`, `B+_pre=250 V`, `B+_power=460 V`.)*
+*(Controles adicionais de bancada Mod Shop seguem a Spec 077.)*
 
 ## 10. Contratos de integração
-- Implementa `AudioProcessor` (Spec 053) com `module_id = "amp.marshall.1959_super_lead"` e `model_revision = "1968-1969-jmp-sl-a"`.
-- Rejeita `amp_1.master`, `amp_1.cut`, `amp_1.reverb`, `amp_1.spongy` e `amp_1.channel_mode` com `E_VALIDATION:` quando este modelo estiver ativo (sem efeitos ocultos).
-- Recebe `speaker_resonance_hz` do gabinete conectado via `ProcessContext` (Spec 080) sem importar `VirtualCabProcessor`.
+- Implementa `AudioProcessor` (Spec 053) com `module_id = "amp.marshall.1959_super_lead"` e `model_revision = "1969-jmp-sl-a-pre-july"`.
+- Rejeita `amp_1.master`, `amp_1.cut`, `amp_1.reverb`, `amp_1.spongy` e `amp_1.channel_mode` com `E_VALIDATION:` quando este modelo estiver ativo.
 
 ## 11. Arquitetura de implementação
-- **Código atual mapeado:** `crates/ampforge-dsp/src/amp.rs` (linhas 311–324, 816–819, 1230–1268, 1449–1471) e `crates/ampforge-dsp/src/tonestack.rs` (linhas 51–64).
-- **Dívidas identificadas no código atual:**
-  1. Compartilha struct monolítica `WhiteBoxAmpProcessor` e estados `adaa_*` com os outros 4 amplificadores.
-  2. `amp_1.overdrive` existe no `AmpFrontPanel` genérico e ainda atua como trim extra (`amp.rs:1211`), embora o 1959 real não possua controle `Overdrive` — na modularização, o trim deve ficar restrito a `1.0` fixo no modelo 1959 (ou removido do descritor do modelo).
-  3. O filtro de voicing fixo em `amp.rs:816–819` (`peaking 2500 Hz +2.6 dB`, `low_shelf 160 Hz +2.8 dB`) diverge ligeiramente dos ganhos documentados em `docs/amps/voicing-fontes.md` (`2400 Hz +2.5 dB`, `120 Hz +1.5 dB`); alinhar com derivação explícita da rede 470k||470pF e `Ck=330 µF`.
-- **Estrutura alvo:** `crates/ampforge-dsp/src/amps/plexi_1959.rs` (`Marshall1959Plexi`), compondo `TubeTriodeStage`, `CathodeFollowerStage`, `PassiveToneStack`, `PushPullPowerStage` (Specs 077–079).
+- **Código atual mapeado (HEAD `d891389`):** `crates/ampforge-dsp/src/amp.rs` (linhas `311–324, 816–819, 1211, 1230–1268, 1335–1343, 1395–1407, 1449–1471`) e `crates/ampforge-dsp/src/tonestack.rs` (linhas `51–64`).
+- **Problemas e dívidas encontrados no código atual (registrados para correção na implementação):**
+  1. `FACTUAL_ERROR` (**Bright cap vazando para o Canal II** em `amp.rs:1395–1406`): o filtro `bright_state` é aplicado em `s_in` *antes* de calcular `s_ch2_base`, fazendo o bright cap de `0,005 µF` do Canal I afetar indevidamente o Canal II Normal (`High2`/`Low2`).
+  2. `FACTUAL_ERROR` (**Sentido invertido de `impedance_ohms` na Tonal Note 3** em `amp.rs:1335–1340`): o manual oficial 1959HW (p. 3, *Tonal Note 3*) afirma explicitamente que *"the 4 Ohm input will be more loose and more resonant on the low end, while the 16 Ohm input will be tighter and more controlled"*. Porém, `amp.rs:1335–1339` define `imp_factor = match impedance_ohms { 4 => 0.78, 8 => 1.0, _ => 1.24 }`, tornando `16 Ω` *mais* ressonante (`1.24`) e `4 Ω` *menos* ressonante (`0.78`) — o exato oposto do manual!
+  3. `FACTUAL_ERROR` (**Trim fantasma de `overdrive`** em `amp.rs:1211, 1455, 1462`): `amp.panel.overdrive` adiciona até `+18 dB` de ganho pré-V1 embora o Marshall 1959 não possua controle de Overdrive.
+  4. `ARCHITECTURE_CONFLICT` (**Divergência de voicing** em `amp.rs:816–819` vs `docs/amps/voicing-fontes.md`): `amp.rs` usa `2500 Hz +2.6 dB` / `160 Hz +2.8 dB` enquanto `voicing-fontes.md` cita `2400 Hz +2.5 dB` / `120 Hz +1.5 dB`.
 
 ## 12. Estratégia DSP
-- **Circuit-level (nodal/bilinear `f64`):** Tone Stack FMV 33k/470pF/22nF/22nF (`PassiveToneStack` KCL 5×5) e rede de bright cap dependente da posição do potenciômetro `Volume I`.
-- **Behavioral calibrado com memória:** estágios V1a/V1b paralelos, V2a/V2b cathode follower (compressão assimétrica), LTP + 4×EL34 push-pull com ADAA1, saturação LF do transformador Drake (150 Hz), sag dinâmico de fonte de diodo e acoplamento reativo de impedância.
-- **Oversampling:** seletivo (padrão `2x`, selecionável `4x`/`8x`) apenas sobre os estágios não lineares e tone stack (Spec 079).
-- **Simplificações declaradas:** não resolve MNA global de 40+ nós em RT; corrente de grade de bloqueio (blocking distortion) e microfonia de válvulas não são simuladas no nível físico completo nesta revisão.
+- **Circuit-level (`f64`):** Tone Stack FMV (`33 kΩ, 470 pF, 22 nF, 22 nF`, Mid 10% log, `R_src = 1,3 kΩ`) via KCL + transformada bilinear (Spec 078); filtro de bright cap `0,005 µF` dependente de `Volume I` aplicado exclusivamente ao ramo do Canal I; rede de mistura `470 kΩ || 470 pF` (Canal I) + `470 kΩ` (Canal II).
+- **Behavioral calibrado com memória (`f64`):** estágios paralelos V1b (`Rk=2,7k||0,68µF`, acoplamento `2,2nF`) e V1a (`Rk=820Ω||330µF`, acoplamento `22nF`) → V2a (`Rk=820Ω||0,68µF`) + V2b Cathode Follower → LTP + `4×EL34` push-pull com NFB escalado por `1 / √Z_tap` (`4 Ω` menos NFB/mais ressonante que `16 Ω`), sag de ponte de diodos (`50 µF`) e saturação LF do transformador Dagnall C1998.
+- **Oversampling:** seletivo (`2x` padrão, `4x`/`8x` selecionável — Spec 079).
 
 ## 13. Requisitos de tempo real
-- Zero alocação/desalocação heap em `process()` (alocador de contagem = 0).
-- Zero locks, zero I/O, zero panic; todos os coeficientes derivados de `sample_rate` em `44,1 / 48 / 88,2 / 96 kHz`.
+- `alloc_count == 0` e `dealloc_count == 0` em `process()` na thread RT; coeficientes invariantes a `44,1 / 48 / 88,2 / 96 kHz`.
 
 ## 14. Gestão de estado
-- Estado DSP interno isolado por instância (`v1a_state`, `v1b_state`, `v2_state`, `tonestack_z`, `power_state`, `sag_state`, `oversampler_state`), zerado em `reset()`.
-- Troca de amplificador executa a instância antiga e a nova em paralelo por `20 ms` (crossfade equal-power) sem compartilhar registradores ADAA.
+- Estados de V1a, V1b, V2a/b, Tone Stack, LTP/EL34, sag e oversampler isolados na struct `Marshall1959SuperLead`; `reset()` zera registradores em $O(1)$.
 
 ## 15. Latência
-- Dependente exclusivamente do oversampler configurado (Spec 079): `0` amostras em `1x`; latência exata do filtro polifásico/IIR em `2x/4x/8x`, declarada por `latency_samples()`.
+- Igual à latência do oversampler configurado (Spec 079): `4` (`2x`), `8` (`4x`) ou `16` (`8x`) amostras no modo `MinPhaseIir`.
 
 ## 16. Consumo de CPU
-- Orçamento alvo: **`<= 8%`** do deadline de 128 frames @ 48 kHz em `2x` OS e **`<= 20%`** em `8x` OS (build `--release`, CPU x86_64 de referência).
+- Meta (`ENGINEERING_TARGET`): `<= 8,0%` do orçamento de `128` frames @ `48 kHz` em `2x` OS (`--release`).
 
 ## 17. Testes
-- **Sinais:** senoide 100 Hz / 1 kHz / 5 kHz, sweep 20 Hz–20 kHz, multitone (1,9 + 2,0 kHz), burst forte→silêncio, DI real de guitarra com volume em 100%, 50% e 25%.
-- **Métricas:** resposta FMV `±0,5 dB` vs função analítica KCL; atenuação `low1`/`low2` = `-6,0 ± 0,3 dB`; variação bright cap `vol1=2` vs `vol1=9`; efeito `volume_2` em `jumpered`; alias residual `< -60 dBFS` em 4×/8× OS; isolamento completo de `master` herdado de outro amp; derivada de troca `<= 1,5×` em 100 Hz; zero-alloc RT.
-- **Comparação A/B:** quando houver captura de 1959 real via load box + mesmo IR 4×12 Greenback, level-match `±0,1 dB RMS` na mesma DI e sample rate.
+- Sinais determinísticos em `44,1`, `48` e `96 kHz`, `block_size = 128`: senoides `100 Hz`, `250 Hz`, `440 Hz`, `1 kHz`, `4 kHz`, `5 kHz`; sweep `20 Hz–10 kHz`; medição de ganho diferencial, THD, harmônicos, aliasing DFT (janela Hann `16384` amostras) e contagem de alocações RT.
 
 ## 18. Critérios de aceite
-- **CA-1 (Tone Stack FMV 1959):** Com `B=M=T=5` e extremos `0/10`, a curva do tone stack (50 Hz–10 kHz) permanece dentro de `±0,5 dB` da referência analítica KCL (33 kΩ, 470 pF, 22 nF, 22 nF).
-- **CA-2 (4 Entradas e Jumper):** `low1` e `low2` atenuam `6,0 ± 0,3 dB` em relação a `high1` e `high2` em regime linear; em `jumpered` com `gain=2`, variar `volume_2` de `0` para `10` produz `ΔRMS >= 3 dB` e aumento de energia em `100–300 Hz`.
-- **CA-3 (Bright Cap Dinâmico):** Com `gain=2` (Volume I baixo), o ganho relativo em `4 kHz` vs `250 Hz` é `>= 4 dB` maior do que com `gain=9` no Canal I (redução progressiva do bright cap ao abrir o volume).
-- **CA-4 (Ausência de Master Fantasma):** Carregar `plexi_1959` após `jcm800_2203` com `master=10` gera saída idêntica (`erro <= 1e-6`) ao carregamento a partir do estado inicial; enviar `amp_1.master` retorna erro de validação explícito.
-- **CA-5 (Presence acoplado ao NFB):** Variar `presence` `0→10` em `4 kHz` produz diferença `>= 3 dB` maior com `nfb=10` do que com `nfb=0`.
-- **CA-6 (Aliasing e Taxas Múltiplas):** Com senoide `5 kHz` a `-6 dBFS` e `gain=10`, aliasing residual `< -60 dBFS` em `4x`/`8x` OS; resposta do bright cap e tempo de standby (`2,5 ± 0,5 ms`) coincidem em `44,1`, `48` e `96 kHz` (`<= 0,5 dB`).
-- **CA-7 (Erro e Segurança RT):** Entradas `NaN`/`Inf` são sanitizadas para saída finita em `[-1.0, 1.0]`; zero alocações e zero desalocações em `process()`.
-- **CA-8 (Não-regressão):** Testes existentes das Specs 003, 020, 031 e 039 aplicáveis ao `BritPlexi1959` continuam passando.
+- **CA-1 (`ANALYTICAL` — Tone Stack FMV 1959 com Mid 10% Log):** Com sinal de entrada impulso unitário (`x[0] = 1.0`), `sample_rate = 48000 Hz` (`8x` OS = `384 kHz` interno), `block_size = 128`, nas configurações `(B,M,T) ∈ {(5,5,5), (10,0,10), (0,10,0)}`, a magnitude DFT da rede Tone Stack entre `50 Hz` e `10 kHz` permanece dentro de `±0,5 dB` da função de transferência analítica contínua KCL (`R_slope=33 kΩ, C1=470 pF, C2=22 nF, C3=22 nF, R_treble=220 kΩ, R_bass=1 MΩ, R_mid=22 kΩ` com curva 10% log da F1 p. 3; tolerância de `±0,5 dB` derivada do erro máximo de warping bilinear até `10 kHz` a `>= 96 kHz`).
+- **CA-2 (`DOCUMENTED` — 4 Entradas, Pad −6 dB e Modo Jumpered):** Com senoide de `440 Hz` a `-34 dBFS` (`0.02` pico, regime linear), `sample_rate = 48000 Hz`, `block_size = 128`, `gain = 3.0`, `volume_2 = 5.0`, as entradas `low1` e `low2` apresentam nível RMS de saída **`-6,0 ± 0,2 dB`** em relação a `high1` e `high2` (F1 p. 6, Itens 11 e 13); no modo `input_jack = "jumpered"` com `gain = 2.0`, variar `volume_2` de `0.0` para `10.0` eleva o nível RMS de saída em `>= 3,0 dB` (F1 p. 6, Fig. 1).
+- **CA-3 (`DOCUMENTED` — Bright Cap `0,005 µF` Exclusivo do Canal I):** Com senoide em `4 kHz` vs `250 Hz` a `-34 dBFS`, `sample_rate = 48000 Hz`, `block_size = 128`: (a) no Canal I (`input_jack = "high1"`), a razão de ganho `G(4 kHz) - G(250 Hz)` com `gain = 2.0` é **`>= 4,0 dB` maior** do que com `gain = 9.0` (ação do bright cap `0,005 µF` sobre Volume I, F1 p. 5 *Tonal Note 5*); (b) no Canal II puro (`input_jack = "high2"`, `gain = 0.0`), o bright cap do Canal I não afeta o sinal e a resposta em `4 kHz` relative a `250 Hz` é `>= 3,0 dB` mais escura que no Canal I em `gain = 2.0`.
+- **CA-4 (`DOCUMENTED` — Ausência de Master Volume):** Com senoide de `1 kHz` a `-12 dBFS` (`0.2512` pico), `sample_rate = 48000 Hz`, `block_size = 128`, `gain = 7.0`, carregar o modelo `plexi_1959` após `jcm800_2203` configurado com `master = 10.0` ou `master = 1.0` produz saída idêntica (`diferença máxima amostra-a-amostra <= 1e-6`), e enviar `amp_1.master` via `api::dispatch` quando `plexi_1959` está ativo retorna HTTP 400 (`E_VALIDATION:`).
+- **CA-5 (`DOCUMENTED` — NFB na Saída do Falante e Seletor de Impedância `Tonal Note 3`):** Com sweep/senoide na frequência de ressonância do gabinete (`98 Hz`, `-20 dBFS`, `sample_rate = 48000 Hz`, `block_size = 128`, `nfb = 6.0`), selecionar `impedance_ohms = 4` produz pico de ressonância em `98 Hz` **`>= 1,0 dB` maior** (menor fator de amortecimento) do que `impedance_ohms = 16` (F1 p. 3, *Tonal Note 3*), e variar `presence` de `0.0` para `10.0` em `4 kHz` produz diferença `>= 3,0 dB` maior com `nfb = 10.0` do que com `nfb = 0.0`.
+- **CA-6 (`ENGINEERING_TARGET` — Anti-Aliasing e Invariância Multi-Taxa):** Com senoide de `5 kHz` a `-6 dBFS` (`0.5012` pico), `gain = 10.0`, `sample_rate = 48000 Hz`, `block_size = 128`, medida por DFT de `16384` pontos com janela Hann após `4096` amostras de warm-up, toda raia de aliasing não-harmônica na faixa `50 Hz–20 kHz` permanece **`< -60 dBFS`** em `4x` e `8x` OS; a inclinação `G(5 kHz) - G(200 Hz)` em `gain = 2.0` varia `<= 0,5 dB` entre `44,1`, `48` e `96 kHz`.
+- **CA-7 (`ENGINEERING_TARGET` — Segurança RT e Sanitização):** Com `CountingAllocator` ativo na thread RT (`48 kHz`, `block_size = 128`, `100` blocos), `process()` registra `alloc_count == 0` e `dealloc_count == 0`; entradas `NaN`/`±Inf` produzem saída finita.
+- **CA-8 (`REGRESSION` — Não-regressão):** Os testes existentes `contract_031_authentic_amps.rs` e `contract_039_amps_fidelity.rs` aplicáveis ao `BritPlexi1959` continuam passando.
 
 ## 19. Dependências
-- **Obrigatórias:** `Spec 053` → `Spec 077` (estágios valvulados/power/sag) + `Spec 078` (Tone Stack FMV) + `Spec 079` (Oversampling).
+- **Obrigatórias:** `Spec 053`, `Spec 077`, `Spec 078`, `Spec 079`.
 - **Relacionadas / Legadas:** `Specs 003, 020, 031, 039, 047`.
 
 ## 20. Limitações conhecidas
-- Falta medição física de unidade 1959 de 1968–69 com load box reativa para calibração fina da saturação do transformador Drake 1202-119.
-- Blocking distortion severa em condução extrema de grade está simplificada.
+- A curva B-H física do transformador de saída **Dagnall C1998** não possui datasheet primário com parâmetros magnéticos de núcleo; a saturação LF de transformador (`~150 Hz`) permanece como aproximação comportamental calibrada (`INFERENCE`).
 
 ## 21. Riscos técnicos
-- Divergência entre o voicing atual (`amp.rs:816–819`) e `docs/amps/voicing-fontes.md` pode alterar presets existentes se não calibrada com level-matching e testes de não-regressão.
-- Saturação excessiva do V2b/power em `Volume I = 10` + `Volume II = 10` pode exigir ajuste cuidadoso de headroom interno antes do limiter final.
+- Corrigir a direção de `imp_factor` (`4 Ω` mais ressonante que `16 Ω` conforme F1 p. 3 *Tonal Note 3*) e isolar o bright cap do Canal II alterará a resposta de `High2`/`Low2`; verificar todos os testes de regressão da Spec 039 ao implementar.
 
-## 22. Referências e rastreabilidade
-- **Specs anteriores:** `003`, `020`, `031`, `039`.
-- **Documentos locais:** `docs/ui-desktop/fontes/marshall-1959HW-owners-manual.pdf`, `docs/amps/voicing-fontes.md`.
-- **Código atual:** `crates/ampforge-dsp/src/amp.rs`, `crates/ampforge-dsp/src/tonestack.rs`.
-- **Testes existentes / futuros:** `contract_031_authentic_amps.rs`, `contract_039_amps_fidelity.rs`, futuro `contract_054_amp_marshall_1959.rs`.
+## 22. Matriz de rastreabilidade
+| Requisito | Fonte | Spec/CA | Código atual | Teste atual | Status |
+|---|---|---|---|---|---|
+| Tone Stack FMV `33k / 470pF / 22nF / 22nF` com pot Middle `10% log` | F1 (p. 3), F2, F4 | `Spec 054 / CA-1` | `crates/ampforge-dsp/src/tonestack.rs:51–64` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs`, `contract_039_amps_fidelity.rs` | `TESTED` |
+| 4 Entradas (`High/Low` I e II), pad único `-6 dB` e `Jumpered` | F1 (pp. 5–6, Figs. 1–2) | `Spec 054 / CA-2` | `crates/ampforge-dsp/src/amp.rs:1238–1242, 1449–1471` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` (`ca_2`), `contract_039_amps_fidelity.rs` (`test_ca_03`) | `TESTED` |
+| Bright cap `0,005 µF` sobre Volume I e **ausente** no Canal II Normal | F1 (p. 5, *Tonal Note 5*), F2 | `Spec 054 / CA-3` | `crates/ampforge-dsp/src/amp.rs:1395–1406` *(defeito: afeta Canal II)* | Parcial em `contract_039_amps_fidelity.rs`; isolamento Ch II planejado em `contract_054` | `SPECIFIED` |
+| Ausência de Master Volume no 1959 Super Lead | F1 (pp. 2, 4–5) | `Spec 054 / CA-4` | `crates/ampforge-dsp/src/amp.rs:1265–1268`, `crates/sonix-desktop/src/api.rs` | `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs` (`test_ca_03`) | `TESTED` |
+| NFB na saída do falante (`4 Ω` mais ressonante/menos amortecido que `16 Ω`) | F1 (p. 3, *Tonal Note 3*) | `Spec 054 / CA-5` | `crates/ampforge-dsp/src/amp.rs:1335–1340` *(defeito: sentido invertido)* | Planejado: `contract_054_amp_marshall_1959_plexi.rs` | `SPECIFIED` |
+| Transformador de saída Dagnall C1998 (curva B-H física medida) | F1 (p. 3) | `Spec 054 / §5, §20` | `crates/ampforge-dsp/src/amp.rs:1615–1628` (aproximação LF `tanh`) | Sem medição de hardware | `PENDING` |

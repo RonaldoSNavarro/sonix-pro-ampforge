@@ -1,117 +1,268 @@
----
-spec: 077
-titulo: Componente Compartilhado de Estágios Valvulados, Power Amp, Fonte/Sag e Carga Reativa
-status: rascunho
-tipo: componente-compartilhado
-atualizado: 2026-11-19
-dependencias: [053, 079]
----
-# 077 — Componente de Estágios Valvulados, Power Amp, Fonte/Sag e Carga Reativa
+# Spec 077: Componente Compartilhado — Biblioteca de Estágios Valvulados, Power Amp, Fonte/Sag e Carga Reativa
 
-## 1. Identificação e objetivo
-- **Identificador estável (`module_id`):** `component.tubes.stages_power_sag_load`
-- **Revisão (`model_revision`):** `v1-adaa1-koren-sag-xformer`
-- **Categoria:** Biblioteca interna compartilhada de blocos físicos de amplificadores
-- **Objetivo:** Especificar os blocos reutilizáveis que compõem os 5 amplificadores individuais (Specs 054–058) e a bancada **Chassi Aberto / Mod Shop** — estágio de triodo (cátodo comum + cold clipper + cathode follower), inversor de fase LTP, estágio de potência push-pull com bias/crossover e NFB, fonte/retificador com sag dinâmico B+, saturação LF de transformador de saída e acoplamento de carga reativa — garantindo consistência física sem forçar uma topologia única para todos os amps.
+> **Status:** `rascunho`
+> **Criado em:** 2026-11-20
+> **Última atualização:** 2026-11-20 (Rodada Corretiva de Auditoria Documental e Fidelidade)
+> **Domínio:** `dsp-shared` (`componente`)
+> **Identificador canônico:** `component.tube.building_blocks`
+> **Variante / Revisão:** `Biblioteca Parametrizada de 10 Sub-Modelos Físicos Valvulados (Triode, Pentode, CathodeFollower, PhaseInverterLtp, PushPullPowerStage, BiasTopology, PowerSupplyAndRectifier, Sag, OutputTransformer, ReactiveLoadAndNfb)`
+> **Crates / Módulos afetados:** `crates/ampforge-dsp/src/amp.rs`, `crates/ampforge-dsp/src/modshop.rs`, `crates/ampforge-dsp/src/lib.rs`
+> **Specs relacionadas:** [039](039-amplificadores-fidelidade-e-robustez.md), [053](053-arquitetura-dsp-modular-e-contratos-de-processadores.md), [054](054-amp-marshall-1959-super-lead-plexi.md), [055](055-amp-marshall-jcm800-2203.md), [056](056-amp-fender-twin-reverb-ab763.md), [057](057-amp-mesa-boogie-dual-rectifier-rev-f.md), [058](058-amp-vox-ac30-top-boost.md), [079](079-componente-oversampling-polifasico-e-anti-aliasing.md)
 
-## 2. Escopo
-- `TubeTriodeStage` (ADAA1 com assimetria calibrada `kp/kn`, ganho de válvula `12AX7/ECC83/12AT7/12AY7/EF86`, headroom escalado por `preamp_plate_v`, e interface pronta para evolução opcional a modelo Norman Koren / Newton-Raphson `f64` de `precision.rs`).
-- `CathodeFollowerStage` (compressão assimétrica suave na excursão positiva e baixa impedância de saída).
-- `PushPullPowerStage` (LTP + válvulas `EL34/6L6GC/6V6/KT88/EL84`, bias `20–55 mA` com crossover notch em bias frio `< 32 mA` e aquecimento em bias quente, linearização por NFB global, filtros `Presence`/`Depth` modulados pelo NFB).
-- `PowerSupplySag` (retificadores `SolidStateDiode`, `Gz34_5Ar4`, `Dual5U4Gb` com `R_i`, `tau_att`, `tau_rel` e leitura instantânea `current_b_plus_v()`).
-- `OutputTransformerAndLoad` (saturação de núcleo em baixas frequências `~150 Hz` + acoplamento reativo de impedância `4/8/16 Ω` com `speaker_resonance_hz`).
-- Serviços de telemetria real para a bancada CRT (`transfer`, `tonestack`, `impedance`, `waveform` — Spec 047).
+---
+
+## 1. Objetivo
+
+Especificar o contrato técnico, físico, matemático e de verificação da **Biblioteca Compartilhada de Blocos Construtivos Valvulados (`component.tube.building_blocks`)** que abastece todos os amplificadores modulares (`Specs 054–058`) e o `ModShop` (`crates/ampforge-dsp/src/modshop.rs`), **separando rigorosamente os 10 sub-modelos físicos independentes** para evitar que parâmetros de um amplificador (ex.: `EL34` Classe AB Fixed Bias com NFB de um Marshall) contaminem outro amplificador com física incompatível (ex.: `4× EL84` Classe A Cathode Bias sem NFB de um Vox AC30, ou `4× 6L6GC` de alto headroom de um Fender Twin Reverb).
+
+---
+
+## 2. Escopo — Os 10 Sub-Modelos Físicos Separados e Parametrizáveis
+
+Cada sub-modelo possui sua própria struct, estado físico e tabela de parâmetros validados (sem valores globais *hardcoded*):
+
+1. **`TriodeStage` (`12AX7` / `ECC83`, `12AT7`, `12AU7`, `EF86` triode-strapped):** Equação física de placa e condução de grade (*grid current clipping*, *blocking distortion* com capacitor de acoplamento $C_c$, bypass de cátodo $R_k \parallel C_k$, resistor de placa $R_a$, $B+$ dinâmico e capacitância Miller $C_{ga}$).
+2. **`PentodePreampStage` (`EF86`):** Curva de transcondutância e saturação de grade auxiliar (*screen grid*) para pré-amplificadores vintage (extensibilidade AC30/4).
+3. **`CathodeFollowerStage` (`DC-Coupled 12AX7`):** Seguidor de cátodo acoplado diretamente ao ânodo do estágio anterior (Marshall 1959 `V2B`, JCM800 `V2B`, Vox AC30 Top Boost `V2B`), produzindo **compressão assimétrica suave em condução de grade-cátodo** ($v_g > v_k$) e **baixa impedância de saída ($R_{\text{src}} \approx 1,3..2,5\text{ k}\Omega$)** para acionar o Tone Stack passivo (Spec 078).
+4. **`PhaseInverterLtpStage` (*Long-Tailed Pair* / *Cathodyne*):** Inversor de fase diferencial de cauda longa (`12AX7` em Marshall/Vox/Mesa, `12AT7` em Fender Twin AB763) com desbalanceamento de ganho intencional pelos resistores de placa assimétricos (`82 kΩ / 100 kΩ` ou `47 kΩ / 47 kΩ`) e injeção da malha de realimentação negativa (`NFB`) na grade de referência.
+5. **`PushPullPowerStage` (`EL34`, `6L6GC`, `EL84`, `KT88`, `6V6GT`):** Par ou quarteto de saída *push-pull* modelando individualmente os ramos positivo e negativo (saturação de grade de controle, *crossover notch* dependente da polarização, limiar de corte assimétrico e variação de ganho sob queda de $B+$).
+6. **`BiasTopology` (`FixedBias` vs `CathodeBias`):**
+   - `FixedBias`: tensão negativa de grade fixa (Marshall 1959/JCM800, Fender Twin AB763, Mesa Dual Rectifier), classe AB fria/quente ajustável via ModShop (`bias_offset`);
+   - `CathodeBias`: resistor de cátodo comum + capacitor de bypass ($50\text{ }\Omega \parallel 250\text{ }\mu\text{F}$ no Vox AC30, Spec 058), gerando **auto-deslocamento dinâmico de bias (*bias excursion*)** sob sinais fortes!
+7. **`PowerSupplyAndRectifier` (`SolidStateSilicon` vs `Tube5U4G` / `TubeGZ34`):** Resistência interna equivalente da fonte ($R_{\text{PSU}}$) e banco de capacitores de filtragem ($C_{\text{filter}}$) determinando a impedância dinâmica de $B+$ e o *ripple* de `100/120 Hz` sob alta corrente de placa.
+8. **`PowerSupplySag`:** Dinâmica temporal de queda e recuperação da tensão $B+(t)$ ($\tau_{\text{sag,att}} \in [15,\; 60\text{ ms}]$, $\tau_{\text{sag,rel}} \in [80,\; 350\text{ ms}]$), reduzindo proporcionalmente o headroom dos estágios de potência e do inversor de fase (`V_B+(t)`).
+9. **`OutputTransformer` (`Dagnall C1998`, `Drake 1202-119`, `Schumacher`, `Woden`, `Mesa 562003`):** Saturação magnética de núcleo ferromagnético dependente do **fluxo magnético $\Phi(t) = \int v(t)\,dt$** (saturando principalmente em graves profundos de alta potência!), largura de banda primária (`HPF` de indutância de magnetização $L_p$ + `LPF` de indutância de dispersão $L_{\text{leak}}$).
+10. **`ReactiveLoadAndNfb`:** Modelo de impedância complexa de alto-falante real $Z_{\text{spk}}(s)$ (pico de ressonância grave $f_r \in [75,\; 110\text{ Hz}]$ + indutância de bobina móvel $L_e$ subindo acima de `1 kHz`), interagindo diretamente com a impedância de saída das válvulas de potência e com a malha de **Realimentação Negativa (`NFB` + `Presence` + `Resonance/Depth`)** quando `nfb_enabled == true` (e rigorosamente `0,0` quando `nfb_enabled == false`, como no Vox AC30 e no canal Red Modern do Dual Rectifier!).
+
+---
 
 ## 3. Fora de escopo
-- Topologia completa de cada amplificador (cada amp compõe estes blocos à sua maneira nas Specs 054–058).
-- Tone stacks passivos (Spec 078) e oversampling (Spec 079).
 
-## 4. Equipamento ou componente de referência
-- **Válvulas de referência:** `12AX7/ECC83` (`µ=100`), `12AT7` (`µ=60`), `12AY7` (`µ=45`), `EF86` (pentodo); `EL34`, `6L6GC`, `6V6`, `KT88`, `EL84`; retificadoras `GZ34 (5AR4)` e `5U4GB`.
+- Topologias específicas de um amplificador completo (Specs 054–058 consomem e instanciam estes 10 blocos com os parâmetros verificados de cada esquema elétrico).
+- Redes passivas de Tone Stack (cobertas na **[Spec 078](078-componente-redes-passivas-tone-stack.md)**).
+- Convolução de Gabinete IR e Microfones (coberta na **[Spec 080](080-componente-gabinete-convolucao-ir-e-microfonacao.md)**).
 
-## 5. Revisão e variantes
-- **Revisão:** `v1-adaa1-koren-sag-xformer`.
+---
 
-## 6. Fontes técnicas
-| ID | Fonte | Modelo / Revisão | Seção / Página | URL / Caminho | Consulta | Classificação | Dado sustentado |
-|---|---|---|---|---|---|---|---|
-| F1 | Norman Koren — *Improved Vacuum Tube Models for SPICE Simulations* | Triodos/Pentodos | Equações `Ip(Vg, Vp)` | Norman Koren Tubes Page | 2026-11-19 | `[confirmado em documentação]` | Parametrização física de curvas de placa de `12AX7`, `EL34`, `6L6GC`, `EL84` |
-| F2 | J. Parker et al. — *Reducing the Aliasing of Nonlinear Waveshaping Using Continuous-Time Convolution* (DAFx-16) | ADAA 1ª/2ª ordem | Antiderivada e guarda `|dx| < eps` | Proc. DAFx-16 | 2026-11-19 | `[confirmado em documentação]` | Fórmula ADAA1 `(F(x[n]) - F(x[n-1])) / (x[n] - x[n-1])` com fallback no ponto médio |
-| F3 | Datasheets Mullard / RCA (`12AX7`, `EL34`, `6L6GC`, `EL84`, `GZ34`, `5U4GB`) | Válvulas padrão | `µ`, resistência interna, quedas de tensão | Datasheets fabricantes | 2026-11-19 | `[confirmado em documentação]` | Relações de ganho/headroom e queda de retificação `diode < GZ34 < 5U4GB` |
-| F4 | `crates/ampforge-dsp/src/{amp.rs, modshop.rs, precision.rs}` | Workspace v1.0 | `triode_adaa1`, `RectifierType`, `MixedPrecisionSolver` | `crates/ampforge-dsp/src/` | 2026-11-19 | `[confirmado em documentação]` | Implementação existente e parâmetros do Mod Shop |
+## 4. Identificação do equipamento ou componente
 
-## 7. Fundamentação elétrica
-- **Triodo + ADAA1 (`f64`):** `f(u) = u / sqrt(1 + (k·u)²)` com `k_p` (semiciclo positivo) ≠ `k_n` (semiciclo negativo) modelando assimetria de grade/cátodo; antiderivada fechada `F(w) = (sqrt(1 + (k·w)²) - 1) / k²` com expansão de Taylor para `k·w < 1e-4` garantindo estabilidade numérica sem cancelamento `[confirmado em documentação: F2, F4]`.
-- **Bias e Crossover Push-Pull:** bias frio (`20–32 mA`) introduz zona morta próxima ao cruzamento por zero (*crossover notch*, gerando harmônicos ímpares ásperos); bias quente (`40–55 mA`) elimina crossover e antecipa compressão simétrica suave.
-- **NFB e Carga Reativa:** `eff_nfb` lineariza a distorção do power amp (`1 / (1 + 0.115 * eff_nfb)`), modula o ganho dos filtros `Presence`/`Depth` e controla o amortecimento do pico de ressonância do alto-falante (`res_boost_db ∝ (10 - eff_nfb) * imp_factor(4/8/16 Ω)`).
-- **Sag de Fonte B+:** envoltória assimétrica (`tau_att`, `tau_rel`) dependente da resistência interna `R_i` (`diode: 0.15 / 10ms / 20ms`, `gz34: 0.45 / 30ms / 80ms`, `5u4gb: 0.70 / 40ms / 120ms`) modulando dinamicamente a tensão efetiva `B+` do estágio de potência.
-- **Transformador de Saída:** saturação de fluxo em baixas frequências (`LPF 150 Hz` → `tanh` sobre fluxo → perda diferencial LF proporcional a `xformer_sat`).
+| Campo | Valor |
+|---|---|
+| **Tipo** | `componente` (`dsp-shared` / `tube-physics-library`) |
+| **Fabricante de referência** | SONIX PRO // AMPFORGE™ (fundamentado nos modelos físicos de Koren, Cohen-Helie, Yeh e Pakarinen) |
+| **Modelo de referência** | Modular Vacuum Tube & Power Amp Building Blocks (`component.tube.building_blocks`) |
+| **Ano / época / revisão** | 2026 (Revisão Modular v2 — Spec 077) |
+| **Identificador no sistema** | `component.tube.building_blocks` (`crates/ampforge-dsp/src/amp.rs` & `modshop.rs`) |
+| **Papel na cadeia de sinal** | Núcleo de simulação física compartilhado pelas Specs `054` (Plexi), `055` (JCM800), `056` (Twin Reverb), `057` (Dual Rectifier) e `058` (Vox AC30). |
 
-## 8. Comportamento esperado
-- **Troca de válvula de pré sem estalos:** alternar `12AX7 ↔ 12AT7 ↔ 12AY7 ↔ EF86` altera ganho (`1.0 / 0.58 / 0.45 / 1.22`) e joelho com suavização (`~8 ms`) sem cliques (Spec 021 CA-11).
-- **Efeito verificável de cada parâmetro da Bancada (Mod Shop):** `preamp_plate_v` (`180–340 V`), `triode_asym` (`0–0,6`), `bias_ma` (`20–55 mA`), `sag` (`0–10`), `rectifier` (`diode/gz34/5u4gb`), `nfb` (`0–10`), `xformer_sat` (`0–10`) e `impedance_ohms` (`4/8/16 Ω`) produzem variações mensuráveis no sinal e refletidas no osciloscópio CRT real (Spec 047).
+---
 
-## 9. Parâmetros e controles
-| Nome | Chave estável (`backendKey`) | Tipo | Unidade | Faixa | Padrão | Taper / Escala | Efeito físico | Implementação DSP |
-|---|---|---|---|---|---|---|---|---|
-| Válvula Pré | `amp_1.preamp_tube` | enum | id | `12ax7, ecc83, 12at7, 12ay7, ef86` | por amp | discreto | Altera `µ` e joelho | Ganho suavizado + `ef86_knee` |
-| Válvula Potência | `amp_1.power_tube` | enum | id | `el34, 6l6gc, 6v6, kt88, el84_variant` | por amp | discreto | Headroom de potência | `power_tube_headroom` |
-| Retificador | `amp_1.rectifier` | enum | id | `diode, gz34, 5u4gb` | por amp | discreto | `R_i`, ataque/release de sag B+ | Parâmetros de `PowerSupplySag` |
-| Impedância Sec. | `amp_1.impedance_ohms` | enum | Ω | `4, 8, 16` | por amp | discreto | Amortecimento e ressonância | `imp_factor` no pico reativo |
-| Bias de Grade | `amp_1.bias_ma` | number | mA | `20.0..=55.0` | por amp | linear | Frio = crossover notch; Quente = drive | Dip de cruzamento + `bias_warm_drive` |
-| Sag | `amp_1.sag` | number | scale | `0.0..=10.0` | por amp | linear | Profundidade da queda B+ | Escala `target_drop` |
-| NFB | `amp_1.nfb` | number | scale | `0.0..=10.0` | por amp | linear | Linearização, Presence/Depth, damping | Malha de realimentação |
-| Sat. Trafo | `amp_1.xformer_sat` | number | scale | `0.0..=10.0` | por amp | linear | Saturação de núcleo LF (~150 Hz) | Fluxo LF `tanh` |
-| Tensão Placa B+ | `amp_1.preamp_plate_v` | number | V | `180.0..=340.0` | por amp | linear | Headroom dos estágios de pré | `v1_headroom = plate_v / 250` |
-| Assimetria | `amp_1.triode_asym` | number | razão | `0.0..=0.6` | por amp | linear | Harmônicos pares `2f0` | `kp` vs `kn` no ADAA1 |
+## 5. Princípio físico e funcional do circuito real
 
-## 10. Contratos de integração
-- Biblioteca pura dentro de `crates/ampforge-dsp/src/shared/` consumida por composição pelas Specs 054–058; não conhece `AmpModelId` nem detalhes específicos de nenhum amplificador!
+1. **Condução de Grade (*Grid Current*) e *Blocking Distortion* em Triodos `12AX7`:**
+   - Quando a tensão na grade de controle torna-se positiva em relação ao cátodo ($v_{gk} > -0,3\text{ V}$), a grade passa a conduzir corrente através da resistência de parada de grade ($R_g$) carregando o capacitor de acoplamento anterior ($C_c$). O resultado é uma **compressão assimétrica no semiciclo positivo** seguida de um deslocamento negativo temporário do ponto quiescente (*grid bias shift*) que recupera segundo $\tau_{\text{grid}} = R_{\text{grid\_leak}} \cdot C_c$.
+2. **Saturação de Fluxo do Transformador de Saída ($\Phi = \int v\,dt$):**
+   - Ao contrário de um clipper estático $y = \tanh(x)$ (que satura igualmente em `100 Hz` e `4000 Hz`), o núcleo de aço-silício de um transformador de saída satura quando a **densidade de fluxo magnético $B \propto \frac{V}{f}$** excede $B_{\text{sat}} \approx 1,5\text{ T}$. Portanto, um sinal grave de `80 Hz` satura o núcleo do transformador com $10\times$ menos tensão do que um sinal de `800 Hz`, gerando harmônicos ímpares quentes especificamente nos graves pesados (*transformer bloom*)!
+3. **Interação Carga Reativa ($Z_{\text{spk}}(s)$) $\leftrightarrow$ Realimentação Negativa (`NFB`):**
+   - A curva de impedância de um falante `Celestion G12M` ou `Vintage 30` tem um pico de `~45–75 Ω` na ressonância mecânica (`~75–95 Hz`) e sobe indutivamente acima de `1,5 kHz` (`~25–40 Ω` a `5 kHz`).
+   - Em um amplificador valvulado **sem NFB** (Vox AC30, Dual Rectifier Red Modern), a alta impedância de saída dos pentodos/tetrodos transforma diretamente a curva de $Z_{\text{spk}}(s)$ em um reforço pronunciado de graves (`~85 Hz`) e agudos (`> 2 kHz`).
+   - Em um amplificador **com NFB** (Marshall 1959/JCM800, Fender Twin AB763), o fator de realimentação negativa amortiza a impedância de saída, reduzindo esse pico — exceto onde o controle **`Presence`** shunta os agudos da malha de NFB para o terra (devolvendo ganho aberto nos agudos) ou onde **`Resonance/Depth`** shunta os graves da malha de NFB!
 
-## 11. Arquitetura de implementação
-- **Código atual mapeado:** `crates/ampforge-dsp/src/amp.rs` (ADAA1, power stage, sag, xformer), `modshop.rs` (enums e telemetria) e `precision.rs` (`MixedPrecisionSolver`).
-- **Dívidas registradas:**
-  1. `modshop.rs::generate_scope_telemetry()` (linhas 414–478) contém curvas sintéticas legadas (enquanto a produção da Spec 047 já usa dados reais do motor em `api.rs`); remover/deprecar curvas sintéticas para evitar divergência com `amp.rs`.
-  2. `MixedPrecisionSolver` em `precision.rs` ainda não é consumido pelos estágios de válvula em produção (listado em `docs/biblioteca-sem-uso-em-producao.md`); consolidar como utilitário opcional para futuros estágios Koren MNA/Newton-Raphson.
-- **Estrutura alvo:** `crates/ampforge-dsp/src/shared/{tube_stage.rs, power_amp.rs, power_supply.rs}`.
+---
 
-## 12. Estratégia DSP
-- Toda avaliação não linear e estado de memória roda em **`f64`** dentro da taxa oversampled fornecida pela Spec 079; ADAA1 analítico para baixa latência e excelente supressão de aliasing; expansão opcional de estágios selecionados para solver Newton-Raphson amortecido sobre modelo Koren (`<= 6` iterações determinísticas).
+## 6. Fontes técnicas autoritativas
 
-## 13. Requisitos de tempo real
-- Zero alocação/desalocação heap, zero locks, zero panic; todas as constantes temporais (`tau_att`, `tau_rel`, `lf_alpha`, `tube_alpha`) derivadas da taxa efetiva.
+### 6.1. Classificação das fontes
 
-## 14. Gestão de estado
-- Cada sub-bloco (`TubeTriodeStage`, `PushPullPowerStage`, `PowerSupplySag`, `OutputTransformer`) mantém apenas escalares `f64` internos e implementa `reset()`.
+| ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
+|---|---|---|---|---|
+| `F-01` | Norman Koren — *Improved Vacuum-Tube Models for SPICE Simulations* (JAES / Glass Audio, 1996) | Literatura técnica de referência para modelagem fenomenológica de triodos e pentodos (`12AX7`, `EL34`, `6L6GC`, `EL84`) | `ACADEMIC` | Equações físicas $I_p(V_g, V_p)$ com parâmetros calibrados ($\mu, E_x, K_{g1}, K_p, K_{vb}$) por família de válvula. |
+| `F-02` | Jyri Pakarinen & David T. Yeh — *A Review of Digital Techniques for Modeling Vacuum-Tube Guitar Amplifiers* (Computer Music Journal, Vol. 33, No. 2, 2009) | Literatura acadêmica de referência (CCRMA / Helsinki Univ. of Tech.) | `ACADEMIC` | Revisão autoritativa de estágios triodo com condução de grade, seguidor de cátodo acoplado DC, transformador de saída dependente de fluxo, sag de fonte e carga reativa. |
+| `F-03` | Ivan Cohen & Thomas Hélie — *Real-Time Simulation of a Guitar Power Amplifier* (DAFx-10, Graz, 2010) | Literatura acadêmica de referência | `ACADEMIC` | Modelagem de estágio push-pull, inversor LTP, transformador de saída e malha de realimentação negativa com carga reativa. |
+| `F-04` | Mullard / RCA / Philips — *ECC83 (12AX7), EL34, 6L6GC, EL84 Tube Datasheets* | Datasheets oficiais de válvulas (curvas de placa $I_a$ vs $V_a$, fator $\mu$, $g_m$, $r_p$) | `PRIMARY_COMPONENT` | Limites nominais de operação e curvas características de cada válvula. |
 
-## 15. Latência
-- **`0` amostras** intrínsecas (latência total vem do oversampler externo da Spec 079).
+### 6.2. Evidência documental por afirmação técnica
 
-## 16. Consumo de CPU
-- Orçamento alvo: **`< 0,5%`** por `TubeTriodeStage` e **`< 2,5%`** por `PushPullPowerStage + Sag + Transformer` @ 128 frames / 48 kHz em 2× OS (`--release`).
+| Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
+|---|---|---|---|---|---|
+| Condução de grade + deslocamento de bias dinâmico em estágios triodo e seguidor de cátodo acoplado DC | `F-02`, `F-04` | CMJ 2009 / ECC83 | `F-02` §3–4 | `ACADEMIC` / `PRIMARY_COMPONENT` | `CONFIRMED` |
+| Saturação de transformador de saída proporcional ao fluxo magnético $\Phi = \int v\,dt$ (dependente de $1/f$) | `F-02`, `F-03` | CMJ 2009 / DAFx-10 | `F-02` §5.2; `F-03` §3 | `ACADEMIC` | `CONFIRMED` |
+| Interação entre pico ressonante de carga reativa $Z_{\text{spk}}(s)$ e fator de amortecimento da malha NFB / Presence | `F-02`, `F-03` | CMJ 2009 / DAFx-10 | `F-03` §4 | `ACADEMIC` | `CONFIRMED` |
+| Separação física entre `FixedBias` (Marshall/Fender/Mesa) e `CathodeBias` (Vox AC30 com auto-deslocamento de bias) | `F-02`, `F-04` | Datasheets & CMJ 2009 | Specs 054–058 | `ACADEMIC` / `PRIMARY_COMPONENT` | `CONFIRMED` |
 
-## 17. Testes
-- Continuidade e derivada da curva ADAA1 em `dx → 0`; monotonicidade de headroom com `preamp_plate_v`; razão `H2` com `triode_asym = 0` vs `0.4`; crossover distortion com `bias_ma = 20` vs `45`; queda e recuperação de `current_b_plus_v()` para `diode`, `gz34`, `5u4gb`; perda LF em `100 Hz` com `xformer_sat = 10`; zero-alloc RT.
+---
 
-## 18. Critérios de aceite
-- **CA-1 (Estabilidade ADAA1):** Em toda faixa `u ∈ [-100, +100]` e `|dx| ∈ [0, 1e-12..10]`, `triode_adaa1` e `power_adaa1` nunca retornam `NaN`/`Inf` e coincidem com a curva estática no limite `dx → 0` (`erro <= 1e-6`).
-- **CA-2 (Independência dos 10 Controles Mod Shop):** Variar cada um dos 10 parâmetros do chassi de ponta a ponta altera mensuravelmente ganho, THD, razão `H2/H3`, `current_b_plus_v()` ou resposta espectral no sentido físico esperado.
-- **CA-3 (Hierarquia de Sag por Retificador):** Sob o mesmo burst, `sag_drop(5u4gb) > sag_drop(gz34) > sag_drop(diode)` e `t_recover(5u4gb) > t_recover(gz34) > t_recover(diode)`.
-- **CA-4 (Invariância de Taxa e RT Safety):** Tempos de sag, suavização de válvula e frequência de núcleo do transformador coincidem em `±2%` entre `44,1`, `48` e `96 kHz`; zero alocações/desalocações em `process()`.
-- **CA-5 (Não-regressão):** Testes das Specs 004, 021, 031 e 047 continuam verdes.
+## 7. Topologia e arquitetura real do sistema
 
-## 19. Dependências
-- **Obrigatórias:** `Spec 053`, `Spec 079`.
-- **Dependentes:** `Specs 054, 055, 056, 057, 058`.
-- **Relacionadas / Legadas:** `Specs 004, 021, 031, 039, 047`.
+```
+[Preamp Stages: TriodeStage × N (12AX7)] ──► [Optional CathodeFollowerStage] ──► [Tone Stack (Spec 078)]
+                                                                                          │
+                                                                                          ▼
+[NFB Tap + Presence/Depth] ──(if nfb_enabled)──► [PhaseInverterLtpStage] ──► [PushPullPowerStage (EL34/6L6/EL84)]
+                                                        ▲                            ▲         │
+                                                        └──── [PowerSupplyAndRectifier + Sag B+(t)] + [BiasTopology]
+                                                                                               │
+                                                                                               ▼
+                                                                           [OutputTransformer (Flux Saturation)]
+                                                                                               │
+                                                                                               ▼
+                                                                           [ReactiveLoadAndNfb Z_spk(s)] ──► [Cab IR (Spec 080)]
+```
 
-## 20. Limitações conhecidas
-- Blocking distortion por carregamento de capacitor de acoplamento via corrente de grade não está modelada em MNA completo nesta revisão v1.
+### 7.1. Auditoria do código atual e classificação dos achados
 
-## 21. Riscos técnicos
-- Overflow de `cosh(x).ln()` para `|x| > 20` no ADAA do `tanh`: manter a proteção assintótica `|x| - ln(2)` já existente (`amp.rs:1609–1618`).
+O código atual em [`crates/ampforge-dsp/src/amp.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/amp.rs#L1-L1738) e [`crates/ampforge-dsp/src/modshop.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/modshop.rs#L1-L506) apresenta os seguintes achados auditados:
 
-## 22. Referências e rastreabilidade
-- **Specs anteriores:** `004`, `021`, `031`, `039`, `047`.
-- **Código atual:** `crates/ampforge-dsp/src/{amp.rs, modshop.rs, precision.rs}`.
-- **Testes existentes / futuros:** `contract_004_modshop_crt.rs`, `contract_021_workbench_live.rs`, `contract_047_workbench_scope.rs`, futuro `contract_077_tube_power_sag.rs`.
+1. **`MODEL_COUPLING` (`amp.rs:1–1738`):** Os 5 amplificadores atualmente compartilham uma grande struct monolítica `AmpProcessor` com múltiplos `match self.model` internos, em vez de compor instâncias parametrizadas explícitas dos 10 sub-modelos definidos na Seção 2.
+2. **`FACTUAL_ERROR` (`amp.rs` — Transformador de Saída Estático):** A modelagem atual de saturação do transformador de saída não integra o fluxo magnético $\Phi(t) = \int v(t)\,dt$ dependente da frequência ($1/f$), saturando de maneira quase uniforme entre graves e agudos.
+3. **`FACTUAL_ERROR` (`amp.rs` — Seguidor de Cátodo e `BiasTopology`):** A distinção física entre `CathodeBias` (Vox AC30) e `FixedBias` (Marshall/Fender/Mesa) e a compressão específica do seguidor de cátodo acoplado DC ainda não estão isoladas em structs independentes testáveis por contrato.
+
+---
+
+## 8. Controles, parâmetros e mapeamento para a interface
+
+Os 10 sub-modelos são configurados por structs de parâmetros estáticos (específicos de cada modelo de amplificador nas Specs `054–058`) e modulados em tempo real pelos controles de usuário `amp.power_tubes`, `amp.rectifier`, `amp.sag`, `amp.presence`, `amp.depth`, `amp.master`, `amp.standby` e `modshop.*` (`modshop.rs`).
+
+---
+
+## 9. Modelo matemático e algoritmo DSP proposto
+
+1. **`TriodeStage`:** Aproximação analítica calibrada por família de válvula (`12AX7`, `12AT7`) operando dentro do laço de oversampling `8×` (Spec 079), com acoplamento capacitivo de entrada (modelando *grid current clamping* e recuperação $\tau_{\text{grid}}$), filtro de bypass de cátodo ($R_k \parallel C_k$) e escalonamento dinâmico por $B+(t) / B+_{\text{nom}}$.
+2. **`OutputTransformer` Dependente de Fluxo:**
+   - Integração com fuga (*leaky integrator*) para estimar o fluxo magnético $\Phi[n] = \alpha_\Phi \Phi[n-1] + (1 - \alpha_\Phi) \frac{v[n]}{\omega_0}$, aplicando permeabilidade saturante $\mu(\Phi) = \frac{1}{\sqrt{1 + (\Phi / \Phi_{\text{sat}})^2}}$ antes da derivada reconstitutiva. Isso garante que graves profundos (`80 Hz`) saturem o núcleo em amplitude muito menor que médios-agudos (`2 kHz`).
+3. **`ReactiveLoadAndNfb`:**
+   - Biquad de ressonância grave ($f_r \in [75,\; 110\text{ Hz}]$, pico $+5\text{ a }+9\text{ dB}$) + shelf indutivo de bobina móvel (`+4 a +7 dB` acima de `2 kHz`), cuja amplitude efetiva é dividida pelo fator $(1 + \beta_{\text{NFB}}(\omega) \cdot A_{\text{OL}})$ da malha de realimentação negativa. Quando `nfb_enabled == false`, a malha é aberta ($\beta_{\text{NFB}} \equiv 0$) e a interação da carga reativa atua integralmente.
+
+---
+
+## 10. Estratégia de oversampling, anti-aliasing e precisão numérica
+
+- **Oversampling:** Todo estágio não-linear (`TriodeStage`, `CathodeFollowerStage`, `PhaseInverterLtpStage`, `PushPullPowerStage`, `OutputTransformer`) executa dentro do domínio de **`8×` oversampling** (Spec 079) em precisão **`f64`** para os estados de integradores e filtros de acoplamento.
+
+---
+
+## 11. Contrato de tempo real (Zero-Alloc, Lock-Free, WCET)
+
+- Todas as 10 structs são `Copy` ou alocadas estaticamente inline (zero `Vec`, zero `Box`, zero `Mutex`).
+- WCET total de uma cadeia completa de amplificador (`4× Triode + CathodeFollower + ToneStack + LTP + PushPull + Transformer + ReactiveLoad` a `8×` OS) $\le 65\text{ }\mu\text{s}$ por bloco de `128` amostras a `48 kHz`.
+
+---
+
+## 12. Posição e interação na cadeia completa de guitarra
+
+- Provê a camada física comum para `Specs 054–058` e permite ao `ModShop` (`Spec 039`) trocar válvulas (`EL34` / `6L6GC` / `EL84` / `KT88`), retificador (`SS` / `Tube 5U4G`) e nível de `NFB` sem quebrar a modularidade de cada amplificador.
+
+---
+
+## 13. Arquitetura modular e contrato de código Rust
+
+- **Módulo alvo:** `crates/ampforge-dsp/src/tube/` contendo submódulos dedicados:
+  - `triode.rs`, `pentode.rs`, `cathode_follower.rs`, `phase_inverter.rs`, `power_stage.rs`, `bias.rs`, `power_supply.rs`, `output_transformer.rs`, `reactive_load.rs`.
+
+---
+
+## 14. Parâmetros de calibração e invariantes físicas
+
+| Sub-Modelo | Invariante Física Verificável |
+|---|---|
+| `TriodeStage` | Distorção assimétrica (2º harmônico $H_2$ expressivo em médio drive) e queda suave de ganho sob queda de $B+$. |
+| `CathodeFollowerStage` | Ganho linear $< 1,0$ ($\approx 0,92..0,98$) e compressão assimétrica suave apenas no semiciclo de condução de grade-cátodo. |
+| `PowerSupplySag` | Sinais sustentados de alta amplitude derrubam $B+(t)$ segundo $\tau_{\text{att}}$ e recuperam segundo $\tau_{\text{rel}} > \tau_{\text{att}}$ (`Tube` > `SolidState`). |
+| `OutputTransformer` | Saturação magnética em `80 Hz` ocorre em nível de entrada estritamente menor do que em `2000 Hz` ($\text{THD}(80\text{ Hz}) > \text{THD}(2000\text{ Hz})$ na mesma amplitude). |
+| `ReactiveLoadAndNfb` | Com `nfb_enabled = false`, o pico de ressonância grave ($f_r \approx 90\text{ Hz}$) é estritamente maior do que com `nfb_enabled = true`. |
+
+---
+
+## 15. Estratégia de testes, validação e benchmark
+
+1. Testes unitários isolados para cada um dos 10 sub-modelos físicos validando suas invariantes físicas antes mesmo de compor um amplificador completo.
+
+---
+
+## 16. Riscos conhecidos, limitações e decisões de engenharia
+
+- A malha de realimentação negativa global (`NFB`) discretizada com 1 amostra de atraso a $8\times f_s$ (`384 kHz`, atraso de `2,6 µs`) mantém margem de fase superior a `85°` até `20 kHz`, evitando instabilidade de alta frequência desde que o ganho de laço aberto respeite o critério de Nyquist.
+
+---
+
+## 17. Critérios de aceite (CA-01 a CA-05)
+
+- **CA-01 — Saturação Dependente de Fluxo Magnético no `OutputTransformer` (`80 Hz` vs `2000 Hz`) (`DOCUMENTED` / `ANALYTICAL`):**
+  - *Sinal de entrada:* Duas senoides testadas separadamente na mesma amplitude de pico (`-3 dBFS` na entrada do transformador): `80 Hz` e `2000 Hz`.
+  - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$ (`8×` OS = `384 kHz`), bloco de `128` amostras.
+  - *Configuração e parâmetros:* `OutputTransformer` calibrado para núcleo `100 W` (`Dagnall C1998`).
+  - *Método de medição:* Medição de THD por FFT de `16 384` amostras em `80 Hz` vs `2000 Hz`.
+  - *Critério e tolerância:* A THD gerada em `80 Hz` deve ser **pelo menos `2,5×` maior** que a THD gerada em `2000 Hz` sob a mesma amplitude de excitação, comprovando saturação física por fluxo $\Phi = \int v\,dt$ (e não clipper estático independente de frequência).
+  - *Origem da tolerância:* Lei de Faraday $V = N \frac{d\Phi}{dt} \implies \Phi_{\text{pk}} \propto \frac{V_{\text{pk}}}{f}$ (`F-02` §5.2, `F-03`).
+
+- **CA-02 — Dinâmica Diferencial de `PowerSupplySag` (`Tube 5U4G` vs `Solid-State Silicon`) (`DOCUMENTED` / `REGRESSION`):**
+  - *Sinal de entrada:* Burst de senoide `200 Hz` a `0 dBFS` por `300 ms`, seguido de `500 ms` em `-40 dBFS`.
+  - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
+  - *Configuração e parâmetros:* Comparação de `PowerSupplyAndRectifier` configurado como `Tube5U4G` ($R_{\text{PSU}} \approx 180\text{ }\Omega$) vs `SolidStateSilicon` ($R_{\text{PSU}} \approx 25\text{ }\Omega$).
+  - *Método de medição:* Queda percentual máxima de tensão de barramento $\Delta B+ / B+_{\text{nom}}$ durante o burst e tempo de recuperação até `90%` de $B+_{\text{nom}}$.
+  - *Critério e tolerância:* Em `Tube5U4G`, a queda de barramento $\Delta B+$ deve ser **pelo menos `2,5×` maior** (ex.: `12%..22%` de sag) do que em `SolidStateSilicon` (`<= 5%`), recuperando suavemente sem overshoot.
+  - *Origem da tolerância:* Impedância de placa de válvula retificadora `5U4G`/`GZ34` vs diodos silício `1N4007` (`F-02`, `F-04`).
+
+- **CA-03 — Interação `ReactiveLoadAndNfb` (`NFB ON` vs `NFB OFF` + Controle `Presence`) (`DOCUMENTED`):**
+  - *Sinal de entrada:* Varredura senoidal de pequeno sinal (`-30 dBFS`) em `90 Hz` (ressonância do falante), `1000 Hz` e `5000 Hz`.
+  - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
+  - *Configuração e parâmetros:* Comparação de `ReactiveLoadAndNfb` com `nfb_enabled = false` vs `nfb_enabled = true` (`presence = 0.0` e `presence = 1.0`).
+  - *Método de medição:* Ganho em `90 Hz` e `5000 Hz` relativo a `1000 Hz`.
+  - *Critério e tolerância:*
+    1. Desligar a malha NFB (`nfb_enabled = false`) deve elevar o pico de ressonância grave em `90 Hz` em **pelo menos `+2,5 dB`** em relação a `nfb_enabled = true`.
+    2. Com `nfb_enabled = true`, variar `presence` de `0.0` para `1.0` deve elevar o ganho em `5000 Hz` em **pelo menos `+4,0 dB`**, enquanto com `nfb_enabled = false` o controle `presence` do laço de NFB tem efeito `0,0 dB` (inoperante, como no Dual Rectifier Red Modern).
+  - *Origem da tolerância:* Equação de realimentação negativa de potência com carga reativa (`F-03` §4).
+
+- **CA-04 — Distinção Física `CathodeFollowerStage` (Ganho $< 1$ + Compressão Assimétrica) e `CathodeBias` vs `FixedBias` (`DOCUMENTED`):**
+  - *Sinal de entrada:* Senoide `440 Hz` em pequeno sinal (`-40 dBFS`) e em grande sinal (`0 dBFS`).
+  - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
+  - *Método de medição:* Ganho em pequeno sinal do `CathodeFollowerStage` e deslocamento médio DC do ponto de bias em `CathodeBias` sob grande sinal.
+  - *Critério e tolerância:* O `CathodeFollowerStage` deve apresentar ganho linear estritamente **`< 1,0`** (`0,85..0,99`) em pequeno sinal e produzir 2º harmônico mensurável ($H_2 > -28\text{ dB}$ relativo a $H_1$) sob grande sinal; o bloco `CathodeBias` deve produzir compressão por auto-deslocamento de bias maior que `FixedBias`.
+  - *Origem da tolerância:* Física de seguidores de cátodo acoplados DC e polarização por cátodo (`F-02` §3–4).
+
+- **CA-05 — Segurança em Tempo Real (`ENGINEERING_TARGET`):**
+  - *Sinal de entrada:* `10 000` blocos de `128` amostras a `48 kHz` com automação de `sag`, `presence`, `depth`, `master`, `bias`.
+  - *Critério e tolerância:* `0` alocações na heap e `100%` das amostras finitas.
+
+---
+
+## 18. Arquivos, módulos e testes afetados
+
+- `crates/ampforge-dsp/src/amp.rs`, `crates/ampforge-dsp/src/modshop.rs` e futuro diretório `crates/ampforge-dsp/src/tube/`
+- Testes atuais: `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
+
+---
+
+## 19. Critérios de conclusão da Spec
+
+- [x] Biblioteca decomposta rigorosamente nos 10 sub-modelos físicos independentes (`Triode` até `ReactiveLoadAndNfb`).
+- [x] Fontes acadêmicas (`Koren`, `Pakarinen/Yeh`, `Cohen/Hélie`) e datasheets de válvulas (`PRIMARY_COMPONENT`) classificados.
+- [x] Matriz de rastreabilidade preenchida na Seção 22.
+
+---
+
+## 20. Referências
+
+- `[F-01]` Koren, N. (1996). *Improved Vacuum-Tube Models for SPICE Simulations*.
+- `[F-02]` Pakarinen, J., & Yeh, D. T. (2009). *A Review of Digital Techniques for Modeling Vacuum-Tube Guitar Amplifiers*. Computer Music Journal, 33(2), 85–100.
+- `[F-03]` Cohen, I., & Hélie, T. (2010). *Real-Time Simulation of a Guitar Power Amplifier*. Proc. DAFx-10.
+- `[F-04]` Mullard / RCA — *ECC83, EL34, 6L6GC, EL84 Tube Datasheets*.
+
+---
+
+## 21. Histórico de decisões
+
+- **2026-11-20:** Na rodada corretiva, decompôs-se o bloco monolítico valvulado em 10 sub-modelos físicos parametrizáveis por amplificador, exigindo saturação de transformador dependente de fluxo ($\Phi = \int v\,dt$) e desacoplamento explícito entre `FixedBias` e `CathodeBias` e entre `NFB ON` e `NFB OFF`.
+
+---
+
+## 22. Matriz de Rastreabilidade
+
+| Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
+|---|---|---|---|---|---|
+| 10 sub-modelos isolados e parametrizáveis (`Triode` a `ReactiveLoadAndNfb`) | `F-01`–`F-04` | Spec 077 / §2 | `crates/ampforge-dsp/src/amp.rs` (atualmente monolítico em `AmpProcessor`) | `contract_039_amps_fidelity.rs` | `SPECIFIED` |
+| Saturação de `OutputTransformer` dependente de fluxo magnético ($\Phi = \int v\,dt$, `80 Hz` vs `2000 Hz`) | `F-02` §5.2, `F-03` | Spec 077 / `CA-01` | `crates/ampforge-dsp/src/amp.rs` (atualmente usa clipper estático independente de frequência) | Ausente | `SPECIFIED` |
+| `PowerSupplySag` diferencial (`Tube 5U4G` vs `SolidState`) | `F-02`, `F-04` | Spec 077 / `CA-02` | `crates/ampforge-dsp/src/amp.rs` & `modshop.rs` | `contract_039_amps_fidelity.rs` | `TESTED` |
+| `ReactiveLoadAndNfb` acoplado à malha NFB e `Presence` (`NFB ON` vs `OFF`) | `F-03` §4 | Spec 077 / `CA-03` | `crates/ampforge-dsp/src/amp.rs` | `contract_039_amps_fidelity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| `CathodeFollowerStage` (ganho `< 1` + assimetria) e `CathodeBias` vs `FixedBias` | `F-02` §3–4 | Spec 077 / `CA-04` | Parcial em `crates/ampforge-dsp/src/amp.rs` | Ausente | `SPECIFIED` |
+| Segurança zero-alloc em tempo real | Spec 053 | Spec 077 / `CA-05` | `crates/ampforge-dsp/src/amp.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

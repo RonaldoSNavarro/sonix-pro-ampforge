@@ -142,6 +142,21 @@ button{font-family:inherit;cursor:pointer}
 <div class="m-grip" style="flex:1;border-radius:10px;position:relative;box-shadow:0 0 0 1px #000;display:flex;flex-direction:column;padding:8px 16px 14px;box-sizing:border-box;min-width:0">
 <div style="position:absolute;left:0;right:0;bottom:0;height:10px;border-radius:0 0 10px 10px;background:linear-gradient(180deg,#5d6268,#2b2e32)"></div>
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span class="m-lbl" style="font-size:9px">Pedalboard</span><span style="font-size:10px;color:#9aa3ad">PRÉ-AMP</span><span style="flex:1;height:1px;background:#24282d"></span><span style="font-size:10px;color:#9aa3ad">LINHA B / PÓS</span><span style="flex:1;height:1px;background:#24282d"></span></div>
+<div style="position:absolute;right:16px;top:28px;width:352px;height:78px;border-radius:8px;background:linear-gradient(180deg,#1a1d22,#0b0d10);border:1px solid #ff8a3d;box-shadow:0 8px 16px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.12);padding:6px 12px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between">
+  <div style="display:flex;align-items:center;gap:8px">
+    <span style="width:7px;height:7px;border-radius:50%;background:#ff8a3d;box-shadow:0 0 6px #ff8a3d"></span>
+    <span class="m-osw" style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#f1f3f5">AMP 2 · US TWIN (PARALELO)</span>
+    <span style="flex:1"></span>
+    <span class="m-mono" style="font-size:9px;color:#4ee680">LINHA B ATIVA</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:24px;height:24px;border-radius:50%;background:radial-gradient(circle at 36% 30%,#3b3b3b,#0d0d0d);border:1px solid #444"></div><span style="font-size:7px;font-weight:700;color:#c9ced4">GAIN</span></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:24px;height:24px;border-radius:50%;background:radial-gradient(circle at 36% 30%,#3b3b3b,#0d0d0d);border:1px solid #444"></div><span style="font-size:7px;font-weight:700;color:#c9ced4">BASS</span></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:24px;height:24px;border-radius:50%;background:radial-gradient(circle at 36% 30%,#3b3b3b,#0d0d0d);border:1px solid #444"></div><span style="font-size:7px;font-weight:700;color:#c9ced4">MID</span></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:24px;height:24px;border-radius:50%;background:radial-gradient(circle at 36% 30%,#3b3b3b,#0d0d0d);border:1px solid #444"></div><span style="font-size:7px;font-weight:700;color:#c9ced4">TREBLE</span></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px"><div style="width:24px;height:24px;border-radius:50%;background:radial-gradient(circle at 36% 30%,#3b3b3b,#0d0d0d);border:1px solid #444"></div><span style="font-size:7px;font-weight:700;color:#c9ced4">MASTER</span></div>
+  </div>
+</div>
 <div style="flex:1;display:flex;align-items:flex-end;justify-content:center;gap:0;padding-bottom:12px">
 <div style="display:flex;flex-direction:column;align-items:center"><dc-import name="Pedal" model="ns2" vals="{{vals}}" on-set="{{setVal}}" on="{{on.gate}}" on-toggle="{{tg.gate}}" hint-size="104px,184px"></dc-import></div>
 <div class="m-cable" style="width:16px;margin-bottom:150px"></div>

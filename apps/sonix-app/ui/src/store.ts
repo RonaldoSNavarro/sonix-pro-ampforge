@@ -32,7 +32,8 @@ export type BlockId =
   | 'amp2'
   | 'cab2'
   | 'chorus'
-  | 'pitch';
+  | 'pitch'
+  | 'wah';
 
 export interface PresetItem {
   id: string;
@@ -146,6 +147,11 @@ export class AppStore {
   bridgeError: string | null = null;
   deviceDisconnected = false;
   isDraggingKnob = false;
+  bootstrapped = false;
+  reducedMotion =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false;
 
   presets: PresetItem[] = [];
   presetIdx = 0;
@@ -445,52 +451,60 @@ export class AppStore {
       // ignore
     }
 
-    await this.transport.startStreams({
-      onTelemetry: (f: TelemetryFrame) => this.handleTelemetry(f),
-      onTuner: (f: TunerFrame) => this.handleTuner(f),
-      onScope: (f: ScopeFrame) => this.handleScope(f),
-    });
+    try {
+      await this.transport.startStreams({
+        onTelemetry: (f: TelemetryFrame) => this.handleTelemetry(f),
+        onTuner: (f: TunerFrame) => this.handleTuner(f),
+        onScope: (f: ScopeFrame) => this.handleScope(f),
+      });
 
-    const fixture = (
-      globalThis as {
-        __SONIX_048_FIXTURE__?: {
-          setlist?: string;
-          presetId?: string;
-          sceneIdx?: number;
-          telemetry?: Record<string, unknown>;
-          tuner?: Record<string, unknown>;
-          scope?: Record<string, Record<string, unknown>>;
-          calibrationDone?: boolean;
-        };
+      const fixture = (
+        globalThis as {
+          __SONIX_048_FIXTURE__?: {
+            setlist?: string;
+            presetId?: string;
+            sceneIdx?: number;
+            telemetry?: Record<string, unknown>;
+            tuner?: Record<string, unknown>;
+            scope?: Record<string, Record<string, unknown>>;
+            calibrationDone?: boolean;
+          };
+        }
+      ).__SONIX_048_FIXTURE__;
+      if (fixture) {
+        if (fixture.calibrationDone === true) {
+          this.calibrationWizard.phase = 'done';
+        }
+        if (typeof fixture.setlist === 'string') {
+          this.activeSetlist = fixture.setlist;
+        }
+        if (typeof fixture.presetId === 'string') {
+          const idx = this.presets.findIndex((p) => p.id === fixture.presetId);
+          if (idx >= 0) this.presetIdx = idx;
+        }
+        if (typeof fixture.sceneIdx === 'number') {
+          const sc = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'][fixture.sceneIdx];
+          if (sc) this.params['scene.active'] = sc;
+        }
+        if (fixture.telemetry) {
+          this.applyTelemetry(fixture.telemetry);
+        }
+        if (fixture.tuner) {
+          this.handleTuner({ seq: 1, payload: fixture.tuner });
+        }
+        if (fixture.scope && fixture.scope[this.crtMode]) {
+          this.applyScopePayload(this.crtMode, fixture.scope[this.crtMode]);
+        }
       }
-    ).__SONIX_048_FIXTURE__;
-    if (fixture) {
-      if (fixture.calibrationDone === true) {
-        this.calibrationWizard.phase = 'done';
-      }
-      if (typeof fixture.setlist === 'string') {
-        this.activeSetlist = fixture.setlist;
-      }
-      if (typeof fixture.presetId === 'string') {
-        const idx = this.presets.findIndex((p) => p.id === fixture.presetId);
-        if (idx >= 0) this.presetIdx = idx;
-      }
-      if (typeof fixture.sceneIdx === 'number') {
-        const sc = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'][fixture.sceneIdx];
-        if (sc) this.params['scene.active'] = sc;
-      }
-      if (fixture.telemetry) {
-        this.applyTelemetry(fixture.telemetry);
-      }
-      if (fixture.tuner) {
-        this.handleTuner({ seq: 1, payload: fixture.tuner });
-      }
-      if (fixture.scope && fixture.scope[this.crtMode]) {
-        this.applyScopePayload(this.crtMode, fixture.scope[this.crtMode]);
+
+      this.bootstrapped = true;
+      this.emit();
+    } finally {
+      if (!this.bootstrapped) {
+        this.bootstrapped = true;
+        this.emit('status');
       }
     }
-
-    this.emit();
   }
 
   applyTelemetry(p: Record<string, unknown>): void {

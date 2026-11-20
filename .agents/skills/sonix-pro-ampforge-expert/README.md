@@ -1,14 +1,14 @@
 # SONIX PRO // AMPFORGE™ — Expert Skill (`sonix-pro-ampforge-expert`)
 
-Skill especialista de domínio e engenharia para agentes que projetam, especificam, implementam, depuram e validam o **SONIX PRO // AMPFORGE™** — cobrindo amplificadores valvulados, circuitos analógicos, pedais, guitarras/captadores, gabinetes/microfones/IR, DSP avançado, Rust em tempo real e integração desktop com Tauri v2.
+Skill especialista de domínio e engenharia para agentes que projetam, especificam, implementam, depuram, auditam e validam o **SONIX PRO // AMPFORGE™** — cobrindo amplificadores valvulados, circuitos analógicos, pedais, guitarras/captadores, gabinetes/microfones/IR, DSP avançado, Rust em tempo real e integração desktop com Tauri v2.
 
 ## Conteúdo da Skill
 
-- `SKILL.md` — instruções centrais, hierarquia de autoridade, fundamentos de amplificadores/pedais/IR, diretrizes de DSP, Rust, Tauri v2, pesquisa e checklist.
-- `references/architecture-rust-windows.md` — arquitetura efetiva do workspace Rust (`ampforge-dsp`, `sonix-core`, `sonix-desktop`, `sonix-plugin`, `apps/sonix-app`), Tauri v2, `cpal` WASAPI/ASIO, pipeline em tempo real e evolução modular (Spec 053).
-- `references/dsp-engineering.md` — guia técnico de modelagem de circuitos (MNA, WDF, State-Space, ADAA, solvers não lineares), filtros, oversampling, convolução particionada, tempo real e validação objetiva.
+- `SKILL.md` — instruções centrais, hierarquia dual de autoridade (governança vs evidência factual vs implementação), 10 regras inegociáveis de fidelidade documental, fundamentos de amplificadores/pedais/IR e checklist de auditoria.
+- `references/architecture-rust-windows.md` — arquitetura efetiva do workspace Rust (`ampforge-dsp`, `sonix-core`, `sonix-desktop`, `sonix-plugin`, `apps/sonix-app`), Tauri v2, `cpal` WASAPI/ASIO, pipeline em tempo real e mapa modular completo (Specs 053–092).
+- `references/dsp-engineering.md` — guia técnico de modelagem de circuitos (MNA, WDF, State-Space, ADAA, solvers não lineares), filtros, oversampling, convolução particionada, separação thread de controle vs thread RT e validação objetiva.
 - `references/rust-tauri-best-practices.md` — padrões de engenharia Rust para áudio RT e boas práticas de integração desktop Tauri v2 (IPC, `Channel`, `capabilities`, segurança e as 7 regras obrigatórias).
-- `references/engineering-backlog.md` — estado real dos marcos implementados (Specs 001–051), aprovados (Spec 052) e roadmap modular (Specs 053–084).
+- `references/engineering-backlog.md` — estado real dos marcos implementados (Specs 001–052) e roadmap modular auditado (Specs 053–092).
 
 ## Perfil Tecnológico Efetivo do Repositório
 

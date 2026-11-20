@@ -325,6 +325,14 @@
         "alnico_blue_2x12",
         "twin_2x12_open"
       ]
+    },
+    {
+      "key": "wah_1.mode",
+      "options": [
+        "crybaby_gcb95",
+        "clyde_mccoy",
+        "auto_envelope"
+      ]
     }
   ],
   "param_writes": [

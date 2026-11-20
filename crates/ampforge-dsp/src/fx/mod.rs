@@ -8,6 +8,7 @@ pub mod modulation;
 pub mod pitch;
 pub mod delay;
 pub mod reverb;
+pub mod wah;
 
 pub use dynamics::{
     CompressorProcessor, CompressorTopology, GateState, NoiseGateMode, NoiseGateProcessor,
@@ -18,3 +19,4 @@ pub use modulation::{ModModel, ModulationProcessor, NoteDivision};
 pub use pitch::{PitchKey, PitchModel, PitchProcessor, ScaleType};
 pub use delay::{DelayModel, DelayProcessor};
 pub use reverb::{ReverbModel, ReverbProcessor};
+pub use wah::{WahMode, WahProcessor};

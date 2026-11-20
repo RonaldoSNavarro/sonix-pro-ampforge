@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use ampforge_dsp::cab::{MicModel, SpeakerCabModel};
 use ampforge_dsp::fx::drive::DriveModel;
 use ampforge_dsp::fx::eq::EqMode;
+use ampforge_dsp::fx::wah::WahMode;
 use ampforge_dsp::looper::LooperPosition;
 use ampforge_dsp::modshop::{PowerTube, PreampTube, RectifierType, ToneStackTopology};
 use ampforge_dsp::tuner::{split_note_and_octave, TunerPitchResult, TunerProcessor};
@@ -24,6 +25,9 @@ fn default_true() -> bool { true }
 fn default_one() -> f32 { 1.0 }
 fn default_four() -> f32 { 4.0 }
 fn default_five() -> f32 { 5.0 }
+fn default_seven() -> f32 { 7.0 }
+fn default_half() -> f32 { 0.5 }
+fn default_wah_mode() -> String { "crybaby_gcb95".to_string() }
 fn default_forty() -> f32 { 40.0 }
 fn default_fifty() -> f32 { 50.0 }
 fn default_crossover_hz() -> f32 { 650.0 }
@@ -365,6 +369,24 @@ pub struct AppState {
     pub amp_2_enabled: bool,
     #[serde(default = "default_twin", rename = "amp_2.model")]
     pub amp_2_model: String,
+    #[serde(default = "default_five", rename = "amp_2.gain")]
+    pub amp_2_gain: f32,
+    #[serde(default = "default_five", rename = "amp_2.bass")]
+    pub amp_2_bass: f32,
+    #[serde(default = "default_five", rename = "amp_2.middle")]
+    pub amp_2_middle: f32,
+    #[serde(default = "default_five", rename = "amp_2.treble")]
+    pub amp_2_treble: f32,
+    #[serde(default = "default_seven", rename = "amp_2.master")]
+    pub amp_2_master: f32,
+    #[serde(default, rename = "wah_1.enabled")]
+    pub wah_1_enabled: bool,
+    #[serde(default = "default_half", rename = "wah_1.position")]
+    pub wah_1_position: f32,
+    #[serde(default = "default_five", rename = "wah_1.q")]
+    pub wah_1_q: f32,
+    #[serde(default = "default_wah_mode", rename = "wah_1.mode")]
+    pub wah_1_mode: String,
     #[serde(default, rename = "cab_2.enabled")]
     pub cab_2_enabled: bool,
     #[serde(default = "default_alnico", rename = "cab_2.speaker")]
@@ -638,6 +660,15 @@ impl Default for AppState {
             rev_1_spillover: true,
             amp_2_enabled: false,
             amp_2_model: "twin_ab763".to_string(),
+            amp_2_gain: 5.0,
+            amp_2_bass: 5.0,
+            amp_2_middle: 5.0,
+            amp_2_treble: 5.0,
+            amp_2_master: 7.0,
+            wah_1_enabled: false,
+            wah_1_position: 0.5,
+            wah_1_q: 5.0,
+            wah_1_mode: "crybaby_gcb95".to_string(),
             cab_2_enabled: false,
             cab_2_speaker: "alnico_blue_2x12".to_string(),
             cab_2_resonance_hz: 90.0,
@@ -1088,6 +1119,7 @@ pub fn dispatch(
                     amp2_model,
                     cab2_en,
                     cab2_speaker,
+                    wah_en,
                     dag_topo,
                 ) = if let Ok(st) = ctx.app_state.lock() {
                     (
@@ -1108,6 +1140,7 @@ pub fn dispatch(
                         st.amp_2_model.clone(),
                         st.cab_2_enabled,
                         st.cab_2_speaker.clone(),
+                        st.wah_1_enabled,
                         st.dag_topology,
                     )
                 } else {
@@ -1129,6 +1162,7 @@ pub fn dispatch(
                         "twin_ab763".to_string(),
                         false,
                         "alnico_blue_2x12".to_string(),
+                        false,
                         default_dag_topology(),
                     )
                 };
@@ -1137,6 +1171,7 @@ pub fn dispatch(
                     use crate::audio::DagBlockKind::*;
                     match k {
                         Gate => gate_en,
+                        Wah1 => wah_en,
                         Pitch1 => false,
                         Drive => drive_en,
                         Split => split_en,
@@ -1925,6 +1960,19 @@ fn json_kv_to_dsp_updates(k: &str, v: &serde_json::Value, out: &mut Vec<DspParam
         "amp_2.model" => if let Some(s) = v.as_str() {
             if let Some(m) = ampforge_dsp::amp::find_model_by_name(s) {
                 out.push(DspParamUpdate::Amp2Model(m));
+            }
+        },
+        "amp_2.gain" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Amp2Gain(num as f32)); },
+        "amp_2.bass" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Amp2Bass(num as f32)); },
+        "amp_2.middle" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Amp2Middle(num as f32)); },
+        "amp_2.treble" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Amp2Treble(num as f32)); },
+        "amp_2.master" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Amp2Master(num as f32)); },
+        "wah_1.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Wah1Enabled(b)); },
+        "wah_1.position" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Wah1Position(num as f32)); },
+        "wah_1.q" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::Wah1Q(num as f32)); },
+        "wah_1.mode" => if let Some(s) = v.as_str() {
+            if let Some(m) = WahMode::from_str_name(s) {
+                out.push(DspParamUpdate::Wah1Mode(m));
             }
         },
         "cab_2.enabled" => if let Some(b) = v.as_bool() { out.push(DspParamUpdate::Cab2Enabled(b)); },
@@ -2952,7 +3000,7 @@ pub fn handle_post_params(
                             break;
                         }
                     }
-                    "amp_2.enabled" | "cab_2.enabled" => {
+                    "amp_2.enabled" | "cab_2.enabled" | "wah_1.enabled" => {
                         if v.is_boolean() {
                             applied.push(k.clone());
                         } else {
@@ -2970,6 +3018,58 @@ pub fn handle_post_params(
                             }
                         } else {
                             validation_error = Some("amp_2.model deve ser string".to_string());
+                            break;
+                        }
+                    }
+                    "amp_2.gain" | "amp_2.bass" | "amp_2.middle" | "amp_2.treble" | "amp_2.master" => {
+                        if let Some(num) = v.as_f64() {
+                            if (0.0..=10.0).contains(&num) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some(format!("{} fora da faixa 0..10", k));
+                                break;
+                            }
+                        } else {
+                            validation_error = Some(format!("{} deve ser número", k));
+                            break;
+                        }
+                    }
+                    "wah_1.position" => {
+                        if let Some(num) = v.as_f64() {
+                            if (0.0..=1.0).contains(&num) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("wah_1.position fora da faixa 0..1".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("wah_1.position deve ser número".to_string());
+                            break;
+                        }
+                    }
+                    "wah_1.q" => {
+                        if let Some(num) = v.as_f64() {
+                            if (1.0..=10.0).contains(&num) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("wah_1.q fora da faixa 1..10".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("wah_1.q deve ser número".to_string());
+                            break;
+                        }
+                    }
+                    "wah_1.mode" => {
+                        if let Some(s) = v.as_str() {
+                            if WahMode::from_str_name(s).is_some() {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some("wah_1.mode inválido".to_string());
+                                break;
+                            }
+                        } else {
+                            validation_error = Some("wah_1.mode deve ser string".to_string());
                             break;
                         }
                     }
@@ -3395,6 +3495,15 @@ pub fn handle_post_params(
                             "rev_1.spillover" => st.rev_1_spillover = v.as_bool().unwrap(),
                             "amp_2.enabled" => st.amp_2_enabled = v.as_bool().unwrap(),
                             "amp_2.model" => st.amp_2_model = v.as_str().unwrap().to_string(),
+                            "amp_2.gain" => st.amp_2_gain = v.as_f64().unwrap() as f32,
+                            "amp_2.bass" => st.amp_2_bass = v.as_f64().unwrap() as f32,
+                            "amp_2.middle" => st.amp_2_middle = v.as_f64().unwrap() as f32,
+                            "amp_2.treble" => st.amp_2_treble = v.as_f64().unwrap() as f32,
+                            "amp_2.master" => st.amp_2_master = v.as_f64().unwrap() as f32,
+                            "wah_1.enabled" => st.wah_1_enabled = v.as_bool().unwrap(),
+                            "wah_1.position" => st.wah_1_position = v.as_f64().unwrap() as f32,
+                            "wah_1.q" => st.wah_1_q = v.as_f64().unwrap() as f32,
+                            "wah_1.mode" => st.wah_1_mode = v.as_str().unwrap().to_string(),
                             "cab_2.enabled" => st.cab_2_enabled = v.as_bool().unwrap(),
                             "cab_2.speaker" | "cab_2.model" => st.cab_2_speaker = v.as_str().unwrap().to_string(),
                             "cab_2.resonance_hz" => st.cab_2_resonance_hz = v.as_f64().unwrap() as f32,
@@ -4201,6 +4310,15 @@ fn validate_preset_param_kv(k: &str, v: &serde_json::Value) -> Result<(), String
             | "rev_1.spillover"
             | "amp_2.enabled"
             | "amp_2.model"
+            | "amp_2.gain"
+            | "amp_2.bass"
+            | "amp_2.middle"
+            | "amp_2.treble"
+            | "amp_2.master"
+            | "wah_1.enabled"
+            | "wah_1.position"
+            | "wah_1.q"
+            | "wah_1.mode"
             | "cab_2.enabled"
             | "cab_2.speaker"
             | "cab_2.model"
@@ -4385,6 +4503,15 @@ pub fn apply_preset_params_queued(
                 "rev_1.spillover" => if let Some(b) = v.as_bool() { st.rev_1_spillover = b; },
                 "amp_2.enabled" => if let Some(b) = v.as_bool() { st.amp_2_enabled = b; },
                 "amp_2.model" => if let Some(s) = v.as_str() { st.amp_2_model = s.to_string(); },
+                "amp_2.gain" => if let Some(n) = v.as_f64() { st.amp_2_gain = n as f32; },
+                "amp_2.bass" => if let Some(n) = v.as_f64() { st.amp_2_bass = n as f32; },
+                "amp_2.middle" => if let Some(n) = v.as_f64() { st.amp_2_middle = n as f32; },
+                "amp_2.treble" => if let Some(n) = v.as_f64() { st.amp_2_treble = n as f32; },
+                "amp_2.master" => if let Some(n) = v.as_f64() { st.amp_2_master = n as f32; },
+                "wah_1.enabled" => if let Some(b) = v.as_bool() { st.wah_1_enabled = b; },
+                "wah_1.position" => if let Some(n) = v.as_f64() { st.wah_1_position = n as f32; },
+                "wah_1.q" => if let Some(n) = v.as_f64() { st.wah_1_q = n as f32; },
+                "wah_1.mode" => if let Some(s) = v.as_str() { st.wah_1_mode = s.to_string(); },
                 "cab_2.enabled" => if let Some(b) = v.as_bool() { st.cab_2_enabled = b; },
                 "cab_2.speaker" | "cab_2.model" => if let Some(s) = v.as_str() { st.cab_2_speaker = s.to_string(); },
                 "cab_2.resonance_hz" => if let Some(n) = v.as_f64() { st.cab_2_resonance_hz = n as f32; },

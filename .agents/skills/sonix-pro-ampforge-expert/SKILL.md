@@ -16,202 +16,143 @@ Seu papel não é fazer consultoria vaga de timbres. Converta eletrônica de equ
 - selecionar a técnica de modelagem (circuit-level, comportamental, black-box ou híbrida) com melhor equilíbrio entre fidelidade, estabilidade, latência e CPU;
 - especificar parâmetros com unidades físicas, taper, faixas, suavização e testes objetivos;
 - manter o motor DSP puro em Rust, modular, desacoplado de GUI/host e estritamente seguro em tempo real;
-- nunca inventar valores de componentes, revisões de circuito, medições ou números de latência/CPU.
+- consultar obrigatoriamente a documentação original do equipamento antes de criar/alterar qualquer Spec ou módulo;
+- executar uma auditoria pós-implementação confrontando código, Spec e fonte documental.
 
 **Prioridade:** fidelidade elétrica e dinâmica com pragmatismo de engenharia. Complexidade só se justifica quando reproduz um comportamento mensurável relevante sem comprometer a estabilidade em tempo real.
 
 ---
 
-## 2. Hierarquia de Autoridade
+## 2. Hierarquia de Autoridade (Governança vs. Evidência Factual vs. Implementação)
 
-Esta skill é uma referência técnica especializada e **nunca substitui as regras do repositório**. Em caso de conflito, respeite estritamente a ordem:
+Esta skill é uma referência de métodos de engenharia e **nunca substitui as regras do repositório nem as fontes primárias dos equipamentos**. Separe estritamente três dimensões:
 
-1. **`AGENTS.md`** — regras obrigatórias de trabalho, segurança, SDD + TDD estrito, zero-alloc RT e zero controle decorativo.
+### 2.1 Regras e Governança do Projeto
+1. **`AGENTS.md`** — regras obrigatórias de trabalho, segurança, SDD + TDD estrito, zero-alloc RT medido e zero controle decorativo.
 2. **`CLAUDE.md`** — convenções operacionais, comandos e arquitetura vigente do repositório.
-3. **`specs/`** — requisitos oficiais, contratos de comportamento e critérios de aceite (`CA-n`).
-4. **Esta skill (`sonix-pro-ampforge-expert`)** — fundamentos técnicos, métodos de modelagem e boas práticas de DSP, Rust e Tauri v2.
-5. **Código-fonte atual** — implementação efetivamente executada no workspace.
+3. **Regras SDD/TDD e Specs aprovadas (`specs/`)** — contratos de comportamento e critérios de aceite (`CA-n`).
 
-**Regra de conflito:** quando houver divergência entre código, spec, documentação ou esta skill, **registre explicitamente a divergência** e sinalize a decisão que exige confirmação; nunca invente uma resolução silenciosa nem altere decisões de produto apenas para uniformizar texto.
+### 2.2 Referência Factual dos Equipamentos Reais
+1. **Esquemas elétricos oficiais da revisão selecionada (`PRIMARY_OFFICIAL`)** — folha e revisão identificadas.
+2. **Service manuals oficiais (`PRIMARY_OFFICIAL`)** — listas de peças, tensões, calibração e diagramas de placa.
+3. **Manuais de operação oficiais (`PRIMARY_OFFICIAL`)** — controles físicos, funções de painel, modos e especificações publicadas (nota: um manual de usuário comprova painel e controles, mas não comprova sozinho valores internos de circuito).
+4. **Datasheets oficiais de componentes (`PRIMARY_COMPONENT`)** — válvulas, op-amps, BJTs, JFETs, BBDs, falantes e microfones.
+5. **Publicações científicas / acadêmicas (`ACADEMIC`)** e **Medições reproduzíveis (`MEASUREMENT`)**.
+6. **Fontes técnicas secundárias independentes (`SECONDARY_TECHNICAL`)** — análises de circuitos (ex.: Rob Robinette, GEOFEX, ElectroSmash, Kit Rae), claramente classificadas e nunca tratadas como esquema oficial de fábrica.
 
----
+### 2.3 Papel da Spec, da Skill e do Código
+- **Código (`crates/`, `apps/`):** representa apenas o que **existe atualmente** implementado, não necessariamente o comportamento correto ou a fidelidade elétrica desejada.
+- **Spec (`specs/NNN-*.md`):** traduz os requisitos verificados do equipamento físico (ou fundamentação matemática do algoritmo) para contratos de software auditáveis.
+- **Implementação:** deve respeitar simultaneamente os requisitos da Spec e as evidências técnicas das fontes.
+- **Skill (`sonix-pro-ampforge-expert`):** orienta os métodos de engenharia DSP, Rust e Tauri v2, sem substituir as fontes originais.
 
-## 3. Regras Fundamentais de Raciocínio
-
-1. **Pense no sistema completo.** O som resulta da interação entre cordas, captadores, potenciômetros/cabo, impedância de entrada, pedais, estágios de pré, tone stack, loop, inversor de fase, power amp, fonte/sag, transformador de saída, carga reativa, gabinete, microfone/sala e pós-efeitos.
-2. **Não reduza tudo a EQ + waveshaper.** Dois equipamentos com resposta em frequência semelhante reagem de modo distinto a transientes, dinâmica de palhetada, volume da guitarra, impedância, compressão e recuperação após sobrecarga.
-3. **Separe fatos de hipóteses.** Diferencie sempre: (a) dado confirmado em documentação/esquema oficial; (b) dado confirmado por medição; (c) fonte secundária; (d) inferência técnica; (e) aproximação proposta para o DSP; (f) lacuna/desconhecido.
-4. **Respeite revisões e variantes.** Sempre fixe fabricante, modelo, revisão e ano/período (ex.: Marshall 1959 1968–69 vs 1965–67; Dual Rectifier Rev F vs 3ch; Twin Reverb AB763 vs Silverface). Não misture revisões para preencher lacunas.
-5. **Não invente valores.** Ao citar resistores, capacitores, tensões B+, bias ou curvas, indique revisão e fonte. Sem fonte suficiente, declare a lacuna.
-6. **Converta termos subjetivos em hipóteses testáveis.** "Mais quente", "mais presente", "mais aberto", "timbre vintage" ou "ataque melhor" não são critérios de aceite; traduza em resposta em frequência, headroom, THD/IMD, razão par/ímpar, envelope de ataque/release, alias residual e curva de impedância.
-7. **Não afirme equivalência perfeita.** Use "aproxima", "reproduz os principais comportamentos" ou "calibrado dentro de ±X dB", salvo se sustentado por comparação controlada A/B com equipamento de referência.
-8. **Evite falsa precisão.** Não afirme latência, CPU ou atenuação sem medição ou cálculo explícito (régua medida conforme `AGENTS.md`).
-9. **Respeite a stack real do produto.** O workspace real é **Rust 2021** (`crates/ampforge-dsp`, `crates/sonix-core`, `crates/sonix-desktop`, `crates/sonix-plugin` com `nih_plug` VST3/CLAP) + **Tauri v2 (`2.12.x`) + Vite/TypeScript** em `apps/sonix-app/` (sem HTTP/TCP no release; servidor local restrito à feature `dev-http`).
-   - **Nota sobre ASIO:** WASAPI e ASIO são requisitos confirmados de produto no Windows 10/11; na base atual, WASAPI está ativo por padrão (`cpal 0.18.2`) e ASIO está compilável atrás da feature `asio` (`CPAL_ASIO_DIR` + LLVM/Clang), permanecendo com verificação em hardware/SDK/licenciamento pendente (Spec 049 CA-36). Não trate a feature flag como remoção do requisito de produto nem declare ASIO verificado sem hardware real.
-
-Consulte `references/architecture-rust-windows.md` para a arquitetura real em camadas do workspace e `references/engineering-backlog.md` para o estado dos marcos.
+**Regra de conflito:** quando houver divergência entre código, Spec, documentação ou esta skill, **registre explicitamente a divergência** e classifique-a (`FACTUAL_ERROR`, `REVISION_MISMATCH`, `CODE_REFERENCE_STALE`, `ARCHITECTURE_CONFLICT`, `DOCUMENTATION_PENDING`); nunca invente uma decisão silenciosa para ocultá-la.
 
 ---
 
-## 4. Fluxo de Trabalho Técnico
+## 3. Dez Regras Inegociáveis de Especificação e Fidelidade
 
-1. **Diagnosticar o problema:** classificar se a demanda é pesquisa de circuito, especificação modular (SDD), design DSP, arquitetura/IPC, correção de bug/artefato ou validação.
-2. **Fixar alvo e revisão:** equipamento exato, revisão de referência, posição na cadeia, sample rate, block size, layout de canais, orçamento de latência/CPU e objetivo de fidelidade.
-3. **Analisar a causa física:** separar linear vs não linear, instantâneo vs com memória (capacitores, sag, envelope, histerese), resposta em frequência vs transitória, eletrônica vs acústica/microfonação.
-4. **Escolher estratégia de modelagem:**
-   - **Circuit-level (White-Box):** MNA, WDF, State-Space ou discretização nodal exata (ex.: tone stacks KCL + bilinear) quando topologia e interação de controles são determinantes.
-   - **Behavioral / semi-physical:** blocos com semântica física calibrada (curvas de transferência + ADAA, filtros de acoplamento, memória de sag/bias, envelope) quando reduz custo mantendo comportamento dinâmico.
-   - **Black-box / measurement-based:** IRs lineares e capturas medidas para sistemas acústicos/microfonação.
-   - **Hybrid (estratégia padrão do AMPFORGE):** combina nodal/circuit-level nas partes críticas, behavioral calibrado com memória e convolução particionada para gabinetes/IR.
-5. **Especificar e validar:** definir parâmetros, contratos, RT-safety, testes determinísticos (senoide, sweep, impulso, multitone, transientes, DI real) e critérios de aceite objetivos.
+1. **Nunca especificar um equipamento sem identificar fabricante, modelo exato e revisão histórica.**
+2. **Nunca implementar ou especificar com base apenas em descrições genéricas ou comerciais.**
+3. **Não usar valores de componentes (R, C, L, B+, bias) sem fonte identificada ou classificação explícita (`INFERENCE` / `UNKNOWN`).**
+4. **Não misturar circuitos de revisões históricas diferentes** (ex.: Marshall 1959 shared-cathode 1965–67 vs split-cathode 1968–69; Dual Rectifier Rev F 2ch vs 3ch; Boss DS-1 pré-1994 `TA7136AP` vs pós-1994 `BA728N`; MXR Phase 90 Script sem `R28` vs Block com `R28`).
+5. **Não considerar análise secundária (`SECONDARY_TECHNICAL`) ou Spec anterior (`INTERNAL_REFERENCE`) como esquema oficial (`PRIMARY_OFFICIAL`).**
+6. **Não inventar comportamento de componentes** (curvas de cápsulas, transformadores, indutores, válvulas ou diodos).
+7. **Não apresentar meta de engenharia DSP (`ENGINEERING_TARGET`, ex.: aliasing `< -60 dBFS`, orçamento de CPU, THD alvo em nível digital `-12 dBFS`) como característica física extraída do manual do equipamento.**
+8. **Não aprovar implementação ou Spec sem matriz de rastreabilidade e aderência (`Requisito → Fonte → Spec/CA → Código atual → Teste atual → Status`).**
+9. **Não transformar documentação incompleta em certeza técnica:** quando faltar esquema primário (ex.: Klon Centaur resinado, valores divergentes da Rev F do Dual Rectifier), mantenha o requisito marcado como `PENDING` ou `BLOCKED`.
+10. **Não utilizar abstrações ou rotinas genéricas que apaguem diferenças topológicas entre equipamentos** (um mesmo bloco compartilhado não pode forçar Plexi, JCM800, Twin AB763, Dual Rectifier e AC30 Top Boost a usar a mesma topologia ou equação de tone stack).
+
+---
+
+## 4. Fluxo de Trabalho Técnico e Auditoria
+
+1. **Consultar a documentação original antes de qualquer edição:** localizar manuais em `docs/ui-desktop/fontes/`, esquemas por revisão, datasheets e artigos acadêmicos; verificar se cada link responde e contém o documento esperado (página/folha).
+2. **Classificar fontes com taxonomia estrita:** `PRIMARY_OFFICIAL`, `PRIMARY_COMPONENT`, `SECONDARY_TECHNICAL`, `ACADEMIC`, `MEASUREMENT`, `INTERNAL_REFERENCE`, `INFERENCE`, `UNKNOWN`.
+3. **Distinguir equipamento físico de módulo algorítmico:**
+   - Cada equipamento físico com identidade e circuito próprio exige **sua própria Spec** (ex.: MXR M108 separado do EQ Gráfico Mesa 5-Band; Boss CE-2 separado do Tri-Chorus; Tremolo Óptico separado do Tremolo de Bias; DigiTech Whammy separado do DigiTech Drop e do Eventide H3000 MicroPitch).
+   - Processadores que não representam um circuito físico único (ex.: Noise Gate LR4 com histerese, EQ Paramétrico de 8 bandas, Through-Zero Flanger algorítmico, Harmonizer Diatônico) devem ser especificados como **módulos algorítmicos (`tipo: modulo-dsp`)**, fundamentados em literatura matemática (`ACADEMIC`) sem inventar hardware fictício.
+4. **Classificar cada Critério de Aceite (`CA-n`):** `DOCUMENTED`, `MEASURED`, `ANALYTICAL`, `ENGINEERING_TARGET`, `REGRESSION` ou `PENDING`, especificando sinal de entrada, amplitude, frequência, sample rate, block size, parâmetros, método de medição, tolerância e fonte da tolerância.
+5. **Auditoria pós-implementação obrigatória:** confrontar linha a linha o código entregue contra a matriz de rastreabilidade da Spec e a documentação do equipamento.
 
 ---
 
 ## 5. Modelo Mental da Cadeia de Guitarra
 
-Referência de fluxo (não fixa — o grafo 4×12 suporta ramos paralelos, splits e posições alternativas):
+Referência de fluxo (suportando ramos paralelos e splits na matriz DAG 4×12):
 
 `cordas → captadores → potenciômetros/cabo → entrada/impedância/buffer → pedais pré → pré-amplificador → tone stack → loop FX → inversor de fase → estágio de potência + fonte/sag → transformador de saída + carga reativa → gabinete/falante/microfone (ou IR) → pós-efeitos → saída`
 
-- A posição de cada bloco muda drasticamente o comportamento (drive/EQ pré-clipping molda o que satura; pós-clipping molda o espectro final; fuzzes de baixa impedância reagem à carga do captador e mudam atrás de buffers).
-- Mantenha pré-amplificador, inversor/potência, carga reativa, gabinete e microfone conceitualmente separados mesmo quando agrupados em presets.
+- A posição de cada bloco muda drasticamente o comportamento (drive/EQ pré-clipping molda o que satura; pós-clipping molda o espectro final; fuzzes de baixa impedância como o Fuzz Face Ge `Z_in ≈ 5–10 kΩ` carregam diretamente o captador passivo e mudam atrás de buffers).
+- Software não altera a impedância elétrica física da entrada da interface de áudio; modelos matemáticos de carga RLC de captador (`Spec 076`) devem ser claramente distinguidos do hardware físico Hi-Z.
 
 ---
 
 ## 6. Engenharia de Amplificadores Valvulados
 
 ### 6.1 Válvulas e Estágios de Ganho
-- **Pré-amplificação:** `12AX7/ECC83/7025` (alto µ≈100), `12AT7/ECC81` (µ≈60, drivers/PI/reverb), `12AU7/ECC82` (µ≈20), `12AY7` (µ≈45), pentodo `EF86`.
+- **Pré-amplificação:** `12AX7/ECC83/7025` (µ≈100), `12AT7/ECC81` (µ≈60, drivers/PI/reverb), `12AU7/ECC82` (µ≈20), `12AY7` (µ≈45), pentodo `EF86`.
 - **Potência:** `EL84`, `EL34`, `6V6`, `6L6GC/5881`, `KT66`, `KT88`.
-- Nunca reduza uma válvula a um "EQ de timbre". O comportamento depende de ponto de operação (B+, `Rp`, `Rk`, `Ck`), grid stopper/capacitância de Miller, capacitor de acoplamento, bright cap, condução de grade (clipping assimétrico, cold clipper), blocking distortion e cathode follower.
+- O comportamento depende do ponto de operação (B+, `Rp`, `Rk`, `Ck`), grid stopper + capacitância de Miller, acoplamento RC, bright cap dependente do cursor do potenciômetro, condução de grade (clipping assimétrico, cold clipper), blocking distortion e cathode follower.
 
-### 6.2 Tone Stacks
-- Conheça **FMV** (Fender/Marshall/Mesa), **Vox Top Boost** (rede própria de 3ª ordem sem pot de Mid na revisão 1964) e **James/Baxandall**.
-- São redes passivas interativas: os knobs afetam uns aos outros e o taper (10% log, linear, áudio) é parte essencial da resposta.
-- Derive coeficientes a partir da rede R/C da revisão escolhida (análise nodal KCL + transformada bilinear em `f64`, WDF ou SPICE). Nunca substitua por 3 biquads independentes.
+### 6.2 Tone Stacks (Topologias e Equações Distintas — Spec 078)
+- **FMV (Fender / Marshall):** rede passiva de 3ª ordem (Yeh & Smith, DAFx-06), sensível à impedância da fonte (`R_src ≈ 1–2 kΩ` via cathode follower no Marshall vs `R_src ≈ 38 kΩ` via placa de 12AX7 no Fender AB763).
+- **Vox Top Boost (`OS/010` / `OS/056`):** topologia própria de 2 controles (`Treble` e `Bass`, sem `Middle`), onde o braço de graves e agudos interage de forma distinta do FMV — **proibido** usar a matriz FMV com `m_pos = 1.0` como substituto definitivo.
+- **James / Baxandall Passivo:** rede em ponte de dois controles shelving independentes (`Bass` e `Treble`) — **proibido** aproximar pela matriz FMV.
+- **Mesa/Boogie Dual Rectifier:** rede pós-ganho acionada por cathode follower com diferenças documentadas entre canais Orange e Red.
 
-### 6.3 Inversor de Fase, Estágio de Potência, Fonte e Carga Reativa
-- Diferencie **LTP (Long-Tailed Pair)** de **Cathodyne / Split-Load**; **push-pull Classe AB** (fixed bias vs cathode bias) de **Classe A** (confirmar no circuito, não no marketing).
-- Considere crossover distortion (bias frio), saturação de grade, saturação em baixas frequências do transformador de saída, realimentação negativa global (**NFB**) e controles acoplados à malha (**Presence** e **Resonance/Depth**, e ausência real de NFB no AC30 e no Dual Rectifier Modern).
-- **Sag:** queda dinâmica da tensão B+ dependente da impedância interna da retificação (diodo sólido vs `GZ34/5AR4` vs `5U4GB`), banco de capacitores e demanda instantânea de corrente; não é um compressor estático simples.
-- **Carga reativa:** alto-falantes possuem pico de ressonância eletromecânica (~70–120 Hz) e subida indutiva nas altas frequências, interagindo diretamente com a impedância de saída do power amp e com o NFB.
-
-### 6.4 Referências das 5 Famílias Atuais no Projeto
-- **Marshall 1959 Super Lead / Plexi (1968–69):** canais paralelos I (High Treble, bright cap) e II (Normal) com 4 entradas + Jumper, V2a + V2b cathode follower, FMV 33k/470pF/22nF/22nF, LTP + 4×EL34, sem Master Volume.
-- **Marshall JCM800 2203 (1981):** cascata V1a → Pre-Amp → V1b cold clipper (`Rk=10k` sem bypass) → V2a/V2b cathode follower → FMV → Master Volume → LTP + 4×EL34 + NFB Presence.
-- **Fender Twin Reverb AB763 (1963–67):** alto headroom 4×6L6GC fixed-bias, Tone Stack AB763 entre V1a e V1b (`100k/250pF/100nF/47nF`), canais Normal e Vibrato (com Spring Reverb e Tremolo por bias/opto).
-- **Mesa/Boogie Dual Rectifier Rev F (1992):** pré high-gain em cascata (até 4 estágios), modos Clean/Pushed/Vintage/Modern (NFB desconectado em Modern), chave Rectifier (`Diode` vs `Dual 5U4GB`) e Variac (`Bold` vs `Spongy`).
-- **Vox AC30/6 Top Boost (1964):** canais Normal e Top Boost (rede tonal própria + cathode follower), ausência de NFB global, **Tone Cut** pós-LTP antes das 4×EL84 cathode-biased + retificação GZ34.
+### 6.3 Inversor de Fase, Potência, Fonte e Carga Reativa (Spec 077)
+- Diferencie **LTP (Long-Tailed Pair)** de **Cathodyne**; **fixed-bias** (1959, 2203, Twin AB763, Dual Rectifier) de **cathode-bias** (`50 Ω` compartilhado nas 4×EL84 do AC30/6).
+- **NFB e Presence / Tone Cut:**
+  - No Marshall 1959 (rev. 1969 SL/A), o NFB vem da saída do alto-falante (amortecimento dependente da chave 4/8/16 Ω — Manual 1959HW p. 3 Tonal Note 3).
+  - No Fender Twin AB763, não existem knobs `Presence` nem `Depth`.
+  - No Vox AC30/6 1964, **não há NFB global (`nfb = 0`)** e o controle agudo pós-LTP é o **Tone Cut** (shunt RC entre os dois braços do inversor); não existem `Master Volume`, `Middle`, `Presence` nem `Depth` na revisão de 1964.
+  - No Mesa Dual Rectifier Rev F, o modo `Modern` desconecta o loop de NFB global (`eff_nfb = 0`), mas o knob `Presence` continua ativo como rede de contorno pós-tonestack/pré-PI fora da malha NFB.
+- **Transformadores de referência (conferidos em fonte primária):** no Marshall 1959 Super Lead 100W (1967–69 / 1959HW Manual p. 3), o transformador de saída é o **Dagnall C1998** e o transformador de força (mains) é o **Drake 1203-80** (não confundir com o Drake 1202-119 de 50W).
 
 ---
 
-## 7. Engenharia de Pedais, Efeitos, Guitarras e Gabinetes/IR
+## 7. Engenharia de Pedais, Racks, Efeitos e Gabinetes/IR
 
-### 7.1 Pedais de Ganho e Dinâmica
-- Diferencie **Boost**, **Overdrive**, **Distortion** e **Fuzz** pela topologia, não pelo nível de ganho.
-- Cada modelo real exige identidade própria (jamais waveshaper genérico):
-  - **Ibanez TS808:** estágio não-inversor JRC4558D, diodos simétricos em realimentação, HPF ~720 Hz (`4.7kΩ + 47nF`) na malha de ganho preservando caminho limpo unitário, controle Tone ativo/passivo.
-  - **Klon Centaur:** charge pump interno (~18 V/+27 Vpp headroom), potenciômetro duplo de Gain (clean blend + diodos Ge `1N34A`), médio ~1 kHz e Treble shelving ativo.
-  - **ProCo RAT:** op-amp LM308 (slew-rate ~0.3 V/µs), filtragem pré-clipping seletiva, hard clipping para terra e **Filter** passivo de 1ª ordem **invertido** (horário escurece).
-  - **EHX Big Muff Pi:** 4 estágios BJT em cascata (2 com diodos de clipping) + tone stack passivo LP/HP gerando notch profundo de médios + estágio de recuperação.
-  - **Dallas Arbiter Fuzz Face (Ge):** 2 transistores PNP acoplados (ex.: AC128/NKT275) com realimentação global, **baixa impedância de entrada** (alta interação com captador e volume da guitarra) e bias sensível.
-  - **Boss DS-1:** pré-ênfase HPF, op-amp + hard clipping assimétrico e tone stack passivo estilo V-curve.
-- **Dinâmica:** Noise Gate com histerese, hold, range e sidechain LR4 (DI limpa no modo Natural); Compressor FET 1176LN (attack 20–800 µs e release 50–1100 ms invertidos 1→7, modo All-Buttons-In monotônico sem DC).
-
-### 7.2 Modulação, Tempo, Pitch e Wah
-- **Chorus BBD (Boss CE-2 / Tri-Chorus):** linha modulada + roll-off HF de BBD (`MN3007/MN3101`), 1 ou 3 vozes.
-- **Flanger Through-Zero:** atraso curto modulado (0.3–3.3 ms) com realimentação gerando picos/vales comb.
-- **Phaser (MXR Phase 90):** 4 estágios all-pass de 1ª ordem modulados por JFETs (`N/2 = 2` notches) com feedback.
-- **Uni-Vibe (Shin-Ei):** 4 estágios all-pass escalonados + LFO assimétrico de fotocélula + AM sutil.
-- **Tremolo:** modulação pura de amplitude (zero delay line); **Rotary (Leslie 147):** efeito Doppler + AM de corneta + dispersão HF.
-- **Tape Echo (Roland RE-201):** 3 cabeças, 12 modos (1–4 fita, 5–11 fita+mola, 12 só mola), EQ Bass/Treble apenas no wet, glide suave de velocidade, saturação e wow/flutter.
-- **Reverb:** mola com dispersão all-pass (chirp/tensão), plate/hall/chamber densos (comb + difusores all-pass/FDN), shimmer (+12 st real no feedback).
-- **Pitch / Wah:** transposição granular com alinhamento de fase / harmonizador diatônico; Wah com filtro ressonante tipo indutor 500 mH (Spec 052).
-
-### 7.3 Guitarras e Captadores
-- Avalie indutância, capacitância parasita, resistência DC, carga do cabo e impedância de entrada do próximo bloco (passivo ≠ ativo). Não reaplique simulação de captador sobre DI já gravada sem explicitar.
-
-### 7.4 Gabinetes, Microfones e Impulse Responses (IR)
-- Uma IR captura a resposta **LTI** (falante + caixa + microfone + posição + sala/pré da captura). **Não captura sozinha** clipping de pré/power, sag ou interação dinâmica não linear de impedância.
-- Requisitos: convolução particionada zero-latency (cabeça FIR direta + partições FFT Overlap-Add), validação estrita de WAV (formato, taxa, duração, NaN/Inf), resampling sinc fora do callback, troca sem cliques e aposentadoria de IR fora da thread de áudio (`RetiredReaper`).
-- Considere posição no cone (cap→edge), distância (proximidade + atraso acústico ~29 µs/cm), eixo (0°/45°), polaridade e curvas de cápsulas (`SM57`, `MD421`, `M88`, `R121`, `M160`, `U87`, `C414`).
+- **Drives e Fuzzes (Specs 059–064):**
+  - *Ibanez TS808 (059):* op-amp JRC4558D não-inversor, diodos em realimentação + HPF `4.7 kΩ + 47 nF` (`720.5 Hz`) preservando caminho limpo unitário (`V_out = V_in + V_clip`), Tone ativo `20 kΩ` W-taper.
+  - *Klon Centaur (060):* charge pump `+18 V / -9 V`, pot duplo `Gain` (clean blend + hard clip Ge `1N34A` com alinhamento de fase obrigatório entre ramo limpo e ramo oversampled), `Treble` ativo.
+  - *ProCo RAT (061):* revisão `1984–1988 LM308N` (`30 pF` comp → slew rate `~0.3 V/µs`), dupla malha RC pré-clipping (`1539 Hz` e `60 Hz`), hard clip `1N914`, `Filter` passivo 1ª ordem invertido (`1.5 kΩ + 100 kΩ + 3.3 nF`).
+  - *EHX Big Muff Pi (062):* revisão `V3 / NYC` (4× BJT `2N5088`, 2 estágios clippers com `1N914` + `470 pF` em realimentação, tone stack passivo `39 kΩ/10 nF` LP + `22 kΩ/4 nF` HP gerando notch em `~800–1000 Hz`, 4º estágio de recuperação).
+  - *Dallas Arbiter Fuzz Face Ge (063):* 2× PNP Ge acoplados com realimentação global (`Z_in ≈ 5–10 kΩ`), diferenciando explicitamente `NKT275` (1966–67, menor fuga, limpeza gradual) de `AC128` (maior fuga térmica); apenas controles `Fuzz`, `Volume` e trim `Bias` (sem knob `Tone` no original).
+  - *Boss DS-1 (064):* separar estritamente a revisão original `1978–1993 MIJ (Toshiba TA7136AP SIP)` da revisão `1994+ DS-1A (Rohm BA728N / Mitsubishi M5223AL dual op-amp)`.
+- **Dinâmica e Equalização (Specs 065–067, 085–086):**
+  - *Noise Gate LR4 (065):* módulo algorítmico (`module.dynamics.noise_gate_lr4`), sem atribuir topologia elétrica única ao Boss NS-2 e ISP Decimator.
+  - *UREI 1176LN (066):* Rev D/E Blackface, atenuador JFET em realimentação, Attack `20–800 µs` e Release `50–1100 ms` invertidos (`1→7`), All-Buttons-In monotônico.
+  - *Equalizadores separados:* MXR M108 10-Band (`067`), Mesa/Boogie Mark 5-Band Graphic (`085`) e Módulo Paramétrico de 8 Bandas (`086`).
+- **Tempo, Modulação e Pitch (Specs 068–075, 081–082, 087–091):**
+  - *Roland RE-201 (068):* tabela oficial de 12 modos do manual (Modos 1–4 só eco: H1, H2, H3, H2+H3; Modos 5–11 eco+mola: 5=H1+Rev, 6=H2+Rev, 7=H3+Rev, 8=H1+H2+Rev, 9=H2+H3+Rev, 10=H1+H3+Rev, 11=H1+H2+H3+Rev; Modo 12: Reverb Only).
+  - *Boss CE-2 (069)* separado do *Stereo Tri-Chorus (087)*.
+  - *Through-Zero Flanger (070):* módulo algorítmico com atraso de referência no dry para cruzamento zero real.
+  - *MXR Phase 90 (071):* separar `1974 Script Logo` (sem resistor `R28`, feedback = 0, knob único `Speed`) de `1977+ Block Logo` (com `R28`).
+  - *Shin-Ei Uni-Vibe (072):* 4 estágios com capacitores escalonados reais do esquema (`15 nF`, `220 nF`, `470 pF`, `4.7 nF`) + inércia assimétrica lâmpada/CdS.
+  - *Tremolo Óptico (073)* separado do *Tremolo por Modulação de Bias (088)*.
+  - *Leslie 147 (074):* crossover `800 Hz` separando rotor de graves (`drum`) e corneta (`horn`), velocidades Chorale/Tremolo com inércias mecânicas distintas, Doppler + AM em quadratura.
+  - *Pitch separado em 4 Specs:* DigiTech Whammy (`075`), DigiTech Drop (`089`), Módulo Harmonizer Diatônico (`090`) e Eventide H3000 MicroPitch (`091`).
+  - *Afinador YIN/Polifônico (083)* separado do *Looper de Performance (092)*.
 
 ---
 
-## 8. Engenharia DSP Avançada e Tempo Real
+## 8. Engenharia DSP Avançada, Rust e Tauri v2
 
-> Guia completo em `references/dsp-engineering.md`.
-
-- **Modelagem de circuitos:** escolha caso a caso entre **MNA**, **WDF**, **State-Space**, **ADAA (1ª/2ª ordem)** e **solvers Newton-Raphson com amortecimento e limite de iterações**, considerando topologia, estabilidade, memória dinâmica e orçamento de CPU.
-- **Qualidade numérica:** filtros IIR/biquads críticos (especialmente < 100 Hz e tone stacks) em `f64` (TDF-II); proteção contra denormals, DC offset e `NaN/Inf`; coeficientes sempre derivados da `sample_rate` ativa; oversampling seletivo (`HalfBandOversampler` polifásico ou filtros Chebyshev/Butterworth validados) apenas onde há não linearidade que gera aliasing.
-- **Tempo real (obrigatório e inegociável):**
-  - **Zero heap allocation e zero deallocation** no callback de áudio (verificado por alocador global de contagem na thread RT).
-  - **Zero lock bloqueante (`Mutex`/`RwLock`), zero I/O, zero logging síncrono, zero panic.**
-  - Preparação de buffers, IRs, tabelas e grafos **fora** do caminho crítico; comunicação via SPSC lock-free (`SpscBuffer`, `SpscOwnedQueue`) e liberação de recursos antigos em thread não-RT (`RetiredReaper`).
-  - Suavização de parâmetros (`OnePoleSmoother`), bypass e troca de modelo/cena com crossfade sem estalos, latência declarada e compensada.
+Consulte os guias detalhados em `references/`:
+- `references/architecture-rust-windows.md` — arquitetura real do workspace Rust + Tauri v2 (`2.12.5`) + `cpal 0.18.2` (WASAPI/ASIO) + `nih_plug` (VST3/CLAP) e mapa das Specs `053–092`.
+- `references/dsp-engineering.md` — MNA, WDF, State-Space, ADAA, biquads/SVF `f64`, oversampling, convolução zero-latency, separação thread de controle vs thread RT e protocolo de validação.
+- `references/rust-tauri-best-practices.md` — boas práticas de Rust em tempo real e as 7 regras obrigatórias de Tauri v2.
+- `references/engineering-backlog.md` — estado dos marcos (Specs 001–052) e arquitetura modular (Specs 053–092).
 
 ---
 
-## 9. Boas Práticas de Engenharia em Rust
+## 9. Checklist Rápido Antes de Concluir Qualquer Spec ou Código
 
-> Guia completo em `references/rust-tauri-best-practices.md`.
-
-- **Ownership e estado por instância:** nenhum estado global mutável para DSP; todo estado pertence à instância do processador.
-- **Contratos explícitos e tipos fortes:** traits enxutos onde reduzem acoplamento (`AudioProcessor`, `ModelDescriptor`), newtypes/unidades explícitas (`SampleRate`, dB vs linear, Hz, ms, Ohms) e `enum` para estados discretos — nunca strings soltas espalhadas no caminho crítico.
-- **Erros e ausência de panic:** `Result<T, E>` com `thiserror` na fronteira; **proibido** `unwrap()`, `expect()` ou indexação não verificada em caminhos operacionais/RT.
-- **Concorrência e `unsafe`:** atomics com `Ordering` justificado e filas SPSC encapsuladas; `unsafe` apenas quando estritamente inevitável, mínimo, isolado e documentado com invariante `// SAFETY:`.
-- **Qualidade e dependências:** `cargo test --workspace`, `cargo clippy`, `rustfmt`, testes unitários, de contrato (`CA-n`), propriedades e benchmarks Criterion; não adicionar crates sem justificativa técnica e revisão de licença (`CC-BY-NC-4.0` no workspace).
-
----
-
-## 10. Boas Práticas de Integração Desktop (Tauri v2)
-
-> Guia completo em `references/rust-tauri-best-practices.md` (baseado em Tauri v2 `2.12.x`).
-
-**Sete regras fundamentais obrigatórias:**
-1. **Comandos Tauri nunca executam DSP** — apenas validam e delegam a serviços (`api::dispatch` / camada de controle).
-2. **A interface não acessa nem muta diretamente o motor de áudio** — todo controle passa pelo registro único (`controls.registry.ts`) e fronteira IPC (`transport.ts` + `ParamCoalescer`).
-3. **Validação estrita na fronteira IPC** — distinguir rejeição de validação (`E_VALIDATION:`) e erro de motor (`E_ENGINE:`) de queda de transporte IPC; validar caminhos/arquivos e formatos.
-4. **Operações pesadas nunca bloqueiam a UI** — carregamento de IR, resampling, calibração e reconfiguração de dispositivo rodam fora do caminho crítico da UI e com rollback atômico se falharem.
-5. **Telemetria em taxa controlada via `tauri::ipc::Channel`** — ~30 Hz com janela visível e 0 Hz quando minimizada (`streams.rs`); jamais enviar amostras individuais de áudio por IPC.
-6. **Princípio do menor privilégio** — capacidades explícitas em `src-tauri/capabilities/main.json` + CSP restritivo em `tauri.conf.json`; release compilado com `custom-protocol` e sem HTTP/TCP.
-7. **Sem estado otimista inconsistente** — falha de comando não pode deixar a UI exibindo um estado rejeitado pelo backend.
-
----
-
-## 11. Segurança Elétrica e Pesquisa Técnica
-
-### Segurança Elétrica
-Amplificadores valvulados possuem tensões letais mesmo desligados (capacitores de filtro carregados) e exigem carga compatível (gabinete ou load box) na saída de potência. Nunca oriente intervenções internas improvisadas nem ligar saída de alto-falante diretamente a entrada de linha/instrumento.
-
-### Hierarquia de Fontes e Rastreabilidade
-1. Manuais oficiais e service manuals dos fabricantes (incl. `docs/ui-desktop/fontes/`).
-2. Esquemas elétricos oficiais ou tecnicamente consolidados por revisão.
-3. Datasheets de válvulas, semicondutores, falantes e microfones.
-4. Artigos acadêmicos (DAFx, AES, IEEE, CCRMA/Stanford).
-5. Textos técnicos de engenharia de amplificadores e medições independentes reproduzíveis.
-6. Fóruns/comunidades apenas como complemento, nunca fonte única.
-
-Para cada dado técnico relevante em specs, registre fonte, modelo/revisão, seção/página, URL (se houver), data da consulta e classificação de certeza (confirmado em documentação / medição / fonte secundária / inferência / aproximação DSP / desconhecido).
-
----
-
-## 12. Referências desta Skill
-
-- `README.md` — visão geral, caminho de instalação e mapa de arquivos da skill.
-- `references/architecture-rust-windows.md` — arquitetura real do workspace Rust + Tauri v2 + `cpal` WASAPI/ASIO + `nih_plug` VST3/CLAP.
-- `references/dsp-engineering.md` — métodos de modelagem (MNA, WDF, State-Space, ADAA), filtros, oversampling, convolução, RT-safety e métricas objetivas.
-- `references/rust-tauri-best-practices.md` — padrões de engenharia Rust para áudio em tempo real e arquitetura Tauri v2.
-- `references/engineering-backlog.md` — estado atual das entregas (Specs 001–052) e roadmap modular (Specs 053+).
-
----
-
-## 13. Checklist Rápido Antes de Concluir
-
-- [ ] Conferi a hierarquia de autoridade (`AGENTS.md` → `CLAUDE.md` → `specs/` → skill → código)?
-- [ ] Identifiquei fabricante, modelo, revisão exata e fontes verificáveis?
-- [ ] Separei fatos confirmados de aproximações DSP e lacunas desconhecidas?
-- [ ] Analisei interação de estágios, impedâncias e memória dinâmica (não apenas EQ/waveshaper)?
-- [ ] Garanti zero-alloc, zero-lock, zero-panic e sample-rate invariance no caminho RT?
-- [ ] Respeitei o desacoplamento DSP ↔ Tauri v2 e o registro único de controles?
-- [ ] Defini critérios de aceite objetivos e mensuráveis (sem adjetivos vagos)?
+- [ ] Consultei a documentação original e verifiquei se todos os links diretos respondem e sustentam a revisão citada?
+- [ ] Classifiquei todas as fontes com os 8 tokens oficiais (`PRIMARY_OFFICIAL` .. `UNKNOWN`) e incluí tabela de evidência por afirmação?
+- [ ] Separei equipamentos físicos distintos em Specs próprias e classifiquei algoritmos genéricos como `modulo-dsp`?
+- [ ] Classifiquei todos os `CA-n` com os 6 tokens oficiais (`DOCUMENTED` .. `PENDING`) e separei `ENGINEERING_TARGET` de características físicas?
+- [ ] Especifiquei condições completas em cada CA numérico (sinal, amplitude, frequência, sample rate, block size, parâmetros, método, tolerância e fonte)?
+- [ ] Incluí a Matriz de Rastreabilidade completa com os 7 status oficiais (`CONFIRMED` .. `BLOCKED`) e mantive bloqueados os requisitos sem fonte suficiente?

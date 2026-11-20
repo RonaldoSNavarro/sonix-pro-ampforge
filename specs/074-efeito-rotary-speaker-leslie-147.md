@@ -1,101 +1,277 @@
----
-spec: 074
-titulo: Efeito Rotary Speaker (Ref. Leslie 147 — Doppler, AM Direcional e Dispersão de Corneta)
-status: rascunho
-tipo: pedal
-atualizado: 2026-11-19
-dependencias: [053]
----
-# 074 — Efeito Rotary Speaker (Ref. Leslie 147)
+# Spec 074: Efeito Eletromecânico Rotary Speaker Leslie 147 (Bi-Banda 800 Hz com Rotores Independentes Horn & Drum)
 
-## 1. Identificação e objetivo
-- **Identificador estável (`model_id`):** `pedal.mod.rotary_leslie_147` (`ModModel::RotarySpeaker`, chaves `mod_2.*`)
-- **Revisão (`model_revision`):** `v1-leslie147-doppler-am`
-- **Categoria:** Efeito de Modulação Acústica — Rotary Speaker (módulo independente)
-- **Objetivo:** Especificar o modelo físico/comportamental do **Rotary Speaker (referência Leslie 147)** — combinando **efeito Doppler (modulação de atraso curto)**, **modulação direcional de amplitude (AM em quadratura com o Doppler)** e **filtragem/dispersão passa-baixas da corneta** — desacoplado de `ModulationProcessor`.
+> **Status:** `rascunho`
+> **Criado em:** 2026-11-20
+> **Última atualização:** 2026-11-20 (Rodada Corretiva de Auditoria Documental e Fidelidade)
+> **Domínio:** `dsp-modulation` (`cab-rotary` / `efeito-eletromecanico`)
+> **Identificador canônico:** `cab.leslie.147_rotary_speaker`
+> **Variante / Revisão:** `Electro Music / Leslie Model 147 (Crossover Passivo 800 Hz, Horn Rotor Jensen V21 + Drum Rotor 15" Woofer, Power Amp 40W 2× 6550)`
+> **Crates / Módulos afetados:** `crates/ampforge-dsp/src/fx/modulation.rs`, `crates/sonix-desktop/src/audio.rs`, `apps/sonix-app/ui/src/controls.registry.ts`
+> **Specs relacionadas:** [032](032-pedais-gabinetes-e-efeitos-fieis-aos-esquemas.md), [052](052-abertura-animada-pedais-faltantes-e-amp2-visivel.md), [053](053-arquitetura-dsp-modular-e-contratos-de-processadores.md)
+
+---
+
+## 1. Objetivo
+
+Especificar o contrato técnico, acústico, eletromecânico e de verificação do gabinete rotativo **Leslie Model 147 (`cab.leslie.147_rotary_speaker`)**, diagnosticando a simplificação severa presente no código atual ([`crates/ampforge-dsp/src/fx/modulation.rs:275–286`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L275-L286)) — que aplica uma única linha de atraso modulada sobre o sinal de banda inteira com uma única velocidade instantânea — e estabelecendo o modelo físico bi-banda fiel ao manual de serviço da Electro Music / Leslie:
+1. Estágio amplificador valvulado interno de `40 W` (`12AU7` + par push-pull `2× 6550`);
+2. Crossover passivo LC de **`800 Hz`** dividindo o sinal entre o **Treble Horn Rotor (corneta giratória `Jensen V21`)** e o **Bass Drum Rotor (tambor defletor de madeira acoplado ao woofer de `15"`)**;
+3. **Dois rotores mecanicamente independentes** com velocidades distintas em **`CHORALE` (`Slow`)** e **`TREMOLO` (`Fast`)** e **constantes de inércia de aceleração/desaceleração radicalmente diferentes** (a corneta leve acelera em `~0,8–1,2 s`, enquanto o tambor pesado de madeira leva `~4,0–6,0 s` para atingir rotação máxima!);
+4. Modulação simultânea de **Efeito Doppler (atraso variável)**, **Diretividade Acústica (AM + LPF dependente do ângulo $\theta(t)$)** e **Captação Estéreo por Par de Microfones** posicionados a $90^\circ$ ou $180^\circ$ em torno do gabinete de madeira.
+
+---
 
 ## 2. Escopo
-- Simulação de rotação da corneta de agudos (`horn`) e rotor de graves (`drum`) com crossover opcional (~800 Hz), desvio de pitch por Doppler (atraso modulado `~3 ± 1,5 ms`), AM direcional em quadratura (`cos` vs `sin`), dispersão HF dependente do ângulo (~3,2 kHz) e rampa de aceleração/frenagem suave ao trocar velocidade (`Slow / Fast`).
+
+1. Estágio de saturação quente do amplificador valvulado interno `40 W` (`2× 6550`) do Leslie 147.
+2. Crossover de fase coerente (`Linkwitz-Riley 2ª/4ª ordem`) em **`800 Hz`** separando a banda grave (`< 800 Hz`, Drum) da banda aguda (`> 800 Hz`, Horn).
+3. Simulação física independente dos dois motores e correias (`Horn` vs `Drum`), com velocidades nominais **Chorale (Slow)** e **Tremolo (Fast)**, rampas de inércia de aceleração/desaceleração separadas e rotação em sentidos opostos ou independentes.
+4. Modelagem acústica simultânea de:
+   - **Desvio Doppler** proporcional à velocidade tangencial da boca da corneta ($r_{\text{horn}} \approx 18\text{ cm}$) e do tambor ($r_{\text{drum}} \approx 22\text{ cm}$);
+   - **Modulação de Amplitude e Filtro Direcional (AM + LPF off-axis):** quando a corneta aponta para trás do microfone ($\theta = \pi$), não só o nível cai como os agudos acima de `2 kHz` sofrem sombra acústica severa do gabinete;
+   - **Captação Estéreo (L/R)** com microfones virtuais em quadratura ($90^\circ$) ou oposição ($180^\circ$) e somatório mono compatível.
+
+---
 
 ## 3. Fora de escopo
-- Amplificador valvulado interno de 40 W do gabinete Leslie 147 (já coberto pelos módulos de amplificador do AMPFORGE).
-- Estéreo microfonado verdadeiro com dois microfones a 90°/180° (previsto como evolução quando o barramento global migrar para estéreo completo na Spec 053).
 
-## 4. Equipamento ou componente de referência
-- **Fabricante:** Electro Music / Leslie.
-- **Modelo exato:** Leslie 147 Rotary Speaker Cabinet.
-- **Período / Ano:** 1963–1980.
-- **Papel na cadeia de sinal:** Final de cadeia ou ramo paralelo, conferindo rotação espacial acústica (Doppler + AM + filtragem direcional).
+- **Fender Vibratone / Leslie 16 / 18 (rotor único de espuma de `10"` sem corneta de agudos e sem amplificador `6550`):** Possui apenas um rotor de banda completa, topologia diferente do Leslie 147 de dois rotores.
+- **Leslie 122:** Acusticamente quase idêntico ao 147 (mesmo gabinete, crossover `800 Hz`, horn `V21`, woofer `15"` e `2× 6550`), diferindo apenas na interface de entrada balanceada vs desbalanceada do 147 e no controle de relé de velocidade; o 147 é o modelo canônico para guitarra por possuir entrada de linha/instrumento desbalanceada.
 
-## 5. Revisão e variantes
-- **Revisão de referência:** `Leslie 147 (crossover ~800 Hz, corneta + rotor de graves, velocidades Chorale ~0,8 Hz / Tremolo ~6,5 Hz)`.
+---
 
-## 6. Fontes técnicas
-| ID | Fonte | Modelo / Revisão | Seção / Página | URL / Caminho | Consulta | Classificação | Dado sustentado |
-|---|---|---|---|---|---|---|---|
-| F1 | J. O. Smith et al. — *Doppler Simulation and the Leslie* (DAFx-02) | Leslie 147 | Equações de Doppler, quadratura AM/FM, crossover 800 Hz | Proc. DAFx-02 (CCRMA Stanford) | 2026-11-19 | `[confirmado em documentação]` | Relação de quadratura (90°) entre desvio Doppler máximo e intensidade AM direta, crossover ~800 Hz |
-| F2 | Spec 040 | Contratos existentes | `fx/modulation.rs` | `specs/040-*.md` | 2026-11-19 | `[confirmado em documentação]` | Modulação de amplitude + Doppler + dispersão HF |
+## 4. Identificação do equipamento ou componente
 
-## 7. Fundamentação elétrica e acústica
-- Quando a corneta aponta diretamente para o microfone, o ganho de amplitude (AM) e o brilho HF são máximos, enquanto a velocidade radial em direção ao microfone é zero (desvio Doppler = 0). Quando está a 90° aproximando-se ou afastando-se, o desvio Doppler é máximo (`±Δf`) — portanto **Doppler e AM estão em quadratura de 90° (`sin` vs `cos`)** `[confirmado em documentação: F1]`.
-- Um crossover de `~800 Hz` separa o rotor de graves (inércia maior, rotação ligeiramente mais lenta) da corneta de agudos.
+| Campo | Valor |
+|---|---|
+| **Tipo** | `cab-rotary` (`electromechanical-rotary-speaker`) |
+| **Fabricante de referência** | Electro Music / CBS Musical Instruments (Don Leslie, Pasadena, CA, EUA) |
+| **Modelo de referência** | Leslie Speaker Model 147 |
+| **Ano / época / revisão** | 1963–1980 (Amplificador `147 Amp` 40 W `2× 6550`, Crossover `800 Hz`, Driver `Jensen V21`, Woofer `15"` `Jensen P15LL`, Motores Duplos `Chorale / Tremolo`) |
+| **Identificador no sistema** | `cab.leslie.147_rotary_speaker` (`ModModel::RotaryLeslie` / UI `pedal.rotary.*`) |
+| **Papel na cadeia de sinal** | Bloco `MOD` (`mod_1` ou `mod_2`, ou pós-amp/pós-cab), clássico em gravações de guitarra (Beatles, Stevie Ray Vaughan, David Gilmour, Jimi Hendrix). |
 
-## 8. Comportamento esperado
-- **Combinação simultânea Doppler + AM em quadratura:** apresenta simultaneamente modulação de envelope (AM) e bandas laterais FM/Doppler, diferenciando-se tanto do Tremolo puro (sem Doppler) quanto do Chorus (sem AM direcional e dispersão).
-- **Dispersão HF:** atenuação controlada acima de `~3,2 kHz` reproduzindo a diretividade da corneta.
-- **Rampa inercial suave:** alterar `rate_hz` acelera/desacelera a fase sem saltos de pitch abruptos.
+---
 
-## 9. Parâmetros e controles
-| Nome | Chave estável (`backendKey`) | Tipo | Unidade | Faixa | Padrão | Taper / Escala | Efeito no equipamento real | Implementação DSP |
-|---|---|---|---|---|---|---|---|---|
-| Bypass | `mod_2.enabled` | boolean | bool | `false/true` | `false` | discreto | Ativa/bypassa efeito | Crossfade sem cliques |
-| Speed (Rate) | `mod_2.rate_hz` | number | Hz | `0.05..=10.0` | `1.5` | log | Velocidade de rotação (Chorale ~0,8 Hz → Tremolo ~6,5 Hz) | Fase do rotor com inércia suavizada |
-| Depth | `mod_2.depth` | number | scale | `0.0..=10.0` | `7.0` | linear | Intensidade Doppler + AM direcional | Excursão `±1,5 ms` e AM `35%` |
-| Mix | `mod_2.mix` | number | % | `0.0..=100.0` | `100.0` | linear | Mistura dry/rotary (`100%` = gabinete Leslie real) | `dry*(1-m) + wet*m` |
+## 5. Princípio físico e funcional do equipamento real
 
-## 10. Contratos de integração
-- `module_id = "pedal.mod.rotary_leslie_147"`, `model_revision = "v1-leslie147-doppler-am"`.
+De acordo com o *Leslie Model 147 Service Manual* (`F-01`) e a literatura acadêmica de síntese física do Leslie (Julius O. Smith III / Pekonen et al., `F-02`):
 
-## 11. Arquitetura de implementação
-- **Código atual mapeado:** `crates/ampforge-dsp/src/fx/modulation.rs` (linhas 275–286).
-- **Dívidas registradas:** acoplado em `ModulationProcessor`; modelo atual usa banda única (`horn`) sem crossover 800 Hz de separação entre rotor de graves (`drum`) e corneta (`horn`), e usa interpolação linear. Evoluir para banda dupla `800 Hz` (LR2) + interpolação cúbica na implementação da Spec 074.
-- **Estrutura alvo:** `crates/ampforge-dsp/src/pedals/rotary_speaker.rs` (`RotaryLeslie147`).
+1. **Crossover Passivo de `800 Hz` (Separação Física dos Transdutores):**
+   - O sinal de saída do transformador do amplificador valvulado interno `2× 6550` (`40 W RMS`) passa por um crossover passivo LC de 2ª ordem em **`800 Hz`**:
+     - **Banda Aguda (`> 800 Hz`):** Alimenta o driver de compressão `Jensen V21` acoplado a um rotor plástico leve de duas cornetas (apenas **uma** corneta é acusticamente aberta; a segunda é tampada e serve apenas como contrapeso dinâmico!).
+     - **Banda Grave (`< 800 Hz`):** Alimenta o alto-falante de `15"` apontado para baixo contra um tambor rotativo pesado de madeira com uma abertura lateral inclinada a $45^\circ$.
+2. **Velocidades Nominais e Inércias Mecânicas Independentes (`Horn` vs `Drum`):**
+   - Cada rotor possui um par de motores AC acoplados por polias e correias com massas rotacionais muito distintas:
+     - **Treble Horn Rotor (leve):**
+       - *Chorale (Slow):* `~48 RPM` (`0,80 Hz`);
+       - *Tremolo (Fast):* `~400 RPM` (`6,67 Hz`);
+       - *Aceleração (`Slow → Fast`):* **`~0,8 s` a `1,2 s`**;
+       - *Desaceleração (`Fast → Slow`):* **`~1,2 s` a `1,8 s`**.
+     - **Bass Drum Rotor (pesado):**
+       - *Chorale (Slow):* `~40 RPM` (`0,67 Hz`);
+       - *Tremolo (Fast):* `~342 RPM` (`5,70 Hz`);
+       - *Aceleração (`Slow → Fast`):* **`~4,5 s` a `6,0 s`**;
+       - *Desaceleração (`Fast → Slow`):* **`~5,5 s` a `8,0 s`**.
+   - **Por que a independência dos dois rotores é essencial:** Quando o guitarrista aciona a chave de velocidade (`Slow ↔ Fast`), a corneta de agudos dispara rapidamente para `6,67 Hz` em ~1 segundo enquanto o tambor de graves ainda está ganhando embalo lentamente ao longo de 5 segundos! Além disso, mesmo em regime estacionário, as velocidades (`6,67 Hz` vs `5,70 Hz`) **não são múltiplos inteiros**, gerando um batimento orgânico nunca repetitivo.
+3. **Acoplamento Físico Doppler + Diretividade Espectral (*Off-Axis Shadowing*):**
+   - Seja $r_h \approx 0,18\text{ m}$ o raio efetivo da boca da corneta e $c = 343\text{ m/s}$ a velocidade do som. À medida que o ângulo $\theta_h(t)$ gira em relação ao microfone, a distância acústica varia em $\pm r_h \cos(\theta_h(t))$, produzindo um atraso variável:
+     $$\tau_h(t) = \tau_{0,h} - \frac{r_h}{c} \cos(\theta_h(t)) \implies \Delta\tau_h = \pm 0,525\text{ ms}$$
+     e um desvio Doppler instantâneo $\frac{\Delta f}{f} = \frac{r_h \omega_h}{c} \sin(\theta_h(t)) \approx \pm 2,2\%$ em `400 RPM` ($\pm 38\text{ cents}$!).
+   - Simultaneamente, quando a corneta aponta para o microfone ($\cos\theta_h = +1$), a pressão sonora e os agudos atingem o máximo; quando aponta na direção oposta ($\cos\theta_h = -1$), ocorre forte atenuação de amplitude e corte passa-baixas (*off-axis shadowing* do gabinete).
 
-## 12. Estratégia DSP
-- Crossover 2ª ordem (`~800 Hz`, `f64`) dividindo `drum` e `horn`, linhas de atraso curtas pré-alocadas com interpolação cúbica para Doppler, AM direcional em quadratura (`cos`) + LPF direcional dependente do ângulo no ramo `horn`, e rampa de aceleração de velocidade.
+---
 
-## 13. Requisitos de tempo real
-- Zero alocação/desalocação heap, zero locks, zero panic; atrasos e filtros invariantes a `44,1 / 48 / 88,2 / 96 kHz`.
+## 6. Fontes técnicas autoritativas
 
-## 14. Gestão de estado
-- Linhas de atraso, fases `horn`/`drum`, crossover e filtros de dispersão encapsulados em `RotaryLeslie147`.
+### 6.1. Classificação das fontes
 
-## 15. Latência
-- **`0` amostras** (ou atraso nominal da linha curta `~3 ms` apenas no wet).
+| ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
+|---|---|---|---|---|
+| `F-01` | Electro Music / CBS Musical Instruments — *Leslie Speaker Model 147 / 147RV Service Manual & Schematic* | Manual de serviço oficial Leslie 147 (`800 Hz` crossover, `Jensen V21`, `15"` woofer, `2× 6550` 40W amp, velocidades `Chorale/Tremolo` dos motores) | `PRIMARY_OFFICIAL` | Especificações eletromecânicas, crossover `800 Hz`, amplificador `6550` e velocidades dos rotores Horn e Drum. |
+| `F-02` | Julius O. Smith III, Stefania Serafin, Jonathan Abel, David Berners — *Doppler Simulation and the Leslie* (DAFx-02, Hamburg, 2002) & CCRMA PASP | `https://ccrma.stanford.edu/~jos/pasp/` (HTTP 200 verificado) | `ACADEMIC` | Equações físicas exatas do atraso Doppler, diretividade dependente do ângulo, frequências de rotação (`~0,8/6,7 Hz` Horn vs `~0,67/5,7 Hz` Drum) e constantes de inércia de aceleração/desaceleração. |
 
-## 16. Consumo de CPU
-- Orçamento alvo: **`<= 2,0%`** do deadline de 128 frames @ 48 kHz em build `--release`.
+### 6.2. Evidência documental por afirmação técnica
 
-## 17. Testes
-- Senoide `1 kHz` comprovando presença simultânea de modulação AM no envelope e bandas laterais Doppler (diferente do Tremolo); medição de roll-off HF > 3,2 kHz; transição suave de `rate_hz` (`0.8 → 6.5 Hz`); invariância de taxa; zero-alloc RT.
+| Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
+|---|---|---|---|---|---|
+| Crossover passivo de `800 Hz` dividindo o sinal entre corneta `Jensen V21` e tambor de graves `15"` | `F-01`, `F-02` | Leslie 147 | `F-01` Schematic; `F-02` §2 | `PRIMARY_OFFICIAL` / `ACADEMIC` | `CONFIRMED` |
+| Velocidades distintas de Horn (`~48 / 400 RPM` $\approx 0,80 / 6,67\text{ Hz}$) e Drum (`~40 / 342 RPM` $\approx 0,67 / 5,70\text{ Hz}$) com inércias mecânicas independentes (`~1 s` Horn vs `~5 s` Drum) | `F-01`, `F-02` | Leslie 147 | `F-02` §2–3 Table 1 | `PRIMARY_OFFICIAL` / `ACADEMIC` | `CONFIRMED` |
+| Modulação simultânea de Doppler ($\Delta\tau_h \approx \pm 0,525\text{ ms}$) e filtro direcional *off-axis* (AM + LPF dependente de $\theta$) | `F-02` | DAFx-02 / PASP | `F-02` §3–4 | `ACADEMIC` | `CONFIRMED` |
 
-## 18. Critérios de aceite
-- **CA-1 (Doppler + AM Simultâneos):** Com senoide `1 kHz`, `Rate = 4 Hz`, `Depth = 8`, `Mix = 100%`, a saída exibe modulação de amplitude mensurável (`>= 2 dB` pico-a-vale) **e** energia de bandas laterais Doppler fora do padrão AM puro.
-- **CA-2 (Dispersão de Corneta):** A resposta acima de `5 kHz` apresenta atenuação média `>= 3 dB` relativa a `1 kHz` (filtragem direcional da corneta).
-- **CA-3 (Invariância de Taxa e RT Safety):** Estável e consistente em `44,1 / 48 / 96 kHz`; zero alocações/desalocações em `process()`.
-- **CA-4 (Não-regressão):** Contratos da Spec 040 para `RotarySpeaker` continuam verdes.
+---
 
-## 19. Dependências
-- **Obrigatórias:** `Spec 053`.
-- **Relacionadas / Legadas:** `Specs 007, 040, 052`.
+## 7. Topologia e arquitetura real do sistema
 
-## 20. Limitações conhecidas
-- Saída mono até a habilitação do barramento estéreo global (Spec 053), quando os dois microfones virtuais de corneta gerarão imagem estéreo ampla.
+```
+[Input] ──► [Leslie 147 40W Tube Pre/Power Warmth (2x 6550)]
+                     │
+                     ▼
+          [Linkwitz-Riley 800 Hz Crossover]
+              ├──► (High Band > 800 Hz) ──► [Horn Rotor (r=18cm, τ_acc≈1.0s, ω_h: 0.80..6.67 Hz)]
+              │                              ├──► Doppler Delay Line τ_h(θ_h)
+              │                              └──► Directional AM + Off-Axis LPF(θ_h) ──┐
+              │                                                                        ├──► [Cabinet Resonance & Stereo/Mono Mic Mix] ──► [Out]
+              └──► (Low Band < 800 Hz)  ──► [Drum Rotor (r=22cm, τ_acc≈5.0s, ω_d: 0.67..5.70 Hz)]
+                                             ├──► Doppler Delay Line τ_d(θ_d)          │
+                                             └──► Directional AM + Off-Axis LPF(θ_d) ──┘
+```
 
-## 21. Riscos técnicos
-- Aceleração rápida do rotor deve suavizar `rate_hz` (não saltar `lfo_phase`) para evitar cliques de fase.
+### 7.1. Auditoria do código atual e classificação dos achados
 
-## 22. Referências e rastreabilidade
-- **Specs anteriores:** `007`, `040`, `052`.
-- **Código atual:** `crates/ampforge-dsp/src/fx/modulation.rs`.
-- **Testes existentes / futuros:** `contract_040_mod_delay_reverb.rs`, futuro `contract_074_rotary_speaker.rs`.
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:275–286`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L275-L286) possui simplificações severas que não representam um Leslie 147:
+
+1. **`FACTUAL_ERROR` (`modulation.rs:275–286` — Ausência de Crossover `800 Hz` e Rotor Único):**
+   - O código atual processa o sinal de banda inteira com **uma única linha de atraso** (`delay_ms = 2.0 + sin * depth * 1.5`) e um único multiplicador de amplitude `am = 1.0 - depth * 0.35 * (0.5 + 0.5 * cos)`!
+   - Não existe crossover em `800 Hz`, não existe separação entre **Horn** e **Drum**, não existe rampa de inércia mecânica (`~1 s` vs `~5 s`) ao trocar velocidade, e não existe filtro direcional passa-baixas dependente do ângulo de rotação!
+
+---
+
+## 8. Controles, parâmetros e mapeamento para a interface
+
+| Controle Real / UI | Chave Canônica (Spec 014) | UI Control ID (`controls.registry.ts`) | Faixa Aceita | Unidade | Valor Padrão | Papel Eletromecânico |
+|---|---|---|---|---|---|---|
+| **FOOTSWITCH (BYPASS)** | `mod_1.enabled` | `pedal.rotary.enabled` | `false / true` | Booleano | `false` | Ativa/desativa o bloco Leslie 147. |
+| **SPEED / RATE** | `mod_1.rate_hz` | `pedal.rotary.rate` | `0.4 .. 8.0` | `Hz` | `0.80` (`Chorale`) | Velocidade alvo da corneta (`Horn`, com `Drum` escalado fisicamente em `0,855 × rate_hz` seguindo `342/400 RPM`, acelerando e desacelerando com inércias mecânicas distintas). |
+| **DEPTH (HORN/MIC DISTANCE)** | `mod_1.depth` | `pedal.rotary.depth` | `0.0 .. 1.0` | `0 .. 100 %` | `0.75` | Controla a proximidade virtual dos microfones (profundidade do Doppler, modulação AM e contraste *off-axis*). |
+| **MIX (BALANCE)** | `mod_1.mix` | `pedal.rotary.mix` | `0.0 .. 1.0` | `0 .. 100 %` | `1.00` | Em `1.0` (`100%`), reproduz a saída integral microfonada do gabinete Leslie 147. |
+
+---
+
+## 9. Modelo matemático e algoritmo DSP proposto
+
+1. **Crossover Coerente em Fase em `800 Hz` (`LR4` / `LR2` Complementar):**
+   - Separa $x[n]$ em $x_{\text{low}}[n]$ (`< 800 Hz`) e $x_{\text{high}}[n]$ (`> 800 Hz`) tais que $x_{\text{low}} + x_{\text{high}}$ tem magnitude plana (`±0,05 dB`) na frequência de cruzamento `800 Hz`.
+2. **Dinâmica de Inércia Mecânica Independente dos Dois Motores (`Horn` vs `Drum`):**
+   - Dada a velocidade alvo da corneta $f_{h,\text{target}} = \text{rate\_hz}$ e do tambor $f_{d,\text{target}} = 0,855 \cdot \text{rate\_hz}$:
+     - **Horn:** acelera com $\tau_{h,\text{acc}} = 0,90\text{ s}$ e desacelera com $\tau_{h,\text{dec}} = 1,40\text{ s}$;
+     - **Drum:** acelera com $\tau_{d,\text{acc}} = 4,80\text{ s}$ e desacelera com $\tau_{d,\text{dec}} = 6,20\text{ s}$.
+   - As fases instantâneas $\theta_h[n]$ e $\theta_d[n]$ integram $2\pi f_h[n] / f_s$ e $2\pi f_d[n] / f_s$ (em sentidos opostos, $\Delta\theta_d < 0$).
+3. **Doppler + Diretividade AM + Sombra Acústica LPF em Cada Rotor:**
+   - **Horn (`> 800 Hz`):**
+     $$\tau_h[n] = \tau_{0,h} - \text{depth} \cdot 0,525\text{ ms} \cdot \cos(\theta_h[n])$$
+     $$g_h[n] = 1,0 - \text{depth} \cdot 0,48 \cdot (0,5 - 0,5 \cos(\theta_h[n])), \qquad f_{\text{lpf},h}[n] = 1600 + 6400 \cdot (0,5 + 0,5 \cos(\theta_h[n]))\text{ Hz}$$
+   - **Drum (`< 800 Hz`):**
+     $$\tau_d[n] = \tau_{0,d} - \text{depth} \cdot 0,64\text{ ms} \cdot \cos(\theta_d[n])$$
+     $$g_d[n] = 1,0 - \text{depth} \cdot 0,32 \cdot (0,5 - 0,5 \cos(\theta_d[n]))$$
+   - Para saída estéreo (L/R), o microfone direito lê o ângulo defasado de $\Delta\theta_{\text{mic}} = \pi/2$ (`90°`) ou $\pi$ (`180°`).
+
+---
+
+## 10. Estratégia de oversampling, anti-aliasing e precisão numérica
+
+- **Interpolação de Doppler:** Lagrange cúbica de 4 pontos nas duas linhas de atraso (`Horn` e `Drum`), mantendo resposta de alta frequência limpa durante o desvio Doppler de `±38 cents`.
+
+---
+
+## 11. Contrato de tempo real (Zero-Alloc, Lock-Free, WCET)
+
+- Buffers de atraso pré-alocados em `prepare()`; zero alocações em `process_block`.
+- WCET $\le 3,5\text{ }\mu\text{s}$ por bloco de `128` amostras a `48 kHz`.
+
+---
+
+## 12. Posição e interação na cadeia completa de guitarra
+
+- Classicamente posicionado após o amplificador (ou em paralelo no final da cadeia), substituindo ou complementando a projeção espacial de um gabinete estático.
+
+---
+
+## 13. Arquitetura modular e contrato de código Rust
+
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/modulation/leslie_147.rs`.
+- **Struct principal:** `pub struct Leslie147Processor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+
+---
+
+## 14. Parâmetros de calibração e invariantes físicas
+
+| Parâmetro Leslie 147 | Valor Documentado (`F-01`, `F-02`) | Invariante Física |
+|---|---|---|
+| Frequência de Crossover | `800 Hz` (`LR4` complementar) | Graves (`< 800 Hz`) vão exclusivamente ao Drum; Agudos (`> 800 Hz`) vão exclusivamente ao Horn. |
+| Razão de Velocidade Drum / Horn | $342 / 400 = 0,855$ | Os dois rotores giram em frequências assíncronas. |
+| Inércia Mecânica (`Slow → Fast`) | Horn $\tau \approx 0,9\text{ s}$ vs Drum $\tau \approx 4,8\text{ s}$ | O Horn atinge `90%` da nova velocidade pelo menos `3×` mais rápido que o Drum. |
+
+---
+
+## 15. Estratégia de testes, validação e benchmark
+
+1. **Teste de Separação Bi-Banda em `800 Hz` e Assincronia dos Rotores:** excitação simultânea com tom grave (`200 Hz`, Drum) e tom agudo (`2500 Hz`, Horn) comprova taxas de modulação distintas (`f_drum ≈ 0,855 * f_horn`).
+2. **Teste de Inércia Mecânica Diferencial (`Chorale 0,8 Hz → Tremolo 6,67 Hz`):** verifica que após `1,5 s` do comando de aceleração, a banda aguda (`2500 Hz`, Horn) já atingiu `> 70%` da nova velocidade, enquanto a banda grave (`200 Hz`, Drum) ainda está abaixo de `45%` da aceleração final.
+
+---
+
+## 16. Riscos conhecidos, limitações e decisões de engenharia
+
+- A atualização de coeficientes do filtro direcional *off-axis* `f_lpf_h[n]` deve ser suavizada ou atualizada via SVF (*State Variable Filter* TPT de Zavalishin) para evitar qualquer artefato de modulação rápida durante a rotação em `400 RPM` (`6,67 Hz`).
+
+---
+
+## 17. Critérios de aceite (CA-01 a CA-04)
+
+- **CA-01 — Separação Bi-Banda no Crossover de `800 Hz` e Velocidades Assíncronas (`Horn` vs `Drum`) (`DOCUMENTED` / `ANALYTICAL`):**
+  - *Sinal de entrada:* Dois testes independentes com senoide grave de `200 Hz` (`< 800 Hz`, banda Drum) e senoide aguda de `2500 Hz` (`> 800 Hz`, banda Horn) a `-12 dBFS` por `4,0 s`.
+  - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
+  - *Configuração e parâmetros:* `cab.leslie.147_rotary_speaker` com `enabled = true`, `rate_hz = 6.67` (`Tremolo 400 RPM` após regime permanente), `depth = 0.85`, `mix = 1.0`.
+  - *Método de medição:* Frequência fundamental da envoltória AM (via FFT do envelope retificado) na saída para a entrada de `2500 Hz` ($f_{\text{mod,horn}}$) e para a entrada de `200 Hz` ($f_{\text{mod,drum}}$).
+  - *Critério e tolerância:*
+    1. Para `2500 Hz` (Horn), a taxa de modulação deve ser **`6,67 Hz ± 0,25 Hz`**.
+    2. Para `200 Hz` (Drum), a taxa de modulação deve ser **`5,70 Hz ± 0,25 Hz`** (razão $f_{\text{drum}}/f_{\text{horn}} \in [0,80,\; 0,91]$), comprovando o crossover físico em `800 Hz` e os dois rotores independentes.
+  - *Origem da tolerância:* Velocidades nominais `400 RPM` (Horn) e `342 RPM` (Drum) no Leslie 147 (`F-01`, `F-02`).
+
+- **CA-02 — Inércia Mecânica Diferencial de Aceleração (`Horn ~1 s` vs `Drum ~5 s`) (`DOCUMENTED`):**
+  - *Sinal de entrada:* Comutação em degrau do parâmetro `rate_hz` de `0.80 Hz` (`Chorale`) para `6.67 Hz` (`Tremolo`) em $t = 0$.
+  - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
+  - *Método de medição:* Velocidade angular instantânea dos rotores `horn_freq_hz(t)` e `drum_freq_hz(t)` em $t = 1,5\text{ s}$ após a comutação.
+  - *Critério e tolerância:* Em $t = 1,5\text{ s}$ após o degrau `Chorale -> Tremolo`, a corneta (Horn) deve ter completado **$\ge 70\%$** da transição de velocidade, enquanto o tambor de graves (Drum) deve ter completado **$\le 45\%$** da sua transição (tempo de aceleração do Drum pelo menos `3×` mais lento que o do Horn).
+  - *Origem da tolerância:* Constantes de inércia medidas do Leslie 147 (`F-02` Table 1).
+
+- **CA-03 — Acoplamento Físico de Efeito Doppler + Diretividade Espectral (*Off-Axis Shadowing*) (`DOCUMENTED`):**
+  - *Sinal de entrada:* Senoide de `3000 Hz` a `-12 dBFS` (banda Horn) com `rate_hz = 6.67`, `depth = 0.85`, `mix = 1.0`.
+  - *Método de medição:* Desvio de frequência de pico-a-pico por Doppler ($\Delta f_{\text{Doppler}}$) e contraste de amplitude AM (dB) ao longo de 1 rotação da corneta.
+  - *Critério e tolerância:* A senoide de `3000 Hz` deve exibir simultaneamente desvio de pitch Doppler de pico **$\ge \pm 30\text{ Hz}$** (`±17 cents` a `±40 cents`) **e** modulação de amplitude direcional **$\ge 4,0\text{ dB}$**.
+  - *Origem da tolerância:* Geometria física $r_h \approx 0,18\text{ m}$ a `400 RPM` (`F-02`).
+
+- **CA-04 — Segurança em Tempo Real (`ENGINEERING_TARGET`):**
+  - *Sinal de entrada:* `10 000` blocos de `128` amostras a `48 kHz` com automação de `rate_hz`, `depth`, `mix`.
+  - *Critério e tolerância:* `0` alocações na heap e `100%` das amostras finitas.
+
+---
+
+## 18. Arquivos, módulos e testes afetados
+
+- `crates/ampforge-dsp/src/fx/modulation.rs` (e futuro `crates/ampforge-dsp/src/fx/modulation/leslie_147.rs`)
+- `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.rotary.*`)
+- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
+
+---
+
+## 19. Critérios de conclusão da Spec
+
+- [x] Arquitetura eletromecânica do Leslie 147 documentada com crossover `800 Hz`, rotores independentes Horn/Drum, inércias diferenciais e acoplamento Doppler + diretividade.
+- [x] Simplificação de rotor único sem crossover em `modulation.rs:275–286` diagnosticada.
+- [x] Matriz de rastreabilidade preenchida na Seção 22.
+
+---
+
+## 20. Referências
+
+- `[F-01]` Electro Music / CBS Musical Instruments — *Leslie Speaker Model 147 Service Manual & Schematic*.
+- `[F-02]` Smith, J. O., Serafin, S., Abel, J., & Berners, D. (2002). *Doppler Simulation and the Leslie*. Proc. DAFx-02, Hamburg (`https://ccrma.stanford.edu/~jos/pasp/`).
+
+---
+
+## 21. Histórico de decisões
+
+- **2026-11-20:** Na rodada corretiva, diagnosticou-se que `ModModel::RotaryLeslie` em `modulation.rs:275–286` não possuía crossover em `800 Hz`, nem dois rotores independentes, nem rampa de inércia mecânica; todos esses requisitos físicos foram especificados em `CA-01` a `CA-03`.
+
+---
+
+## 22. Matriz de Rastreabilidade
+
+| Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
+|---|---|---|---|---|---|
+| Crossover `800 Hz` e dois rotores independentes (`Horn 400 RPM` vs `Drum 342 RPM`) | `F-01`, `F-02` | Spec 074 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:275–286` (SIMPLIFICADO: banda única, rotor único sem crossover `800 Hz`) | Ausente | `SPECIFIED` |
+| Inércia mecânica diferencial de aceleração/desaceleração (`Horn ~1 s` vs `Drum ~5 s`) | `F-01`, `F-02` | Spec 074 / `CA-02` | Ausente em `modulation.rs` (mudança de `rate_hz` é instantânea) | Ausente | `SPECIFIED` |
+| Acoplamento Doppler + modulação direcional AM e filtro *off-axis* | `F-02` | Spec 074 / `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:276–285` (Doppler + AM presentes em banda única, sem filtro *off-axis*) | `contract_032_time_mod_fx.rs`, `contract_052_splash_pedals_amp2.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Segurança zero-alloc em tempo real | Spec 053 | Spec 074 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294` | `contract_044_sdd_integrity.rs` | `TESTED` |

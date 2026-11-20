@@ -1,8 +1,8 @@
 ---
 spec: 052
 titulo: Abertura animada com emblema SVG vetorial, designs skeuomórficos dos pedais faltantes e mini-cabeça AMP 2 no Estúdio (itens T-27 a T-29)
-status: aprovada
-atualizado: 2026-11-17
+status: implementada
+atualizado: 2026-11-20
 ---
 # 052 — Abertura animada com logomarca, pedais skeuomórficos faltantes e AMP 2 visível no Estúdio
 
@@ -46,7 +46,8 @@ Do relato do teste manual do usuário em 2026-11-16 (`docs/handoff/ANTIGRAVITY-0
 
 ## Testes que cobrem esta spec
 - `crates/ampforge-dsp/tests/contract_052_wah_and_pedals.rs` → `CA-3`
+- `crates/sonix-desktop/tests/contract_052_backend_wah_amp2.rs` → `CA-3`, `CA-4`
 - `tests/contract/052-abertura-pedais-amp2.test.js` → `CA-1`, `CA-2`, `CA-3`, `CA-4`
 
 ## Notas
-- Será implementada na Etapa 7, após a conclusão e validação de todos os itens da Spec 051.
+- Implementada e validada na Etapa 7 (itens T-27 a T-29), mantendo zero-alloc no callback de áudio e todas as invariantes SDD/UI verdes.

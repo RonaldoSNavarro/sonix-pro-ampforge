@@ -224,9 +224,29 @@ if (typeof customElements !== 'undefined' && !customElements.get('sonix-knob')) 
 }
 
 export function createKnob(opts: KnobOptions): SonixKnobElement {
+  if (
+    typeof customElements !== 'undefined' &&
+    !customElements.get('sonix-knob') &&
+    typeof HTMLElement !== 'undefined' &&
+    Object.getPrototypeOf(SonixKnobElement) === HTMLElement
+  ) {
+    customElements.define('sonix-knob', SonixKnobElement);
+  }
   const el = document.createElement('sonix-knob') as SonixKnobElement;
   if (typeof el.configure === 'function') {
     el.configure(opts);
+  } else {
+    el.className = `knob ${opts.skinClass}`;
+    el.style.width = `${opts.sizePx}px`;
+    el.style.height = `${opts.sizePx}px`;
+    el.setAttribute('data-control-id', opts.controlId);
+    el.setAttribute('role', 'slider');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', opts.label);
+    el.setAttribute('aria-valuemin', String(opts.min));
+    el.setAttribute('aria-valuemax', String(opts.max));
+    el.setAttribute('aria-valuenow', String(opts.value));
+    el.innerHTML = `<span class="sh"></span><svg class="modifier-range-arc" viewBox="0 0 36 36" aria-hidden="true"><path class="arc-span" d="" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg><span class="rotor" style="transform:rotate(${valueToRotationDeg(opts.value, opts.min, opts.max)}deg)"><span class="a"></span><span class="b"></span><span class="p"></span></span>`;
   }
   return el;
 }

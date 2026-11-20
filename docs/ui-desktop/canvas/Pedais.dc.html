@@ -14,23 +14,23 @@
 body{margin:0}
 </style>
 </helmet>
-<div style="width:1440px;height:1400px;box-sizing:border-box;padding:36px 50px;display:flex;flex-direction:column;gap:26px;color:#e8eaed;font-family:Inter,'Segoe UI',sans-serif;background:radial-gradient(ellipse at 40% 0%,rgba(255,170,90,.1) 0%,transparent 45%),linear-gradient(180deg,#141518,#0a0b0c)">
+<div style="width:1446px;height:1750px;box-sizing:border-box;padding:28px 40px;display:flex;flex-direction:column;gap:20px;color:#e8eaed;font-family:Inter,'Segoe UI',sans-serif;background:radial-gradient(ellipse at 40% 0%,rgba(255,170,90,.1) 0%,transparent 45%),linear-gradient(180deg,#141518,#0a0b0c)">
 <div style="display:flex;flex-direction:column;gap:6px">
 <span style="font-family:Oswald,sans-serif;font-size:30px;font-weight:600;letter-spacing:.06em">PEDAIS E EQUIPAMENTOS DE ESTÚDIO</span>
-<span style="font-size:13px;color:#a3abb4">Formato, cor e disposição dos controles inspirados nas versões originais (Specs 023, 024, 030 e 032). Footswitch liga/desliga; knobs e sliders funcionam.</span>
+<span style="font-size:13px;color:#a3abb4">Formato, cor e disposição dos controles inspirados nas versões originais (Specs 023, 024, 030, 032, 040, 042 e 052). Footswitch liga/desliga; knobs e sliders funcionam.</span>
 </div>
 
-<sc-for list="{{rows}}" as="r" hint-placeholder-count="2">
-<div style="display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:10px">
 <span style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#a3abb4;font-weight:700">{{r.title}}</span>
-<div style="border-radius:12px;padding:26px 30px 22px;display:flex;align-items:flex-start;gap:36px;background:radial-gradient(circle at 1px 1px,rgba(255,255,255,.05) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#151618,#0d0e0f);box-shadow:0 0 0 1px #000,inset 0 2px 0 rgba(255,255,255,.04);border-bottom:10px solid #43474c">
-<sc-for list="{{r.items}}" as="p" hint-placeholder-count="6">
-<div style="display:flex;flex-direction:column;align-items:center;gap:12px;width:{{p.colW}}px">
-<div style="height:212px;display:flex;align-items:flex-end"><dc-import name="Pedal" model="{{p.id}}" hint-size="{{p.hint}}"></dc-import></div>
+<div style="border-radius:12px;padding:22px 24px 18px;display:flex;align-items:flex-start;justify-content:space-between;gap:18px;background:radial-gradient(circle at 1px 1px,rgba(255,255,255,.05) 1px,transparent 1.5px) 0 0/3px 3px,linear-gradient(180deg,#151618,#0d0e0f);box-shadow:0 0 0 1px #000,inset 0 2px 0 rgba(255,255,255,.04);border-bottom:10px solid #43474c">
+<sc-for list="{{r.items}}" as="p" hint-placeholder-count="7">
+<div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:{{p.colW}}px">
+<div style="height:216px;display:flex;align-items:flex-end"><dc-import name="Pedal" model="{{p.id}}" hint-size="{{p.hint}}"></dc-import></div>
 <div style="display:flex;flex-direction:column;gap:3px;align-items:center;text-align:center">
 <span style="font-family:Oswald,sans-serif;font-size:14px;font-weight:600;letter-spacing:.06em">{{p.name}}</span>
-<span style="font-size:11px;color:#ffb978">{{p.ref}}</span>
-<span style="font-size:11px;color:#a3abb4;line-height:1.4">{{p.note}}</span>
+<span style="font-size:10.5px;color:#ffb978">{{p.ref}}</span>
+<span style="font-size:10.5px;color:#a3abb4;line-height:1.35">{{p.note}}</span>
 </div>
 </div>
 </sc-for>
@@ -48,10 +48,10 @@ body{margin:0}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1400}}'>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1446,"height":1750}}'>
 class Component extends DCLogic {
   renderVals() {
-    const P = (id, w, h, name, ref, note) => ({ id, name, ref, note, colW: Math.max(150, w + 20), hint: w + 'px,' + h + 'px' });
+    const P = (id, w, h, name, ref, note) => ({ id, name, ref, note, colW: Math.max(120, Math.min(232, w + 12)), hint: w + 'px,' + h + 'px' });
     return { rows: [
       { title: 'Drive / fuzz — antes do amp', items: [
         P('ts808', 130, 210, 'SCREAMER 808', 'Ref.: Ibanez TS808', 'Overdrive · Tone · Level'),
@@ -60,10 +60,22 @@ class Component extends DCLogic {
         P('muff', 160, 200, 'BIG FUZZ π', 'Ref.: EHX Big Muff Pi', 'Volume · Tone (notch de médios) · Sustain'),
         P('fuzzface', 180, 180, 'FACE FUZZ', 'Ref.: Dallas Arbiter Fuzz Face', 'Volume · Fuzz · Bias (trim)'),
         P('ds1', 104, 184, 'DS-ONE', 'Ref.: Boss DS-1', 'Level · Tone · Dist') ] },
-      { title: 'Dinâmica, modulação e EQ', items: [
-        P('ns2', 104, 184, 'GATE-2', 'Noise gate (Spec 030)', 'Threshold · Decay · Mode — histerese, hold, range e key filter no editor'),
-        P('ce2', 104, 184, 'CHORUS-2', 'Ref.: Boss CE-2', 'Rate · Depth (chorus BBD)'),
-        P('mxr10', 232, 150, '10 BAND EQ', 'Ref.: MXR M108', '31 Hz–16 kHz ±12 dB · Volume · Gain') ] }
+      { title: 'Modulação — Chorus, Flanger, Phaser, Tremolo, Uni-Vibe & Rotary', items: [
+        P('ce2', 104, 184, 'CHORUS-2', 'Ref.: Boss CE-2', 'Rate · Depth (BBD)'),
+        P('trichorus', 140, 196, 'TRI-CHORUS', '3-Voice BBD Estéreo', 'Rate · Depth · Mix'),
+        P('flanger', 116, 190, 'TZ FLANGER', 'Through-Zero Flanger', 'Rate · Depth · Mix'),
+        P('phaser90', 104, 184, 'PHASER 90', 'Ref.: MXR Phase 90 FET', 'Speed (4 estágios)'),
+        P('tremolo', 104, 184, 'TREMOLO', 'Optical / Bias LFO', 'Rate · Depth · Mix'),
+        P('univibe', 148, 196, 'UNI-VIBE', 'Ref.: Shin-Ei Fotocélula', 'Speed · Intensity · Mix'),
+        P('rotary', 148, 196, 'ROTARY 147', 'Leslie Horn & Drum', 'Speed · Depth · Mix') ] },
+      { title: 'Dinâmica, EQ, Wah (GCB95) & Pitch', items: [
+        P('ns2', 104, 184, 'GATE-2', 'Noise gate (Spec 030)', 'Threshold · Decay · Histerese'),
+        P('mxr10', 232, 150, '10 BAND EQ', 'Ref.: MXR M108', '31 Hz–16 kHz ±12 dB · Vol · Gain'),
+        P('wah', 118, 214, 'CRY WAH GCB95', 'Indutor 500 mH · 0,01 µF', 'Sweep (350 Hz–2,2 kHz) · Q'),
+        P('whammy', 148, 210, 'WHAMMY', 'Expressão ±24 st', 'Shift · Mix · EXP 1'),
+        P('drop', 104, 184, 'DROP CAPO', 'Afinação Polifônica', 'Tune (Semitons) · Mix'),
+        P('harmonizer', 128, 196, 'HARMONIZER', 'Diatônico Inteligente', 'Intervalo · Balance · Escala'),
+        P('detune', 116, 184, 'MICRO DETUNE', 'Micro Pitch Dual', 'Detune (cents) · Mix') ] }
     ] };
   }
 }

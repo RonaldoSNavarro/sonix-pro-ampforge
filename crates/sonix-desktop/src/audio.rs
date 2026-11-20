@@ -19,6 +19,7 @@ use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
 use ampforge_dsp::fx::modulation::{ModModel, ModulationProcessor};
 use ampforge_dsp::fx::pitch::{PitchKey, PitchModel, PitchProcessor, ScaleType};
 use ampforge_dsp::fx::reverb::{ReverbModel, ReverbProcessor};
+use ampforge_dsp::fx::wah::{WahMode, WahProcessor};
 use ampforge_dsp::looper::{LooperPosition, LooperProcessor};
 use ampforge_dsp::modshop::{PowerTube, PreampTube, RectifierType, ToneStackTopology};
 use ampforge_dsp::queue::SpscOwnedQueue;
@@ -1639,6 +1640,7 @@ impl ChainSplitMode {
 #[serde(rename_all = "snake_case")]
 pub enum DagBlockKind {
     Gate,
+    Wah1,
     Pitch1,
     Drive,
     Split,
@@ -1658,6 +1660,7 @@ impl DagBlockKind {
     pub fn from_str_name(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "gate" => Some(Self::Gate),
+            "wah_1" | "wah" => Some(Self::Wah1),
             "pitch_1" | "pitch" => Some(Self::Pitch1),
             "drive" => Some(Self::Drive),
             "split" => Some(Self::Split),
@@ -1678,6 +1681,7 @@ impl DagBlockKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Gate => "gate",
+            Self::Wah1 => "wah_1",
             Self::Pitch1 => "pitch_1",
             Self::Drive => "drive",
             Self::Split => "split",
@@ -1775,10 +1779,11 @@ pub enum ModifierTargetParam {
     Dly1Intensity,
     Rev1Mix,
     GateThresholdDb,
+    Wah1Position,
 }
 
 impl ModifierTargetParam {
-    pub const COUNT: usize = 14;
+    pub const COUNT: usize = 15;
     pub const ALL: [Self; Self::COUNT] = [
         Self::Amp1Gain,
         Self::Amp1Master,
@@ -1794,6 +1799,7 @@ impl ModifierTargetParam {
         Self::Dly1Intensity,
         Self::Rev1Mix,
         Self::GateThresholdDb,
+        Self::Wah1Position,
     ];
 
     #[inline]
@@ -1817,6 +1823,7 @@ impl ModifierTargetParam {
             "dly_1.intensity" => Some((Self::Dly1Intensity, 0.0, 10.0)),
             "rev_1.mix" => Some((Self::Rev1Mix, 0.0, 100.0)),
             "gate.threshold_db" => Some((Self::GateThresholdDb, -90.0, 0.0)),
+            "wah_1.position" => Some((Self::Wah1Position, 0.0, 1.0)),
             _ => None,
         }
     }
@@ -2254,6 +2261,15 @@ pub enum DspParamUpdate {
     Cab2ResonanceHz(f32),
     Cab2HicutKhz(f32),
     Exp1Value(f32),
+    Wah1Enabled(bool),
+    Wah1Position(f32),
+    Wah1Q(f32),
+    Wah1Mode(WahMode),
+    Amp2Gain(f32),
+    Amp2Bass(f32),
+    Amp2Middle(f32),
+    Amp2Treble(f32),
+    Amp2Master(f32),
     BeginPresetCrossfade,
     TriggerPresetCrossfade,
 }
@@ -2602,6 +2618,8 @@ pub struct RealtimeDspChain {
     rev_1_enabled: bool,
     pitch_1: PitchProcessor,
     pitch_1_enabled: bool,
+    wah_1: WahProcessor,
+    wah_1_enabled: bool,
 
     // Buffers intermediários pré-alocados para processamento em tempo real zero-alloc
     temp_split_a_buf: Vec<f32>,
@@ -2711,6 +2729,10 @@ impl RealtimeDspChain {
         pitch_1.prepare(sample_rate);
         pitch_1.set_bypassed(true);
 
+        let mut wah_1 = WahProcessor::new();
+        wah_1.set_sample_rate(sample_rate);
+        wah_1.set_bypassed(true);
+
         // One-pole smoother com constante de tempo de 7ms (Spec 014, CA-8 / Spec 044 CA-4: >=63% no áudio em <=20ms e <63% em <5ms)
         let smoother = ampforge_dsp::smoother::OnePoleSmoother::new(sample_rate as f64, 0.007, 8.0);
 
@@ -2730,6 +2752,9 @@ impl RealtimeDspChain {
         amp_2.set_sample_rate(sample_rate);
         amp_2.set_oversampling_factor(2);
         amp_2.panel_mut().set_input_gain(5.0);
+        amp_2.panel_mut().set_bass(5.0);
+        amp_2.panel_mut().set_middle(5.0);
+        amp_2.panel_mut().set_treble(5.0);
         amp_2.panel_mut().set_master_volume(7.0);
 
         let mut cab_2 = VirtualCabProcessor::new();
@@ -2849,6 +2874,8 @@ impl RealtimeDspChain {
             rev_1_enabled: false,
             pitch_1,
             pitch_1_enabled: false,
+            wah_1,
+            wah_1_enabled: false,
 
             temp_split_a_buf: vec![0.0; 2048],
             temp_split_b_buf: vec![0.0; 2048],
@@ -2914,6 +2941,7 @@ impl RealtimeDspChain {
                 50.0, 1.0,                    // Mod2 Depth, RateHz
                 25.0, 3.0,                    // Dly1 Mix, Intensity
                 25.0, -65.0,                  // Rev1 Mix, GateThresholdDb
+                0.5,                          // Wah1 Position
             ],
             modifier_smoothed: [0.0; 16],
             modifier_outputs: [0.0; 16],
@@ -3065,6 +3093,7 @@ impl RealtimeDspChain {
             ModifierTargetParam::Dly1Intensity => self.dly_1.set_feedback_pct(val * 10.0),
             ModifierTargetParam::Rev1Mix => self.rev_1.set_mix_pct(val),
             ModifierTargetParam::GateThresholdDb => self.gate.set_threshold_db(val),
+            ModifierTargetParam::Wah1Position => self.wah_1.set_position(val),
         }
     }
 
@@ -3397,6 +3426,51 @@ impl RealtimeDspChain {
             DspParamUpdate::Rev1Spillover(b) => self.rev_1.set_spillover_enabled(b),
             DspParamUpdate::Amp2Enabled(b) => self.amp_2_enabled = b,
             DspParamUpdate::Amp2Model(m) => self.amp_2.set_target_model(m),
+            DspParamUpdate::Amp2Gain(v) => {
+                if v.is_finite() {
+                    self.amp_2.panel_mut().set_input_gain(v.clamp(0.0, 10.0));
+                }
+            }
+            DspParamUpdate::Amp2Bass(v) => {
+                if v.is_finite() {
+                    self.amp_2.panel_mut().set_bass(v.clamp(0.0, 10.0));
+                }
+            }
+            DspParamUpdate::Amp2Middle(v) => {
+                if v.is_finite() {
+                    self.amp_2.panel_mut().set_middle(v.clamp(0.0, 10.0));
+                }
+            }
+            DspParamUpdate::Amp2Treble(v) => {
+                if v.is_finite() {
+                    self.amp_2.panel_mut().set_treble(v.clamp(0.0, 10.0));
+                }
+            }
+            DspParamUpdate::Amp2Master(v) => {
+                if v.is_finite() {
+                    let m = v.clamp(0.0, 10.0);
+                    self.amp_2.panel_mut().set_master_volume(m);
+                    let db = if m <= 0.05 { -60.0 } else { (m - 7.0) * 2.5 };
+                    self.amp_2.panel_mut().set_output_level_db(db);
+                }
+            }
+            DspParamUpdate::Wah1Enabled(b) => {
+                self.wah_1_enabled = b;
+                self.wah_1.set_bypassed(!b);
+            }
+            DspParamUpdate::Wah1Position(pos) => {
+                if pos.is_finite() {
+                    let p = pos.clamp(0.0, 1.0);
+                    self.modifier_base_values[ModifierTargetParam::Wah1Position.index()] = p;
+                    self.wah_1.set_position(p);
+                }
+            }
+            DspParamUpdate::Wah1Q(q) => {
+                self.wah_1.set_q(q);
+            }
+            DspParamUpdate::Wah1Mode(m) => {
+                self.wah_1.set_mode(m);
+            }
             DspParamUpdate::Cab2Enabled(b) => self.cab_2_enabled = b,
             DspParamUpdate::Cab2Speaker(spk) => self.cab_2.set_speaker_model(spk),
             DspParamUpdate::TunerEnabled(b) => self.set_tuner_enabled(b),
@@ -3479,7 +3553,10 @@ impl RealtimeDspChain {
             }
             DspParamUpdate::Exp1Value(norm) => {
                 if norm.is_finite() {
-                    self.modifier_exp1 = norm.clamp(0.0, 1.0);
+                    let n = norm.clamp(0.0, 1.0);
+                    self.modifier_exp1 = n;
+                    self.modifier_base_values[ModifierTargetParam::Wah1Position.index()] = n;
+                    self.wah_1.set_position(n);
                 }
             }
             DspParamUpdate::BeginPresetCrossfade | DspParamUpdate::TriggerPresetCrossfade => {}
@@ -3523,6 +3600,8 @@ impl RealtimeDspChain {
         std::mem::swap(&mut self.master_level_db, &mut other.master_level_db);
         std::mem::swap(&mut self.pitch_1, &mut other.pitch_1);
         std::mem::swap(&mut self.pitch_1_enabled, &mut other.pitch_1_enabled);
+        std::mem::swap(&mut self.wah_1, &mut other.wah_1);
+        std::mem::swap(&mut self.wah_1_enabled, &mut other.wah_1_enabled);
         std::mem::swap(&mut self.modifier_base_values, &mut other.modifier_base_values);
     }
 
@@ -3655,6 +3734,7 @@ impl RealtimeDspChain {
         self.dly_1.set_sample_rate(sample_rate);
         self.rev_1.set_sample_rate(sample_rate);
         self.pitch_1.prepare(sample_rate);
+        self.wah_1.set_sample_rate(sample_rate);
         self.tuner.set_sample_rate(sample_rate);
         self.looper.prepare(sample_rate, 60);
         self.clean_input_ring.set_sample_rate(sample_rate);
@@ -4702,6 +4782,13 @@ impl RealtimeDspChain {
                     output_slice.copy_from_slice(input_slice);
                 }
             }
+            DagBlockKind::Wah1 => {
+                if self.wah_1_enabled {
+                    self.wah_1.process(input_slice, output_slice);
+                } else {
+                    output_slice.copy_from_slice(input_slice);
+                }
+            }
             DagBlockKind::Pitch1 => {
                 if self.pitch_1_enabled {
                     self.pitch_1.process(input_slice, output_slice);
@@ -4831,8 +4918,16 @@ impl RealtimeDspChain {
         let mut ran_amp1 = false;
         let mut ran_comp2 = false;
         let mut ran_mod2 = false;
+        let has_wah_slot = topo.slots.iter().any(|s| matches!(s, Some(DagBlockKind::Wah1)));
+        let mut ran_wah1 = false;
 
         for col in 0..12usize {
+            if !has_wah_slot && !ran_wah1 && col == 1 && self.wah_1_enabled {
+                self.wah_1
+                    .process(&self.temp_merge_l_buf[..len], &mut self.temp_dag_scratch_buf[..len]);
+                self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
+                ran_wah1 = true;
+            }
             if self.split_enabled && col == effective_split_col {
                 self.split.process(
                     &self.temp_merge_l_buf[..len],
@@ -4848,6 +4943,8 @@ impl RealtimeDspChain {
                     ran_comp2 = true;
                 } else if kind == DagBlockKind::Mod2 {
                     ran_mod2 = true;
+                } else if kind == DagBlockKind::Wah1 {
+                    ran_wah1 = true;
                 }
                 if self.execute_dag_block(kind, false, len) {
                     ran_amp1 = true;

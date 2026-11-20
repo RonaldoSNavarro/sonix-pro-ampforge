@@ -35,8 +35,13 @@
     "amp_1.vibrato_speed": 4.0,
     "amp_1.volume_2": 0.0,
     "amp_1.xformer_sat": 4.0,
+    "amp_2.bass": 5.0,
     "amp_2.enabled": false,
+    "amp_2.gain": 5.0,
+    "amp_2.master": 7.0,
+    "amp_2.middle": 5.0,
     "amp_2.model": "twin_ab763",
+    "amp_2.treble": 5.0,
     "cab_1.enabled": true,
     "cab_1.hicut_khz": 8.199999809265137,
     "cab_1.ir_enabled": false,
@@ -55,7 +60,7 @@
     "cab_1.mic2.phase_invert": false,
     "cab_1.mic2.position": 0.5,
     "cab_1.resonance_hz": 98.0,
-    "cab_1.speaker": "v30_4x12",
+    "cab_1.speaker": "v30_4x12_closed",
     "cab_2.enabled": false,
     "cab_2.hicut_khz": 9.0,
     "cab_2.resonance_hz": 90.0,
@@ -241,7 +246,11 @@
     "split.mode": "ab",
     "tuner.enabled": false,
     "tuner.output": "mute",
-    "tuner.ref_hz": 440.0
+    "tuner.ref_hz": 440.0,
+    "wah_1.enabled": false,
+    "wah_1.mode": "crybaby_gcb95",
+    "wah_1.position": 0.5,
+    "wah_1.q": 5.0
   },
   "status": "ok"
 }

@@ -1,4 +1,5 @@
 import { CONTROLS_REGISTRY } from './controls.registry.ts';
+import { createSplashScreenElement, updateSplashElement } from './components/SplashScreen.ts';
 import { renderAudioScreen } from './screens/Audio.ts';
 import { buildScopePaths, renderBancadaScreen } from './screens/Bancada.ts';
 import { renderBibliotecaScreen } from './screens/Biblioteca.ts';
@@ -128,6 +129,8 @@ export function buildShell(appRoot: HTMLElement, store: AppStore): {
   statusbar: HTMLElement;
   contextSpan: HTMLElement;
   bridgeStatusEl: HTMLElement;
+  splash: HTMLElement;
+  cleanupSplash: () => void;
 } {
   appRoot.innerHTML = '';
   appRoot.style.cssText = 'height:100%;width:100%;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#08090b;';
@@ -314,8 +317,21 @@ export function buildShell(appRoot: HTMLElement, store: AppStore): {
   const statusbar = document.createElement('footer');
   statusbar.className = 'sonix-statusbar';
 
-  appRoot.append(titlebar, menubar, banner, toast, host, statusbar);
-  return { titlebar, menubar, banner, toast, host, statusbar, contextSpan, bridgeStatusEl };
+  const splashRefs = createSplashScreenElement(store);
+
+  appRoot.append(titlebar, menubar, banner, toast, host, statusbar, splashRefs.root);
+  return {
+    titlebar,
+    menubar,
+    banner,
+    toast,
+    host,
+    statusbar,
+    contextSpan,
+    bridgeStatusEl,
+    splash: splashRefs.root,
+    cleanupSplash: splashRefs.cleanup,
+  };
 }
 
 function renderActiveScreen(host: HTMLElement, store: AppStore): void {
@@ -404,8 +420,10 @@ function updateLiveReadouts(
     statusbar: HTMLElement;
     contextSpan: HTMLElement;
     bridgeStatusEl: HTMLElement;
+    splash: HTMLElement;
   }
 ): void {
+  updateSplashElement(refs.splash, store);
   const isMain = store.screen === 'main';
   const isBib = store.screen === 'biblioteca';
   const showTitlebar = store.screen !== 'palco' && store.screen !== 'audio';
@@ -674,5 +692,6 @@ export function mountAppShell(appRoot: HTMLElement, store: AppStore): () => void
   return () => {
     unsub();
     cleanupShortcuts();
+    refs.cleanupSplash();
   };
 }

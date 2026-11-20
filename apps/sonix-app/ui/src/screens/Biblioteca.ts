@@ -108,6 +108,83 @@ const PEDAL_CATALOG: CatalogEntry<PedalModelId | RackModelId>[] = [
     notes: 'Chorus quente com modulação senoidal de linha de atraso analógica.',
   },
   {
+    id: 'trichorus',
+    name: 'Tri-Chorus Estéreo 3 Vozes',
+    specRef: '3 Linhas BBD Defasadas (120°)',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Modulação tridimensional clássica de rack de estúdio dos anos 80.',
+  },
+  {
+    id: 'flanger',
+    name: 'TZ Flanger Through-Zero',
+    specRef: 'Filtro Pente Through-Zero + Feedback',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Cancelamento de fase nulo e varredura jet metalizada através do ponto zero.',
+  },
+  {
+    id: 'phaser90',
+    name: 'Phaser 90 FET 4 Estágios',
+    specRef: '4 All-Pass FET + Controle Único Speed',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Notches assimétricos quentes de phaser laranja com um único potenciômetro de velocidade.',
+  },
+  {
+    id: 'tremolo',
+    name: 'Tremolo Óptico & Bias',
+    specRef: 'LFO Senoidal + Modulação de Bias',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Pulsação de amplitude orgânica modelada por optoacoplador e variação de corrente de placa.',
+  },
+  {
+    id: 'univibe',
+    name: 'Uni-Vibe Fotocélula 4 Estágios',
+    specRef: 'Filtros Assimétricos LDR + Lâmpada',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Resposta latejante assimétrica clássica de quatro fotocélulas e capacitor assimétrico.',
+  },
+  {
+    id: 'rotary',
+    name: 'Rotary 147 Horn & Drum',
+    specRef: 'Doppler Dual Rotor Agudos/Graves',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Rotação separada para corneta e tambor com inércia mecânica e dispersão Doppler.',
+  },
+  {
+    id: 'whammy',
+    name: 'Whammy Pitch Shifter',
+    specRef: 'Pitch Polifônico em Tempo Real (-24..+24 st)',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Transposição contínua controlada por pedal de expressão EXP 1 e mix seco/úmido.',
+  },
+  {
+    id: 'drop',
+    name: 'Drop Capo Polyphonic',
+    specRef: 'Reafinação Descendente Polifônica',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Afinação instantânea semitom a semitom para baixo preservando ataque de acordes.',
+  },
+  {
+    id: 'harmonizer',
+    name: 'Dual Intelligent Harmonizer',
+    specRef: 'Harmonização Diatônica por Tonalidade/Escala',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Dobra inteligente diatônica ajustável por tonalidade (C..B) e modo grego/menor.',
+  },
+  {
+    id: 'detune',
+    name: 'Micro Pitch Detune',
+    specRef: 'Duas Vozes em Micro-Desafinação Estéreo',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Espessamento tipo rack de estúdio sem oscilação perceptível de LFO.',
+  },
+  {
+    id: 'wah',
+    name: 'Cry Wah GCB95 / Clyde McCoy',
+    specRef: 'Indutor Ressonante 500 mH + Cap 0,01 µF',
+    sourceStatus: 'fonte: verificada',
+    notes: 'Varredura ressonante 350 Hz – 2,2 kHz com fator Q variável, voicing Clyde McCoy e Auto-Wah.',
+  },
+  {
     id: 'mxr10',
     name: '10-Band Graphic EQ',
     specRef: '10 Filtros Gráficos ISO',
@@ -156,7 +233,7 @@ export function renderBibliotecaScreen(store: AppStore): HTMLElement {
       store.libraryTab = 'amps';
       store.emit();
     }),
-    makeChipButton('ui.subtab', 'Pedais & Racks (12)', store.libraryTab === 'pedals', () => {
+    makeChipButton('ui.subtab', `Pedais & Racks (${PEDAL_CATALOG.length})`, store.libraryTab === 'pedals', () => {
       store.libraryTab = 'pedals';
       store.emit();
     })

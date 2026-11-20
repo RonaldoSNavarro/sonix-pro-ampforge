@@ -1,6 +1,7 @@
 import type { AppStore, BlockId } from '../store.ts';
 import { createAmpHeadElement, type AmpModelId } from '../components/AmpHead.ts';
-import { createPedalElement, type PedalModelId } from '../components/Pedal.ts';
+import { createKnob } from '../components/Knob.ts';
+import { createPedalElement, PEDAL_SIZES, type PedalModelId } from '../components/Pedal.ts';
 import { createRackElement } from '../components/Rack.ts';
 import { createTubeElement } from '../components/Tube.ts';
 import {
@@ -30,6 +31,31 @@ const AMP_LABELS: Record<string, { short: string; full: string; ref: string }> =
   twin_ab763: { short: 'Twin', full: 'TWIN REVERB · AB763', ref: 'Ref.: Fender Blackface AB763 · 4× 6L6GC' },
   dual_rect: { short: 'Recto', full: 'CALI RECTO · DUAL RECT', ref: 'Ref.: Mesa/Boogie Dual Rectifier Rev F · 4× 6L6GC' },
   ac30_tb: { short: 'AC30 TB', full: 'VOX · AC30/6 TB', ref: 'Ref.: Vox AC30 Top Boost · 4× EL84' },
+};
+
+const AMP2_MINI_TITLES: Record<string, string> = {
+  twin_ab763: 'US TWIN',
+  plexi_1959: 'BRIT PLEXI 1959',
+  jcm800_2203: 'BRIT 800 2203',
+  dual_rect: 'CALI DUAL RECT',
+  ac30_tb: 'AC30 TOP BOOST',
+};
+
+const MOD_MODEL_MAP: Record<string, { pedal: PedalModelId; label: string }> = {
+  AnalogBbdChorus: { pedal: 'ce2', label: 'Chorus-2' },
+  StereoTriChorus: { pedal: 'trichorus', label: 'Tri-Chorus' },
+  ThroughZeroFlanger: { pedal: 'flanger', label: 'TZ Flanger' },
+  Orange90Phaser: { pedal: 'phaser90', label: 'Phaser 90' },
+  OpticalBiasTremolo: { pedal: 'tremolo', label: 'Tremolo' },
+  PhotocellUnivibe: { pedal: 'univibe', label: 'Uni-Vibe' },
+  RotarySpeaker: { pedal: 'rotary', label: 'Rotary 147' },
+};
+
+const PITCH_MODEL_MAP: Record<string, { pedal: PedalModelId; label: string }> = {
+  whammy: { pedal: 'whammy', label: 'Whammy' },
+  drop_capo: { pedal: 'drop', label: 'Drop Capo' },
+  harmonizer: { pedal: 'harmonizer', label: 'Harmonizer' },
+  micro_detune: { pedal: 'detune', label: 'Detune' },
 };
 
 const CAB_LABELS: Record<string, string> = {
@@ -63,7 +89,7 @@ const GRID_BLOCKS: GridBlockDef[] = [
   { id: 'comp', row: 2, col: 4, tag: 'COMP', title: 'FET 76 COMPRESSOR', dotColor: '#6f7785', chTag: 'A', enableKey: 'comp_2.enabled', bypassControlId: 'comp_2.enabled', subText: () => 'FET 76' },
   { id: 'amp2', row: 2, col: 5, tag: 'AMP 2', title: 'AMP PARALELO 2', dotColor: '#ff8a3d', chTag: 'A', enableKey: 'amp_2.enabled', bypassControlId: 'amp_2.enabled', subText: (s) => (str(s, 'amp_2.model', 'twin_ab763') === 'twin_ab763' ? 'US Twin' : (AMP_LABELS[str(s, 'amp_2.model', 'twin_ab763')]?.short ?? 'US Twin')) },
   { id: 'cab2', row: 2, col: 6, tag: 'CAB 2', title: 'CAB PARALELO 2', dotColor: '#ffd166', chTag: 'A', enableKey: 'cab_2.enabled', bypassControlId: 'cab_2.enabled', subText: (s) => CAB_LABELS[str(s, 'cab_2.speaker', str(s, 'cab_2.model', 'alnico_blue_2x12'))] ?? '2×12 Alnico' },
-  { id: 'chorus', row: 2, col: 7, tag: 'MOD', title: 'CHORUS-2', dotColor: '#9c7cff', chTag: 'A', enableKey: 'mod_2.enabled', bypassControlId: 'mod_2.enabled', subText: () => 'Chorus-2' },
+  { id: 'chorus', row: 2, col: 7, tag: 'MOD', title: 'MODULAÇÃO', dotColor: '#9c7cff', chTag: 'A', enableKey: 'mod_2.enabled', bypassControlId: 'mod_2.enabled', subText: (s) => MOD_MODEL_MAP[str(s, 'mod_2.model', 'AnalogBbdChorus')]?.label ?? 'Chorus-2' },
 ];
 
 function tubeComplementForModel(model: AmpModelId): string[] {
@@ -197,7 +223,15 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
       for (const [val, meta] of Object.entries(AMP_LABELS)) {
         chips.appendChild(makeChipButton('amp_2.model', meta.short, cur === val, () => void store.setControl('amp_2.model', val)));
       }
-      container.append(chips, makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Merge', 0.0, (v) => `${v.toFixed(1)} dB`));
+      container.append(
+        chips,
+        makeControlSlider(store, 'amp_2.gain', 'amp_2.gain', 'Gain (AMP 2)', 5.0),
+        makeControlSlider(store, 'amp_2.bass', 'amp_2.bass', 'Bass', 5.0),
+        makeControlSlider(store, 'amp_2.middle', 'amp_2.middle', 'Mid', 5.0),
+        makeControlSlider(store, 'amp_2.treble', 'amp_2.treble', 'Treble', 5.0),
+        makeControlSlider(store, 'amp_2.master', 'amp_2.master', 'Master', 7.0),
+        makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Nível Merge', -6.0, (v) => `${v.toFixed(1)} dB`)
+      );
     }
     return;
   }
@@ -277,6 +311,34 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
       chips,
       makeControlSlider(store, 'pitch_1.semitones', 'pitch_1.semitones', 'Semitons', 0, (v) => `${v >= 0 ? '+' : ''}${Math.round(v)} st`),
       makeControlSlider(store, 'pitch_1.mix', 'pitch_1.mix', 'Mix', 100, (v) => `${Math.round(v)}%`)
+    );
+    return;
+  }
+
+  if (blk === 'wah') {
+    const wahModes: [string, string][] = [
+      ['crybaby_gcb95', 'CryBaby GCB95'],
+      ['clyde_mccoy', 'Clyde McCoy'],
+      ['auto_envelope', 'Auto-Wah'],
+    ];
+    const chips = document.createElement('div');
+    chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+    const cur = str(store, 'wah_1.mode', 'crybaby_gcb95');
+    for (const [val, lbl] of wahModes) {
+      chips.appendChild(makeChipButton('wah_1.mode', lbl, cur === val, () => void store.setControl('wah_1.mode', val)));
+    }
+    container.append(
+      makeToggleRow(store, 'wah_1.enabled', 'wah_1.enabled', 'Wah Ativo', false),
+      chips,
+      makeControlSlider(
+        store,
+        'wah_1.position',
+        'wah_1.position',
+        'Varredura (Pos)',
+        0.5,
+        (v) => `${Math.round(350 * (2200 / 350) ** v)} Hz`
+      ),
+      makeControlSlider(store, 'wah_1.q', 'wah_1.q', 'Ressonância Q', 5.0, (v) => v.toFixed(1))
     );
     return;
   }
@@ -737,9 +799,83 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
     'position:absolute;left:0;right:0;bottom:0;height:10px;border-radius:0 0 10px 10px;background:linear-gradient(180deg,#5d6268,#2b2e32);pointer-events:none;';
 
   const boardTopLabels = document.createElement('div');
-  boardTopLabels.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:8px;flex:none;';
+  boardTopLabels.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;flex:none;position:relative;z-index:3;';
   boardTopLabels.innerHTML =
     '<span class="m-lbl" style="font-size:9px;">Pedalboard</span><span style="font-size:10px;color:#9aa3ad;">PRÉ-AMP</span><span style="flex:1;height:1px;background:#24282d;"></span><span style="font-size:10px;color:#9aa3ad;">LINHA B / PÓS</span><span style="flex:1;height:1px;background:#24282d;"></span>';
+
+  const makeStageQuickPill = (blkTarget: 'wah' | 'pitch', text: string, activeKey: string) => {
+    const isOn = bool(store, activeKey, false);
+    const isSel = store.selectedBlock === blkTarget;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'm-chip m-mono';
+    b.dataset.controlId = 'ui.inspector_select';
+    b.dataset.blockSelect = blkTarget;
+    b.textContent = text;
+    b.setAttribute('aria-pressed', String(isSel || isOn));
+    b.style.cssText = `height:16px;padding:0 5px;font-size:8.5px;line-height:1;opacity:${isSel || isOn ? '1' : '0.72'};border-color:${isOn ? '#ff9f43' : '#2a2e35'};color:${isOn ? '#ffb86c' : '#9aa3ad'};`;
+    b.addEventListener('click', () => store.selectBlock(blkTarget));
+    return b;
+  };
+  boardTopLabels.insertBefore(
+    makeStageQuickPill('wah', 'WAH', 'wah_1.enabled'),
+    boardTopLabels.children[2] ?? null
+  );
+  boardTopLabels.insertBefore(
+    makeStageQuickPill('pitch', 'PITCH', 'pitch_1.enabled'),
+    boardTopLabels.children[3] ?? null
+  );
+
+  // Mini-cabeçote AMP 2 na seção LINHA B / PÓS (T-29 / CA-4)
+  const amp2ModelId = str(store, 'amp_2.model', 'twin_ab763');
+  const amp2MiniTitle = AMP2_MINI_TITLES[amp2ModelId] ?? 'US TWIN';
+  const splitActive = bool(store, 'split.enabled', false) && bool(store, 'amp_2.enabled', true);
+  const amp2Mini = document.createElement('div');
+  amp2Mini.dataset.region = 'amp2-mini';
+  amp2Mini.style.cssText =
+    `position:absolute;right:16px;top:28px;width:352px;height:78px;border-radius:8px;background:linear-gradient(180deg,#1a1d22,#0b0d10);border:1px solid ${splitActive ? '#ff8a3d' : '#2e333c'};box-shadow:0 8px 16px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.12);padding:6px 12px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between;z-index:2;opacity:${splitActive ? '1' : '0.72'};`;
+
+  const amp2Hdr = document.createElement('button');
+  amp2Hdr.type = 'button';
+  amp2Hdr.dataset.controlId = 'ui.inspector_select';
+  amp2Hdr.dataset.blockSelect = 'amp2';
+  amp2Hdr.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;padding:0;cursor:pointer;text-align:left;';
+  amp2Hdr.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${splitActive ? '#ff8a3d' : '#6f7785'};box-shadow:${splitActive ? '0 0 6px #ff8a3d' : 'none'};flex:none;"></span><span class="m-osw" style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#f1f3f5;">AMP 2 · ${amp2MiniTitle} (PARALELO)</span><span style="flex:1;"></span><span class="m-mono" style="font-size:9px;color:${splitActive ? '#4ee680' : '#9aa3ad'};">${splitActive ? 'LINHA B ATIVA' : 'LINHA B BYPASS'}</span>`;
+  amp2Hdr.addEventListener('click', () => {
+    if (store.selectedBlock !== 'amp2') store.selectBlock('amp2');
+  });
+
+  const amp2KnobsRow = document.createElement('div');
+  amp2KnobsRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+  for (const k of [
+    { id: 'amp_2.gain', lbl: 'GAIN', def: 5.0 },
+    { id: 'amp_2.bass', lbl: 'BASS', def: 5.0 },
+    { id: 'amp_2.middle', lbl: 'MID', def: 5.0 },
+    { id: 'amp_2.treble', lbl: 'TREBLE', def: 5.0 },
+    { id: 'amp_2.master', lbl: 'MASTER', def: 7.0 },
+  ]) {
+    const col = document.createElement('div');
+    col.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
+    const knob = createKnob({
+      controlId: k.id,
+      label: `AMP 2 ${k.lbl}`,
+      value: numSafe(store, k.id, k.def),
+      min: 0,
+      max: 10,
+      step: 0.1,
+      defaultValue: k.def,
+      skinClass: 'p-black',
+      sizePx: 24,
+      onChange: (v) => store.setControl(k.id, v),
+      onDragState: (dr) => store.setDraggingKnob(dr),
+    });
+    const kl = document.createElement('span');
+    kl.textContent = k.lbl;
+    kl.style.cssText = 'font-size:7px;font-weight:700;color:#c9ced4;line-height:1;';
+    col.append(knob, kl);
+    amp2KnobsRow.appendChild(col);
+  }
+  amp2Mini.append(amp2Hdr, amp2KnobsRow);
 
   const pedalsRow = document.createElement('div');
   pedalsRow.style.cssText = 'flex:1;min-height:0;display:flex;align-items:flex-end;justify-content:center;gap:0;padding:0;overflow:hidden;';
@@ -776,15 +912,16 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   };
 
   const driveModel = str(store, 'drive.model', 'ts808') as PedalModelId;
-  const driveSizes: Record<string, [number, number]> = {
-    ts808: [130, 210],
-    klon: [128, 200],
-    rat: [116, 180],
-    muff: [160, 200],
-    fuzzface: [180, 180],
-    ds1: [104, 184],
-  };
-  const [dw, dh] = driveSizes[driveModel] ?? [130, 210];
+  const [dw, dh] = PEDAL_SIZES[driveModel] ?? [130, 210];
+  const modKey = str(store, 'mod_2.model', 'AnalogBbdChorus');
+  const modPedal = MOD_MODEL_MAP[modKey]?.pedal ?? 'ce2';
+  const [mw, mh] = PEDAL_SIZES[modPedal] ?? [104, 184];
+  const showWah = bool(store, 'wah_1.enabled', false) || store.selectedBlock === 'wah';
+  const showPitch = bool(store, 'pitch_1.enabled', false) || store.selectedBlock === 'pitch';
+  const pitchKey = str(store, 'pitch_1.model', 'whammy');
+  const pitchPedal = PITCH_MODEL_MAP[pitchKey]?.pedal ?? 'whammy';
+  const [pw, ph] = PEDAL_SIZES[pitchPedal] ?? [148, 210];
+  const rowScale = showWah && showPitch ? 0.78 : showWah || showPitch ? 0.86 : 1.0;
 
   const splitJoin = document.createElement('div');
   splitJoin.style.cssText = 'display:flex;align-items:flex-end;margin-bottom:150px;';
@@ -799,16 +936,31 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   cRight.style.width = '12px';
   splitJoin.append(cLeft, divider, cRight);
 
+  if (showWah) {
+    const [ww, wh] = PEDAL_SIZES.wah;
+    pedalsRow.append(
+      wrapScaledPedal(createPedalElement('wah', store), rowScale, ww, wh, 0, 'wah', 'wah_1.enabled'),
+      makeCable(12, 130)
+    );
+  }
   pedalsRow.append(
-    wrapScaledPedal(createPedalElement('ns2', store), 1.0, 104, 184, 0, 'gate', 'gate.enabled'),
-    makeCable(16, 150),
-    wrapScaledPedal(createPedalElement(driveModel, store), 1.0, dw, dh, 0, 'drive', 'drive.enabled'),
-    splitJoin,
-    wrapScaledPedal(createPedalElement('ce2', store), 1.0, 104, 184, 0, 'chorus', 'mod_2.enabled'),
-    makeCable(16, 110),
-    wrapScaledPedal(createPedalElement('mxr10', store), 1.0, 232, 150, 0, 'eq', 'eq_1.enabled')
+    wrapScaledPedal(createPedalElement('ns2', store), rowScale, 104, 184, 0, 'gate', 'gate.enabled'),
+    makeCable(showWah || showPitch ? 12 : 16, 150),
+    wrapScaledPedal(createPedalElement(driveModel, store), rowScale, dw, dh, 0, 'drive', 'drive.enabled')
   );
-  board.append(boardRail, boardTopLabels, pedalsRow);
+  if (showPitch) {
+    pedalsRow.append(
+      makeCable(12, 130),
+      wrapScaledPedal(createPedalElement(pitchPedal, store), rowScale, pw, ph, 0, 'pitch', 'pitch_1.enabled')
+    );
+  }
+  pedalsRow.append(
+    splitJoin,
+    wrapScaledPedal(createPedalElement(modPedal, store), rowScale, mw, mh, 0, 'chorus', 'mod_2.enabled'),
+    makeCable(showWah || showPitch ? 12 : 16, 110),
+    wrapScaledPedal(createPedalElement('mxr10', store), rowScale, 232, 150, 0, 'eq', 'eq_1.enabled')
+  );
+  board.append(boardRail, boardTopLabels, amp2Mini, pedalsRow);
 
   const rack = document.createElement('div');
   rack.style.cssText =
@@ -848,7 +1000,36 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
   inspector.style.cssText =
     'border-left:1px solid #000;display:flex;flex-direction:column;min-height:0;box-shadow:inset 1px 0 0 rgba(255,255,255,.05);overflow:hidden;';
 
-  const curDef = GRID_BLOCKS.find((g) => g.id === store.selectedBlock) ?? GRID_BLOCKS[4];
+  const extraBlockDefs: Partial<Record<BlockId, GridBlockDef>> = {
+    wah: {
+      id: 'wah',
+      row: 1,
+      col: 2,
+      tag: 'WAH',
+      title: 'CRY WAH GCB95',
+      dotColor: '#ffb347',
+      chTag: 'A',
+      enableKey: 'wah_1.enabled',
+      bypassControlId: 'wah_1.enabled',
+      subText: () => 'Wah 500 mH',
+    },
+    pitch: {
+      id: 'pitch',
+      row: 1,
+      col: 3,
+      tag: 'PITCH',
+      title: 'PITCH SHIFTER',
+      dotColor: '#ff5263',
+      chTag: 'A',
+      enableKey: 'pitch_1.enabled',
+      bypassControlId: 'pitch_1.enabled',
+      subText: (s) => PITCH_MODEL_MAP[str(s, 'pitch_1.model', 'whammy')]?.label ?? 'Whammy',
+    },
+  };
+  const curDef =
+    GRID_BLOCKS.find((g) => g.id === store.selectedBlock) ??
+    extraBlockDefs[store.selectedBlock] ??
+    GRID_BLOCKS[4];
   const ampMeta = AMP_LABELS[ampId] ?? AMP_LABELS.dual_rect;
 
   const inspTopSec = document.createElement('div');
@@ -924,7 +1105,9 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
     '<span class="m-lbl" style="font-size:9px;flex:1;">Parâmetros</span><span class="m-mono" style="font-size:9px;color:#29c46a;">TOCANDO</span>';
 
   const paramsBody = document.createElement('div');
-  paramsBody.style.cssText = 'display:flex;flex-direction:column;gap:8px;overflow:hidden;';
+  paramsBody.style.cssText = `display:flex;flex-direction:column;gap:${
+    store.selectedBlock === 'amp2' ? 5 : 8
+  }px;overflow:hidden;`;
   renderInspectorBody(store, paramsBody);
 
   const modBox = document.createElement('div');
