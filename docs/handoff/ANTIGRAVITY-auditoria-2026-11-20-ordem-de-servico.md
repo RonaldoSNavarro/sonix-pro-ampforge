@@ -4,7 +4,7 @@
 |---|---|
 | Destinatário | Agente Antigravity |
 | Emitida por | Dono do projeto |
-| Base | `main` @ `8f499ac900fe2807e74e41707e380af031cd925d` (árvore limpa em 2026-11-20) |
+| Base | código auditado em `8f499ac900fe2807e74e41707e380af031cd925d` (árvore limpa em 2026-11-20); a branch parte da ponta de `main`, que difere de `8f499ac` só por este documento |
 | Origem dos achados | Auditoria técnica (rodada 1) + complemento com medições no código real |
 | Itens | AUD-01 a AUD-47 (4 × P0, 19 × P1, 17 × P2, 7 × P3) |
 | Entregável | Branch `fix/auditoria-2026-11-20` + relatório no formato da §6 |
@@ -77,7 +77,7 @@ Não invente valor de componente, fonte, citação ou medição. Quando o item m
 Um bloqueio aceito **não interrompe o trabalho**: registre e siga para o próximo item. Qualquer outro problema é seu para resolver, inclusive teste difícil, refatoração grande ou conflito entre testes.
 
 ### 0.8 Git
-- Crie a branch `fix/auditoria-2026-11-20` a partir de `8f499ac`.
+- Crie a branch `fix/auditoria-2026-11-20` a partir da ponta de `main` (que contém este documento). O código auditado é o de `8f499ac`; o único commit posterior é o deste handoff, que só adiciona este arquivo.
 - Faça **um commit por item**, com título `fix(AUD-NN): …`, `test(AUD-NN): …` ou `docs(AUD-NN): …`.
 - O corpo do commit traz o comando de teste e o resultado numérico.
 - Se o item exigir, use mais de um commit, mas nunca misture dois itens no mesmo commit.
