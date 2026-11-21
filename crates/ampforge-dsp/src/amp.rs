@@ -457,7 +457,7 @@ pub fn find_model_by_name(name: &str) -> Option<AmpModelId> {
     }
 }
 
-pub struct WhiteBoxAmpProcessor {
+struct AmpCore {
     pub model_id: AmpModelId,
     panel: AmpFrontPanel,
     mod_settings: ChassisModSettings,
@@ -483,12 +483,6 @@ pub struct WhiteBoxAmpProcessor {
     interp_hist: [f64; 8],
     aa_filters: [BiquadFilter; 14],
     ai_filters: [BiquadFilter; 4],
-    target_model_id: Option<AmpModelId>,
-    target_mod_settings: Option<ChassisModSettings>,
-    target_voicing_filter1: BiquadFilter,
-    target_voicing_filter2: BiquadFilter,
-    model_crossfade: f32,
-    crossfade_step: f32,
     oversampling_factor: usize,
     sag_state: f64,
     xformer_lf_state: f64,
@@ -498,6 +492,16 @@ pub struct WhiteBoxAmpProcessor {
     standby_env: f64,
     smooth_tube_gain: f64,
     spring_reverb: SpringReverbTank,
+}
+
+pub struct WhiteBoxAmpProcessor {
+    pub model_id: AmpModelId,
+    amp: Box<AmpCore>,
+    amp_transicao: Box<AmpCore>,
+    transicao_ativa: bool,
+    transicao_amostras_feitas: usize,
+    transicao_total_amostras: usize,
+    transicao_buf: [f32; 64],
 }
 
 #[derive(Debug, Clone)]
@@ -522,6 +526,14 @@ impl Default for SpringReverbTank {
 }
 
 impl SpringReverbTank {
+    fn reset(&mut self) {
+        for line in &mut self.lines {
+            line.fill(0.0);
+        }
+        self.idx = [0; 4];
+        self.lp = [0.0; 4];
+    }
+
     fn set_sample_rate(&mut self, sr: f32) {
         let fs = (sr as f64).max(1.0);
         let scale = (fs / 48000.0).clamp(0.5, 2.0);
@@ -841,7 +853,7 @@ fn triode_stage_gain(ra_ohm: f64, rl_ohm: f64, rk_unbypassed_ohm: f64) -> f64 {
         / (r_ac + TRIODE_12AX7_RP_OHM + (TRIODE_12AX7_MU + 1.0) * rk_unbypassed_ohm)
 }
 
-impl WhiteBoxAmpProcessor {
+impl AmpCore {
     pub fn create_voicing_filters(model: AmpModelId, sr: f64) -> (BiquadFilter, BiquadFilter) {
         // Curvas físicas documentadas em docs/amps/voicing-fontes.md e esquemas elétricos originais
         match model {
@@ -889,8 +901,6 @@ impl WhiteBoxAmpProcessor {
             presence_filter: BiquadFilter::default(),
             voicing_filter1: v1,
             voicing_filter2: v2,
-            target_voicing_filter1: BiquadFilter::default(),
-            target_voicing_filter2: BiquadFilter::default(),
             adaa_pre_prev: 0.0,
             adaa_s2_prev: 0.0,
             adaa_s3_prev: 0.0,
@@ -899,10 +909,6 @@ impl WhiteBoxAmpProcessor {
             interp_hist: [0.0; 8],
             aa_filters: [BiquadFilter::default(); 14],
             ai_filters: [BiquadFilter::default(); 4],
-            target_model_id: None,
-            target_mod_settings: None,
-            model_crossfade: 0.0,
-            crossfade_step: 1.0 / (48000.0 * 0.020),
             oversampling_factor: default_os,
             sag_state: 0.0,
             xformer_lf_state: 0.0,
@@ -917,120 +923,41 @@ impl WhiteBoxAmpProcessor {
         s
     }
 
-    pub fn set_power(&mut self, power: bool) {
-        self.panel.power = power;
-    }
-
-    pub fn set_standby(&mut self, standby: bool) {
-        self.panel.standby = standby;
-    }
-
-    pub fn set_input_jack(&mut self, jack: AmpInputJack) {
-        self.panel.input_jack = jack;
-        self.panel.jumpered = jack == AmpInputJack::Jumpered;
-    }
-
-    pub fn set_jumpered(&mut self, jumpered: bool) {
-        self.panel.jumpered = jumpered;
-        if jumpered {
-            self.panel.input_jack = AmpInputJack::Jumpered;
-        } else if self.panel.input_jack == AmpInputJack::Jumpered {
-            self.panel.input_jack = AmpInputJack::High1;
-        }
-    }
-
-    pub fn set_channel_mode(&mut self, mode: AmpChannelMode) {
-        self.panel.channel_mode = mode;
-    }
-
-    pub fn set_spongy_power(&mut self, spongy: bool) {
-        self.panel.spongy = spongy;
-    }
-
-    pub fn set_secondary_impedance_ohms(&mut self, ohms: u8) {
-        self.panel.impedance_ohms = match ohms {
-            4 | 8 | 16 => ohms,
-            _ => 16,
-        };
-    }
-
-    pub fn set_preamp_tube_type(&mut self, tube: PreampTube) {
-        self.mod_settings.preamp_tube = tube;
-    }
-
-    pub fn set_power_tube_type(&mut self, tube: PowerTube) {
-        self.mod_settings.power_tube = tube;
-    }
-
-    pub fn set_power_tube_bias_ma(&mut self, ma: f32) {
-        self.mod_settings.bias_ma = ma.clamp(20.0, 55.0);
-    }
-
-    pub fn set_sag_amount(&mut self, sag: f32) {
-        self.mod_settings.sag = sag.clamp(0.0, 10.0);
-    }
-
-    pub fn set_rectifier_type(&mut self, rec: RectifierType) {
-        self.mod_settings.rectifier = rec;
+    fn reset(&mut self) {
+        self.bright_state = 0.0;
+        self.bright2_state = 0.0;
+        self.interstage_hp1 = 0.0;
+        self.interstage_hp2 = 0.0;
+        self.interstage_hp3 = 0.0;
+        self.miller_lp1 = 0.0;
+        self.miller_lp2 = 0.0;
+        self.ac30_cut_lp = 0.0;
+        self.passive_tonestack = PassiveToneStack::new();
+        self.presence_filter = BiquadFilter::default();
+        let sr = (self.sample_rate as f64) * (self.oversampling_factor.max(2) as f64);
+        let (v1, v2) = Self::create_voicing_filters(self.model_id, sr);
+        self.voicing_filter1 = v1;
+        self.voicing_filter2 = v2;
+        self.adaa_pre_prev = 0.0;
+        self.adaa_s2_prev = 0.0;
+        self.adaa_s3_prev = 0.0;
+        self.adaa_s4_prev = 0.0;
+        self.adaa_power_prev = 0.0;
+        self.interp_hist = [0.0; 8];
+        self.update_aa_filters();
+        self.sag_state = 0.0;
+        self.xformer_lf_state = 0.0;
+        self.speaker_res_filter = BiquadFilter::default();
+        self.lfo_phase = 0.0;
+        self.smooth_tube_gain = 1.0;
+        self.spring_reverb.reset();
+        self.spring_reverb.set_sample_rate(self.sample_rate);
     }
 
     /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
     pub fn current_b_plus_v(&self) -> f32 {
         let factor = (1.0 - self.sag_state as f32).max(0.15);
         self.mod_settings.preamp_plate_v * factor
-    }
-
-    pub fn set_negative_feedback(&mut self, nfb: f32) {
-        self.mod_settings.nfb = nfb.clamp(0.0, 10.0);
-    }
-
-    pub fn set_transformer_saturation(&mut self, sat: f32) {
-        self.mod_settings.xformer_sat = sat.clamp(0.0, 10.0);
-    }
-
-    pub fn set_preamp_plate_voltage(&mut self, v: f32) {
-        self.mod_settings.preamp_plate_v = v.clamp(180.0, 340.0);
-    }
-
-    pub fn set_triode_asymmetry(&mut self, asym: f32) {
-        self.mod_settings.triode_asym = asym.clamp(0.0, 0.60);
-    }
-
-    pub fn set_tonestack_topology(&mut self, ts: ToneStackTopology) {
-        self.mod_settings.tonestack = ts;
-    }
-
-    pub fn set_target_model(&mut self, model: AmpModelId) {
-        if model != self.model_id {
-            let sr = self.sample_rate as f64 * (self.oversampling_factor.max(2) as f64);
-            let (v1, v2) = Self::create_voicing_filters(model, sr);
-            self.target_voicing_filter1 = v1;
-            self.target_voicing_filter2 = v2;
-            self.target_model_id = Some(model);
-            self.target_mod_settings = Some(nominal_mod_settings_for_model(model));
-            self.model_crossfade = 0.0;
-            self.crossfade_step = 1.0 / (self.sample_rate * 0.020).max(1.0);
-        }
-    }
-
-    pub fn set_oversampling_factor(&mut self, factor: usize) {
-        let new_factor = match factor {
-            2 => 2,
-            4 => 4,
-            _ => 8,
-        };
-        if self.oversampling_factor != new_factor {
-            self.oversampling_factor = new_factor;
-            self.update_aa_filters();
-        }
-    }
-
-    pub fn algorithmic_latency_samples(&self) -> u32 {
-        match self.oversampling_factor {
-            2 => 4,
-            4 => 8,
-            _ => 16,
-        }
     }
 
     fn update_aa_filters(&mut self) {
@@ -1109,36 +1036,6 @@ impl WhiteBoxAmpProcessor {
         10.0 * mag_sq.max(1e-18).log10()
     }
 
-    pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.sample_rate = sample_rate.max(1.0);
-        self.spring_reverb.set_sample_rate(self.sample_rate);
-        self.update_aa_filters();
-    }
-
-    pub fn set_speaker_resonance_hz(&mut self, hz: f32) {
-        self.speaker_resonance_hz = hz.clamp(50.0, 200.0);
-    }
-
-    pub fn speaker_resonance_hz(&self) -> f32 {
-        self.speaker_resonance_hz
-    }
-
-    pub fn panel(&self) -> &AmpFrontPanel {
-        &self.panel
-    }
-
-    pub fn panel_mut(&mut self) -> &mut AmpFrontPanel {
-        &mut self.panel
-    }
-
-    pub fn mod_settings(&self) -> &ChassisModSettings {
-        &self.mod_settings
-    }
-
-    pub fn mod_settings_mut(&mut self) -> &mut ChassisModSettings {
-        &mut self.mod_settings
-    }
-
     fn resolve_tonestack_topology(&self, model: AmpModelId) -> ToneStackTopology {
         if self.mod_settings.tonestack != ToneStackTopology::Model {
             return self.mod_settings.tonestack;
@@ -1164,7 +1061,7 @@ impl WhiteBoxAmpProcessor {
         }
     }
 
-    pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+    fn process_core(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), output.len());
 
         let os_factor = self.oversampling_factor.max(2);
@@ -1229,12 +1126,6 @@ impl WhiteBoxAmpProcessor {
         };
         self.voicing_filter1.update_coeffs(v1_cur);
         self.voicing_filter2.update_coeffs(v2_cur);
-
-        if let Some(target) = self.target_model_id {
-            let (v1_tgt, v2_tgt) = Self::create_voicing_filters(target, sr);
-            self.target_voicing_filter1.update_coeffs(v1_tgt);
-            self.target_voicing_filter2.update_coeffs(v2_tgt);
-        }
 
         let pre_gain_db = -44.0 + (self.panel.input_gain as f64 / 10.0) * 62.0;
         let pre_gain_lin = 10.0f64.powf(pre_gain_db / 20.0);
@@ -1316,26 +1207,13 @@ impl WhiteBoxAmpProcessor {
             }
         };
 
-        let cur_drive = calc_power_drive(
+        let power_saturation_drive = calc_power_drive(
             self.model_id,
             self.panel.input_gain,
             self.panel.volume_2,
             self.panel.master_volume,
             self.panel.channel_mode,
         );
-        let target_drive = if let Some(target) = self.target_model_id {
-            calc_power_drive(
-                target,
-                self.panel.input_gain,
-                self.panel.volume_2,
-                self.panel.master_volume,
-                self.panel.channel_mode,
-            )
-        } else {
-            cur_drive
-        };
-        let alpha_f64 = self.model_crossfade as f64;
-        let power_saturation_drive = (1.0 - alpha_f64) * cur_drive + alpha_f64 * target_drive;
 
         let (target_tube_gain, ef86_knee) = match self.mod_settings.preamp_tube {
             PreampTube::Ax7A => (1.0f64, 1.0f64),
@@ -1622,20 +1500,10 @@ impl WhiteBoxAmpProcessor {
                 rev_feed_acc += v_base;
                 sub_count += 1;
 
-                // Model Voicing & Glitch-Free Crossfade
-                let v_voiced = if self.target_model_id.is_some() {
-                    let mut va = self.voicing_filter1.process(v_base);
-                    va = self.voicing_filter2.process(va);
-
-                    let mut vb = self.target_voicing_filter1.process(v_base);
-                    vb = self.target_voicing_filter2.process(vb);
-
-                    let alpha = self.model_crossfade as f64;
-                    (1.0 - alpha) * va + alpha * vb
-                } else {
-                    let mut va = self.voicing_filter1.process(v_base);
-                    va = self.voicing_filter2.process(va);
-                    va
+                // Model Voicing
+                let v_voiced = {
+                    let va = self.voicing_filter1.process(v_base);
+                    self.voicing_filter2.process(va)
                 };
 
                 // Twin Reverb vibrato channel mixes Spring Reverb before PI
@@ -1738,26 +1606,256 @@ impl WhiteBoxAmpProcessor {
                 self.interstage_hp3 = crate::denormal::flush_f64(rev_feed_acc / (sub_count as f64));
             }
 
-            if self.target_model_id.is_some() {
-                self.model_crossfade += self.crossfade_step;
-                if self.model_crossfade >= 1.0 {
-                    let target = self.target_model_id.take().unwrap();
-                    self.model_id = target;
-                    if let Some(ms) = self.target_mod_settings.take() {
-                        self.mod_settings = ms;
-                    }
-                    self.voicing_filter1 = self.target_voicing_filter1;
-                    self.voicing_filter2 = self.target_voicing_filter2;
-                    self.model_crossfade = 0.0;
-                }
-            }
-
             let out_sample = (last_sample.clamp(-0.999, 0.999) * out_lin * self.standby_env).clamp(-1.0, 1.0);
             output[i] = if out_sample.is_finite() {
                 out_sample as f32
             } else {
                 0.0
             };
+        }
+    }
+}
+
+impl WhiteBoxAmpProcessor {
+    pub fn create_voicing_filters(model: AmpModelId, sr: f64) -> (BiquadFilter, BiquadFilter) {
+        AmpCore::create_voicing_filters(model, sr)
+    }
+
+    pub fn new(model_id: AmpModelId) -> Self {
+        Self {
+            model_id,
+            amp: Box::new(AmpCore::new(model_id)),
+            amp_transicao: Box::new(AmpCore::new(model_id)),
+            transicao_ativa: false,
+            transicao_amostras_feitas: 0,
+            transicao_total_amostras: 960,
+            transicao_buf: [0.0; 64],
+        }
+    }
+
+    pub fn set_power(&mut self, power: bool) {
+        self.amp.panel.power = power;
+        self.amp_transicao.panel.power = power;
+    }
+
+    pub fn set_standby(&mut self, standby: bool) {
+        self.amp.panel.standby = standby;
+        self.amp_transicao.panel.standby = standby;
+    }
+
+    pub fn set_input_jack(&mut self, jack: AmpInputJack) {
+        self.amp.panel.input_jack = jack;
+        self.amp.panel.jumpered = jack == AmpInputJack::Jumpered;
+        self.amp_transicao.panel.input_jack = jack;
+        self.amp_transicao.panel.jumpered = self.amp.panel.jumpered;
+    }
+
+    pub fn set_jumpered(&mut self, jumpered: bool) {
+        self.amp.panel.jumpered = jumpered;
+        if jumpered {
+            self.amp.panel.input_jack = AmpInputJack::Jumpered;
+        } else if self.amp.panel.input_jack == AmpInputJack::Jumpered {
+            self.amp.panel.input_jack = AmpInputJack::High1;
+        }
+        self.amp_transicao.panel.jumpered = jumpered;
+        self.amp_transicao.panel.input_jack = self.amp.panel.input_jack;
+    }
+
+    pub fn set_channel_mode(&mut self, mode: AmpChannelMode) {
+        self.amp.panel.channel_mode = mode;
+        self.amp_transicao.panel.channel_mode = mode;
+    }
+
+    pub fn set_spongy_power(&mut self, spongy: bool) {
+        self.amp.panel.spongy = spongy;
+        self.amp_transicao.panel.spongy = spongy;
+    }
+
+    pub fn set_secondary_impedance_ohms(&mut self, ohms: u8) {
+        let clamped = match ohms {
+            4 | 8 | 16 => ohms,
+            _ => 16,
+        };
+        self.amp.panel.impedance_ohms = clamped;
+        self.amp_transicao.panel.impedance_ohms = clamped;
+    }
+
+    pub fn set_preamp_tube_type(&mut self, tube: PreampTube) {
+        self.amp.mod_settings.preamp_tube = tube;
+    }
+
+    pub fn set_power_tube_type(&mut self, tube: PowerTube) {
+        self.amp.mod_settings.power_tube = tube;
+    }
+
+    pub fn set_power_tube_bias_ma(&mut self, ma: f32) {
+        self.amp.mod_settings.bias_ma = ma.clamp(20.0, 55.0);
+    }
+
+    pub fn set_sag_amount(&mut self, sag: f32) {
+        self.amp.mod_settings.sag = sag.clamp(0.0, 10.0);
+    }
+
+    pub fn set_rectifier_type(&mut self, rec: RectifierType) {
+        self.amp.mod_settings.rectifier = rec;
+    }
+
+    /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
+    pub fn current_b_plus_v(&self) -> f32 {
+        self.amp.current_b_plus_v()
+    }
+
+    pub fn set_negative_feedback(&mut self, nfb: f32) {
+        self.amp.mod_settings.nfb = nfb.clamp(0.0, 10.0);
+    }
+
+    pub fn set_transformer_saturation(&mut self, sat: f32) {
+        self.amp.mod_settings.xformer_sat = sat.clamp(0.0, 10.0);
+    }
+
+    pub fn set_preamp_plate_voltage(&mut self, v: f32) {
+        self.amp.mod_settings.preamp_plate_v = v.clamp(180.0, 340.0);
+    }
+
+    pub fn set_triode_asymmetry(&mut self, asym: f32) {
+        self.amp.mod_settings.triode_asym = asym.clamp(0.0, 0.60);
+    }
+
+    pub fn set_tonestack_topology(&mut self, ts: ToneStackTopology) {
+        self.amp.mod_settings.tonestack = ts;
+    }
+
+    pub fn set_target_model(&mut self, model: AmpModelId) {
+        if !self.transicao_ativa && model == self.amp.model_id {
+            return;
+        }
+        if self.transicao_ativa && model == self.amp_transicao.model_id {
+            return;
+        }
+        self.amp_transicao.model_id = model;
+        self.amp_transicao.panel = self.amp.panel.clone();
+        self.amp_transicao.mod_settings = nominal_mod_settings_for_model(model);
+        self.amp_transicao.sample_rate = self.amp.sample_rate;
+        self.amp_transicao.oversampling_factor = self.amp.oversampling_factor;
+        self.amp_transicao.speaker_resonance_hz = self.amp.speaker_resonance_hz;
+        self.amp_transicao.reset();
+        self.amp_transicao.standby_env = self.amp.standby_env;
+
+        self.transicao_ativa = true;
+        self.transicao_amostras_feitas = 0;
+        self.transicao_total_amostras = (self.amp.sample_rate * 0.020).round().max(1.0) as usize;
+    }
+
+    pub fn set_oversampling_factor(&mut self, factor: usize) {
+        let new_factor = match factor {
+            2 => 2,
+            4 => 4,
+            _ => 8,
+        };
+        if self.amp.oversampling_factor != new_factor {
+            self.amp.oversampling_factor = new_factor;
+            self.amp.update_aa_filters();
+        }
+        if self.amp_transicao.oversampling_factor != new_factor {
+            self.amp_transicao.oversampling_factor = new_factor;
+            self.amp_transicao.update_aa_filters();
+        }
+    }
+
+    pub fn algorithmic_latency_samples(&self) -> u32 {
+        match self.amp.oversampling_factor {
+            2 => 4,
+            4 => 8,
+            _ => 16,
+        }
+    }
+
+    pub fn measure_aa_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
+        self.amp.measure_aa_filter_magnitude_db(freq_hz)
+    }
+
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        let sr = sample_rate.max(1.0);
+        self.amp.sample_rate = sr;
+        self.amp.spring_reverb.set_sample_rate(sr);
+        self.amp.update_aa_filters();
+        self.amp_transicao.sample_rate = sr;
+        self.amp_transicao.spring_reverb.set_sample_rate(sr);
+        self.amp_transicao.update_aa_filters();
+    }
+
+    pub fn set_speaker_resonance_hz(&mut self, hz: f32) {
+        let clamped = hz.clamp(50.0, 200.0);
+        self.amp.speaker_resonance_hz = clamped;
+        self.amp_transicao.speaker_resonance_hz = clamped;
+    }
+
+    pub fn speaker_resonance_hz(&self) -> f32 {
+        self.amp.speaker_resonance_hz
+    }
+
+    pub fn panel(&self) -> &AmpFrontPanel {
+        &self.amp.panel
+    }
+
+    pub fn panel_mut(&mut self) -> &mut AmpFrontPanel {
+        &mut self.amp.panel
+    }
+
+    pub fn mod_settings(&self) -> &ChassisModSettings {
+        &self.amp.mod_settings
+    }
+
+    pub fn mod_settings_mut(&mut self) -> &mut ChassisModSettings {
+        &mut self.amp.mod_settings
+    }
+
+    pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        assert_eq!(input.len(), output.len());
+        if !self.transicao_ativa {
+            self.amp.process_core(input, output);
+            return;
+        }
+
+        // Mantém painel do alvo sincronizado com alterações em andamento
+        self.amp_transicao.panel = self.amp.panel.clone();
+
+        let total = self.transicao_total_amostras.max(1);
+        let mut offset = 0usize;
+        while offset < input.len() {
+            if !self.transicao_ativa {
+                self.amp.process_core(&input[offset..], &mut output[offset..]);
+                break;
+            }
+            let restantes_trans = total.saturating_sub(self.transicao_amostras_feitas);
+            if restantes_trans == 0 {
+                std::mem::swap(&mut self.amp, &mut self.amp_transicao);
+                self.model_id = self.amp.model_id;
+                self.transicao_ativa = false;
+                self.amp.process_core(&input[offset..], &mut output[offset..]);
+                break;
+            }
+            let chunk = (input.len() - offset).min(64).min(restantes_trans);
+            self.amp
+                .process_core(&input[offset..offset + chunk], &mut output[offset..offset + chunk]);
+            self.amp_transicao.process_core(
+                &input[offset..offset + chunk],
+                &mut self.transicao_buf[..chunk],
+            );
+            for k in 0..chunk {
+                let prog = (self.transicao_amostras_feitas + k) as f32 / (total as f32);
+                let theta = prog.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2;
+                let ga = theta.cos();
+                let gb = theta.sin();
+                output[offset + k] = output[offset + k] * ga + self.transicao_buf[k] * gb;
+            }
+            self.transicao_amostras_feitas += chunk;
+            offset += chunk;
+            if self.transicao_amostras_feitas >= total {
+                std::mem::swap(&mut self.amp, &mut self.amp_transicao);
+                self.model_id = self.amp.model_id;
+                self.transicao_ativa = false;
+            }
         }
     }
 
@@ -1771,7 +1869,7 @@ impl WhiteBoxAmpProcessor {
 
         // Perform basic DFT at fundamental frequency (assuming ~1000 Hz with N=2048, sr=48000)
         let n = ac.len();
-        let fs = self.sample_rate;
+        let fs = self.amp.sample_rate;
         let f0 = 1000.0;
         let bin_k = (f0 * n as f32 / fs).round() as usize;
 
