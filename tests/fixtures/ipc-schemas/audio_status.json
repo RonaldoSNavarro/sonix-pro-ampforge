@@ -27,6 +27,7 @@
   "overruns": 0,
   "oversampling": "2x",
   "panics": 0,
+  "pitch_wet_latency_ms": 0.0,
   "raw_processing": false,
   "recovery_count": 0,
   "sample_rate": 48000,
