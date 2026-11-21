@@ -330,3 +330,183 @@ fn aud_06_contencao_com_mute_da_silencio() {
         );
     }
 }
+
+#[test]
+fn aud_07_sem_vazamento() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+    use ampforge_dsp::cab::ImpulseResponse;
+    use sonix_desktop::audio::{DspParamUpdate, PreparedDspResource, RealtimeDspChain};
+
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 128);
+    assert!(chain.param_queue().push(DspParamUpdate::CabIrEnabled(true)).is_ok());
+    let rq = chain.resource_queue();
+    let input = [0.1f32; 128];
+    let mut output = [0.0f32; 128];
+
+    // Pausa o worker reaper para forçar enchimento de retired_queue + pendentes + backpressure
+    chain.set_reaper_paused_for_test(true);
+
+    let drops = Arc::new(AtomicUsize::new(0));
+    for _ in 0..10_000 {
+        let ir = ImpulseResponse::from_samples(48000.0, vec![0.5; 256])
+            .with_drop_counter(drops.clone());
+        match rq.push(PreparedDspResource::CabinetIr { slot: 0, ir }) {
+            Ok(()) => {}
+            Err(rejected) => {
+                // Sob backpressure, produtor descarta fora da thread RT em vez de vazar no callback RT.
+                drop(rejected);
+            }
+        }
+        let (allocs, deallocs) = measure_allocs(|| {
+            chain.process(&input, &mut output);
+        });
+        assert_eq!(allocs, 0, "AUD-07: process alocou durante troca sob pressão");
+        assert_eq!(deallocs, 0, "AUD-07: process desalocou durante troca sob pressão");
+    }
+
+    assert_eq!(
+        chain.retired_drop_count(),
+        0,
+        "AUD-07: reaper deveria estar pausado enquanto acumulava aposentados"
+    );
+    assert!(
+        chain.retired_pending_len() > 0,
+        "AUD-07: pendentes deveria ter acumulado recursos com o reaper pausado"
+    );
+
+    // Retoma o worker reaper e drena pendentes + fila de entrada
+    chain.set_reaper_paused_for_test(false);
+    for _ in 0..100 {
+        chain.process(&input, &mut output);
+        thread::sleep(Duration::from_millis(25));
+        if chain.retired_pending_len() == 0 {
+            break;
+        }
+    }
+
+    // Empurra uma IR não rastreada para liberar a última IR rastreada ainda ativa no gabinete
+    let untracked = ImpulseResponse::from_samples(48000.0, vec![0.25; 256]);
+    let mut pushed_untracked = false;
+    let mut opt_ir = Some(PreparedDspResource::CabinetIr { slot: 0, ir: untracked });
+    for _ in 0..100 {
+        if let Some(res) = opt_ir.take() {
+            match rq.push(res) {
+                Ok(()) => {
+                    pushed_untracked = true;
+                    break;
+                }
+                Err(rejected) => {
+                    opt_ir = Some(rejected);
+                    chain.process(&input, &mut output);
+                    thread::sleep(Duration::from_millis(25));
+                }
+            }
+        }
+    }
+    assert!(pushed_untracked, "AUD-07: não conseguiu enviar IR final não rastreada após retomar reaper");
+
+    // 24 blocos = 64 ms > crossfade de 20 ms para aposentar a última IR ativa
+    for _ in 0..24 {
+        chain.process(&input, &mut output);
+    }
+
+    let mut dropped = drops.load(Ordering::Acquire);
+    for _ in 0..75 {
+        if dropped == 10_000 {
+            break;
+        }
+        chain.process(&input, &mut output);
+        thread::sleep(Duration::from_millis(20));
+        dropped = drops.load(Ordering::Acquire);
+    }
+
+    assert_eq!(
+        dropped, 10_000,
+        "AUD-07: vazamento de recursos aposentados (dropped={} de 10000, pending={})",
+        dropped,
+        chain.retired_pending_len()
+    );
+}
+
+#[test]
+fn aud_07_zero_alloc() {
+    use ampforge_dsp::cab::ImpulseResponse;
+    use sonix_desktop::audio::{DspParamUpdate, PreparedDspResource, RealtimeDspChain};
+
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 128);
+    assert!(chain.param_queue().push(DspParamUpdate::CabIrEnabled(true)).is_ok());
+    let rq = chain.resource_queue();
+    let input = [0.2f32; 128];
+    let mut output = [0.0f32; 128];
+    chain.process(&input, &mut output);
+
+    // Fase 1: trocas normais com reaper ativo
+    let (allocs_norm, deallocs_norm) = measure_allocs(|| {
+        for _ in 0..32 {
+            // Alocação proposital do produtor ficaria fora em caso real; aqui medimos apenas chain.process
+            chain.process(&input, &mut output);
+        }
+    });
+    assert_eq!(allocs_norm, 0);
+    assert_eq!(deallocs_norm, 0);
+
+    for _ in 0..12 {
+        let ir = ImpulseResponse::from_samples(48000.0, vec![0.4; 256]);
+        let _ = rq.push(PreparedDspResource::CabinetIr { slot: 0, ir });
+        let (a, d) = measure_allocs(|| {
+            for _ in 0..24 {
+                chain.process(&input, &mut output);
+            }
+        });
+        assert_eq!(a, 0, "AUD-07: chain.process alocou na troca normal");
+        assert_eq!(d, 0, "AUD-07: chain.process desalocou na troca normal");
+    }
+
+    // Fase 2: saturação (reaper pausado -> pendentes + backpressure)
+    chain.set_reaper_paused_for_test(true);
+    for _ in 0..300 {
+        let ir = ImpulseResponse::from_samples(48000.0, vec![0.4; 256]);
+        let _ = rq.push(PreparedDspResource::CabinetIr { slot: 0, ir });
+        let (a, d) = measure_allocs(|| {
+            chain.process(&input, &mut output);
+        });
+        assert_eq!(a, 0, "AUD-07: chain.process alocou sob saturação");
+        assert_eq!(d, 0, "AUD-07: chain.process desalocou sob saturação");
+    }
+    chain.set_reaper_paused_for_test(false);
+}
+
+#[test]
+fn aud_07_sem_unpark_em_audio_rs() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let audio_rs_path = std::path::Path::new(manifest_dir).join("src").join("audio.rs");
+    let cab_rs_path = std::path::Path::new(manifest_dir)
+        .parent()
+        .unwrap()
+        .join("ampforge-dsp")
+        .join("src")
+        .join("cab.rs");
+
+    let audio_src = std::fs::read_to_string(&audio_rs_path).expect("read audio.rs");
+    let audio_non_test = audio_src.split("#[cfg(test)]").next().unwrap_or(&audio_src);
+    assert!(
+        !audio_non_test.contains("unpark("),
+        "AUD-07: encontrado 'unpark(' em audio.rs (proibido no thread RT)"
+    );
+    assert!(
+        !audio_non_test.contains("mem::forget("),
+        "AUD-07: encontrado 'mem::forget(' em audio.rs (proibido vazar recursos)"
+    );
+
+    let cab_src = std::fs::read_to_string(&cab_rs_path).expect("read cab.rs");
+    let cab_non_test = cab_src.split("#[cfg(test)]").next().unwrap_or(&cab_src);
+    assert!(
+        !cab_non_test.contains("mem::forget("),
+        "AUD-07: encontrado 'mem::forget(' em cab.rs (proibido vazar IR aposentada)"
+    );
+}

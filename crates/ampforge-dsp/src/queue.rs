@@ -204,7 +204,7 @@ impl SpscTelemetryQueue {
 /// Fila SPSC lock-free genérica para transferência de propriedade de recursos pesados
 /// (IR, buffers DI, tabelas pré-alocadas) entre threads sem alocação/desalocação na thread de áudio.
 pub struct SpscOwnedQueue<T, const CAP: usize> {
-    buffer: Box<[UnsafeCell<MaybeUninit<T>>; CAP]>,
+    buffer: Box<[UnsafeCell<MaybeUninit<T>>]>,
     head: AtomicUsize,
     _pad1: [u8; 56],
     tail: AtomicUsize,
@@ -217,14 +217,29 @@ unsafe impl<T: Send, const CAP: usize> Send for SpscOwnedQueue<T, CAP> {}
 impl<T, const CAP: usize> SpscOwnedQueue<T, CAP> {
     pub fn new() -> Self {
         assert!(CAP > 1 && (CAP & (CAP - 1)) == 0, "CAP deve ser potência de 2");
-        let buffer = Box::new(std::array::from_fn(|_| UnsafeCell::new(MaybeUninit::uninit())));
+        let mut slots = Vec::with_capacity(CAP);
+        for _ in 0..CAP {
+            slots.push(UnsafeCell::new(MaybeUninit::uninit()));
+        }
         Self {
-            buffer,
+            buffer: slots.into_boxed_slice(),
             head: AtomicUsize::new(0),
             _pad1: [0; 56],
             tail: AtomicUsize::new(0),
             _pad2: [0; 56],
         }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
+        head.wrapping_sub(tail).min(CAP)
+    }
+
+    #[inline]
+    pub fn remaining_capacity(&self) -> usize {
+        CAP.saturating_sub(self.len())
     }
 
     #[inline]

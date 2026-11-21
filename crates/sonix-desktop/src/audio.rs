@@ -2006,22 +2006,31 @@ pub enum RetiredDspResource {
 
 /// Fila MPSC (produtores serializados por lock externo ao callback, consumidor SPSC lock-free)
 /// de transferência de recursos pesados entre controle e thread de áudio (Spec 037 CA-3/CA-4, Spec 049 CA-7/CA-24)
+pub const MAX_RESOURCES_IN_FLIGHT: usize = 16;
+pub const RETIRED_QUEUE_CAPACITY: usize = 128;
+const RETIRED_PENDING_CAPACITY: usize = 64;
+const RETIRED_CROSSFADE_RESERVE: usize = 8;
+const _: () = assert!(RETIRED_QUEUE_CAPACITY >= 2 * MAX_RESOURCES_IN_FLIGHT);
+
 pub struct LockFreeResourceQueue {
-    inner: Arc<SpscOwnedQueue<PreparedDspResource, 16>>,
+    inner: Arc<SpscOwnedQueue<PreparedDspResource, MAX_RESOURCES_IN_FLIGHT>>,
     producer_lock: Arc<Mutex<()>>,
-    retired_queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
+    retired_queue: Arc<SpscOwnedQueue<RetiredDspResource, RETIRED_QUEUE_CAPACITY>>,
     retired_reclaimed: Arc<AtomicU64>,
     retired_consumer_lock: Arc<Mutex<()>>,
+    reaper_paused: Arc<AtomicBool>,
 }
 
 impl LockFreeResourceQueue {
     pub fn new() -> Self {
+        assert!(RETIRED_QUEUE_CAPACITY >= 2 * MAX_RESOURCES_IN_FLIGHT);
         Self {
             inner: Arc::new(SpscOwnedQueue::new()),
             producer_lock: Arc::new(Mutex::new(())),
             retired_queue: Arc::new(SpscOwnedQueue::new()),
             retired_reclaimed: Arc::new(AtomicU64::new(0)),
             retired_consumer_lock: Arc::new(Mutex::new(())),
+            reaper_paused: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -2045,8 +2054,15 @@ impl LockFreeResourceQueue {
         })
     }
 
+    pub fn set_reaper_paused_for_test(&self, paused: bool) {
+        self.reaper_paused.store(paused, Ordering::Release);
+    }
+
     /// Garante drenagem cooperativa fora da thread de áudio (Spec 049, CA-24)
     pub fn reclaim_retired(&self) {
+        if self.reaper_paused.load(Ordering::Acquire) {
+            return;
+        }
         let _guard = self.retired_consumer_lock.lock().unwrap_or_else(|e| e.into_inner());
         while let Some(item) = self.retired_queue.pop() {
             drop(item);
@@ -2058,7 +2074,7 @@ impl LockFreeResourceQueue {
         self.retired_reclaimed.load(Ordering::Relaxed)
     }
 
-    fn retired_queue(&self) -> Arc<SpscOwnedQueue<RetiredDspResource, 64>> {
+    fn retired_queue(&self) -> Arc<SpscOwnedQueue<RetiredDspResource, RETIRED_QUEUE_CAPACITY>> {
         Arc::clone(&self.retired_queue)
     }
 
@@ -2068,6 +2084,10 @@ impl LockFreeResourceQueue {
 
     fn retired_consumer_lock(&self) -> Arc<Mutex<()>> {
         Arc::clone(&self.retired_consumer_lock)
+    }
+
+    fn reaper_paused_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.reaper_paused)
     }
 
     #[inline]
@@ -2084,6 +2104,7 @@ impl Clone for LockFreeResourceQueue {
             retired_queue: Arc::clone(&self.retired_queue),
             retired_reclaimed: Arc::clone(&self.retired_reclaimed),
             retired_consumer_lock: Arc::clone(&self.retired_consumer_lock),
+            reaper_paused: Arc::clone(&self.reaper_paused),
         }
     }
 }
@@ -2094,38 +2115,44 @@ impl Default for LockFreeResourceQueue {
     }
 }
 
-/// Coletor em background que libera `ImpulseResponse` / `Vec<f32>` aposentados fora do callback RT (Spec 037, CA-3)
+/// Coletor em background que libera `ImpulseResponse` / `Vec<f32>` aposentados fora do callback RT (Spec 037 CA-3 / AUD-07)
 struct RetiredReaper {
-    queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
+    queue: Arc<SpscOwnedQueue<RetiredDspResource, RETIRED_QUEUE_CAPACITY>>,
     reclaimed_count: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     worker_handle: Option<JoinHandle<()>>,
-    worker_thread: thread::Thread,
+    pendentes: [Option<RetiredDspResource>; RETIRED_PENDING_CAPACITY],
 }
 
 impl RetiredReaper {
     fn noop_with_queue(
-        queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
+        queue: Arc<SpscOwnedQueue<RetiredDspResource, RETIRED_QUEUE_CAPACITY>>,
         reclaimed_count: Arc<AtomicU64>,
+        paused: Arc<AtomicBool>,
     ) -> Self {
         Self {
             queue,
             reclaimed_count,
+            paused,
             shutdown: Arc::new(AtomicBool::new(true)),
             worker_handle: None,
-            worker_thread: thread::current(),
+            pendentes: [const { None }; RETIRED_PENDING_CAPACITY],
         }
     }
 
     fn with_queue(
-        queue: Arc<SpscOwnedQueue<RetiredDspResource, 64>>,
+        queue: Arc<SpscOwnedQueue<RetiredDspResource, RETIRED_QUEUE_CAPACITY>>,
         reclaimed_count: Arc<AtomicU64>,
         consumer_lock: Arc<Mutex<()>>,
+        paused: Arc<AtomicBool>,
     ) -> Self {
+        assert!(RETIRED_QUEUE_CAPACITY >= 2 * MAX_RESOURCES_IN_FLIGHT);
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let q_w = queue.clone();
         let c_w = reclaimed_count.clone();
+        let p_w = paused.clone();
         let s_w = shutdown.clone();
         let l_w = consumer_lock;
 
@@ -2133,8 +2160,9 @@ impl RetiredReaper {
             .name("sonix-rt-reaper".to_string())
             .spawn(move || {
                 loop {
+                    let is_paused = p_w.load(Ordering::Acquire);
                     let mut drained = false;
-                    {
+                    if !is_paused {
                         let _guard = l_w.lock().unwrap_or_else(|e| e.into_inner());
                         while let Some(item) = q_w.pop() {
                             drop(item);
@@ -2150,80 +2178,89 @@ impl RetiredReaper {
                         }
                         break;
                     }
-                    if !drained {
-                        thread::park();
+                    if !drained || is_paused {
+                        thread::park_timeout(std::time::Duration::from_millis(20));
                     }
                 }
             })
             .expect("Falha ao criar thread sonix-rt-reaper");
-        let worker_thread = worker_handle.thread().clone();
 
         Self {
             queue,
             reclaimed_count,
+            paused,
             shutdown,
             worker_handle: Some(worker_handle),
-            worker_thread,
+            pendentes: [const { None }; RETIRED_PENDING_CAPACITY],
         }
     }
 
     #[inline]
-    fn retire_ir(&self, ir: ImpulseResponse) -> bool {
-        match self.queue.push(RetiredDspResource::CabinetIr(ir)) {
-            Ok(()) => {
-                self.worker_thread.unpark();
-                true
-            }
-            Err(rejected) => {
-                std::mem::forget(rejected);
-                false
+    fn flush_pending(&mut self) {
+        for slot in &mut self.pendentes {
+            if let Some(item) = slot.take() {
+                if let Err(rejected) = self.queue.push(item) {
+                    *slot = Some(rejected);
+                    break;
+                }
             }
         }
     }
 
     #[inline]
-    fn retire_di(&self, di: Vec<f32>) -> bool {
+    fn pending_len(&self) -> usize {
+        self.pendentes.iter().filter(|s| s.is_some()).count()
+    }
+
+    #[inline]
+    fn pending_free_slots(&self) -> usize {
+        RETIRED_PENDING_CAPACITY.saturating_sub(self.pending_len())
+    }
+
+    #[inline]
+    fn can_accept_retirement(&self, needed: usize) -> bool {
+        self.queue.remaining_capacity() + self.pending_free_slots()
+            >= needed + RETIRED_CROSSFADE_RESERVE
+    }
+
+    #[inline]
+    fn retire_resource(&mut self, res: RetiredDspResource) -> bool {
+        self.flush_pending();
+        let rejected = match self.queue.push(res) {
+            Ok(()) => return true,
+            Err(r) => r,
+        };
+        for slot in &mut self.pendentes {
+            if slot.is_none() {
+                *slot = Some(rejected);
+                return true;
+            }
+        }
+        let _ = rejected;
+        false
+    }
+
+    #[inline]
+    fn retire_ir(&mut self, ir: ImpulseResponse) -> bool {
+        self.retire_resource(RetiredDspResource::CabinetIr(ir))
+    }
+
+    #[inline]
+    fn retire_di(&mut self, di: Vec<f32>) -> bool {
         if di.is_empty() && di.capacity() == 0 {
             return true;
         }
-        match self.queue.push(RetiredDspResource::DiSamples(di)) {
-            Ok(()) => {
-                self.worker_thread.unpark();
-                true
-            }
-            Err(rejected) => {
-                std::mem::forget(rejected);
-                false
-            }
-        }
+        self.retire_resource(RetiredDspResource::DiSamples(di))
     }
 
     #[inline]
-    fn retire_topology(&self, topo: Box<CompiledDagTopology>) -> bool {
-        match self.queue.push(RetiredDspResource::Topology(topo)) {
-            Ok(()) => {
-                self.worker_thread.unpark();
-                true
-            }
-            Err(rejected) => {
-                std::mem::forget(rejected);
-                false
-            }
-        }
+    fn retire_topology(&mut self, topo: Box<CompiledDagTopology>) -> bool {
+        self.retire_resource(RetiredDspResource::Topology(topo))
     }
 
     #[inline]
-    fn retire_modifiers(&self, table: Box<CompiledModifierTable>) -> bool {
-        match self.queue.push(RetiredDspResource::Modifiers(table)) {
-            Ok(()) => {
-                self.worker_thread.unpark();
-                true
-            }
-            Err(rejected) => {
-                std::mem::forget(rejected);
-                false
-            }
-        }
+    fn retire_modifiers(&mut self, table: Box<CompiledModifierTable>) -> bool {
+        self.retire_resource(RetiredDspResource::Modifiers(table))
     }
 
     fn reclaimed_count(&self) -> u64 {
@@ -2233,8 +2270,8 @@ impl RetiredReaper {
 
 impl Drop for RetiredReaper {
     fn drop(&mut self) {
+        self.paused.store(false, Ordering::Release);
         self.shutdown.store(true, Ordering::Release);
-        self.worker_thread.unpark();
         if let Some(h) = self.worker_handle.take() {
             let _ = h.join();
         }
@@ -2927,11 +2964,13 @@ impl RealtimeDspChain {
                 resource_queue.retired_queue(),
                 resource_queue.retired_reclaimed(),
                 resource_queue.retired_consumer_lock(),
+                resource_queue.reaper_paused_handle(),
             )
         } else {
             RetiredReaper::noop_with_queue(
                 resource_queue.retired_queue(),
                 resource_queue.retired_reclaimed(),
+                resource_queue.reaper_paused_handle(),
             )
         };
 
@@ -3309,6 +3348,14 @@ impl RealtimeDspChain {
         self.retired_reaper.reclaimed_count()
     }
 
+    pub fn retired_pending_len(&self) -> usize {
+        self.retired_reaper.pending_len()
+    }
+
+    pub fn set_reaper_paused_for_test(&self, paused: bool) {
+        self.resource_queue.set_reaper_paused_for_test(paused);
+    }
+
     pub fn mxcsr_observado(&self) -> u32 {
         self.mxcsr_no_process
     }
@@ -3335,8 +3382,12 @@ impl RealtimeDspChain {
     }
 
     pub fn drain_resource_queue(&mut self) -> usize {
+        self.retired_reaper.flush_pending();
         let mut count = 0;
-        while let Some(res) = self.resource_queue.pop() {
+        while self.retired_reaper.can_accept_retirement(4) {
+            let Some(res) = self.resource_queue.pop() else {
+                break;
+            };
             match res {
                 PreparedDspResource::CabinetIr { slot, ir } => {
                     if let Some(ref mut shadow) = self.shadow {
@@ -3345,11 +3396,15 @@ impl RealtimeDspChain {
                         } else {
                             &mut shadow.cab
                         };
-                        if let Some(old) = shadow_cab.take_retired_ir() {
+                        while let Some(old) = shadow_cab.take_retired_ir() {
                             self.retired_reaper.retire_ir(old);
                         }
-                        shadow_cab.set_target_ir(ir.clone());
-                        if let Some(old) = shadow_cab.take_retired_ir() {
+                        if self.preset_crossfading {
+                            shadow_cab.set_target_ir(ir.clone());
+                        } else {
+                            shadow_cab.set_custom_ir(ir.clone());
+                        }
+                        while let Some(old) = shadow_cab.take_retired_ir() {
                             self.retired_reaper.retire_ir(old);
                         }
                     }
@@ -3358,11 +3413,11 @@ impl RealtimeDspChain {
                     } else {
                         &mut self.cab
                     };
-                    if let Some(old) = cab_target.take_retired_ir() {
+                    while let Some(old) = cab_target.take_retired_ir() {
                         self.retired_reaper.retire_ir(old);
                     }
                     cab_target.set_target_ir(ir);
-                    if let Some(old) = cab_target.take_retired_ir() {
+                    while let Some(old) = cab_target.take_retired_ir() {
                         self.retired_reaper.retire_ir(old);
                     }
                 }
@@ -4771,12 +4826,22 @@ impl RealtimeDspChain {
         self.process_tonal_core_from_source(len);
 
         // Retira IRs aposentadas de self e shadow
-        if let Some(old_ir) = self.cab.take_retired_ir() {
+        while let Some(old_ir) = self.cab.take_retired_ir() {
             self.retired_reaper.retire_ir(old_ir);
         }
-        if let Some(old_ir) = self.cab_2.take_retired_ir() {
+        while let Some(old_ir) = self.cab_2.take_retired_ir() {
             self.retired_reaper.retire_ir(old_ir);
         }
+        if let Some(mut shadow) = self.shadow.take() {
+            while let Some(old_ir) = shadow.cab.take_retired_ir() {
+                self.retired_reaper.retire_ir(old_ir);
+            }
+            while let Some(old_ir) = shadow.cab_2.take_retired_ir() {
+                self.retired_reaper.retire_ir(old_ir);
+            }
+            self.shadow = Some(shadow);
+        }
+        self.retired_reaper.flush_pending();
 
         // Crossfade real de preset/cena apenas na cadeia tonal (20 ms equal-power)
         for i in 0..len {
@@ -5189,6 +5254,7 @@ impl RealtimeDspChain {
             handles.resource_queue.retired_queue(),
             handles.resource_queue.retired_reclaimed(),
             handles.resource_queue.retired_consumer_lock(),
+            handles.resource_queue.reaper_paused_handle(),
         );
 
         shadow.shared_sample_rate_bits = handles.shared_sample_rate_bits;

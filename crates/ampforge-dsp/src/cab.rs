@@ -518,11 +518,21 @@ impl PartitionedConvolverState {
     }
 }
 
+#[derive(Debug)]
+struct IrDropTracker(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for IrDropTracker {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
     sample_rate: f32,
     samples: std::sync::Arc<[f32]>,
     partitioned: std::sync::Arc<IrPartitionedData>,
+    drop_tracker: Option<std::sync::Arc<IrDropTracker>>,
 }
 
 impl ImpulseResponse {
@@ -532,6 +542,7 @@ impl ImpulseResponse {
             sample_rate,
             samples: std::sync::Arc::from(samples),
             partitioned,
+            drop_tracker: None,
         }
     }
 
@@ -548,7 +559,13 @@ impl ImpulseResponse {
             sample_rate,
             samples: std::sync::Arc::from(samples),
             partitioned,
+            drop_tracker: None,
         }
+    }
+
+    pub fn with_drop_counter(mut self, counter: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        self.drop_tracker = Some(std::sync::Arc::new(IrDropTracker(counter)));
+        self
     }
 
     pub fn sample_rate(&self) -> f32 {
@@ -755,7 +772,7 @@ pub struct VirtualCabProcessor {
     sample_rate: f32,
     custom_ir: Option<ImpulseResponse>,
     target_ir: Option<ImpulseResponse>,
-    retired_ir: Option<ImpulseResponse>,
+    retired_irs: [Option<ImpulseResponse>; 8],
     ir_enabled: bool,
     ir_crossfade: f32,
     ir_crossfade_step: f32,
@@ -807,7 +824,7 @@ impl VirtualCabProcessor {
             sample_rate: 48000.0,
             custom_ir: None,
             target_ir: None,
-            retired_ir: None,
+            retired_irs: [const { None }; 8],
             ir_enabled: false,
             ir_crossfade: 1.0,
             ir_crossfade_step: 1.0 / (48000.0 * 0.020),
@@ -877,17 +894,25 @@ impl VirtualCabProcessor {
         self.ir_enabled
     }
 
+    fn push_retired_ir(&mut self, ir: ImpulseResponse) {
+        for slot in &mut self.retired_irs {
+            if slot.is_none() {
+                *slot = Some(ir);
+                return;
+            }
+        }
+        self.retired_irs[0] = Some(ir);
+    }
+
     pub fn set_custom_ir(&mut self, ir: ImpulseResponse) {
         if let Some(old) = self.custom_ir.take() {
-            self.retired_ir = Some(old);
+            self.push_retired_ir(old);
         }
         self.custom_ir = Some(ir);
         self.conv_custom.reset();
         self.ir_crossfade = 1.0;
         if let Some(old_t) = self.target_ir.take() {
-            if self.retired_ir.is_none() {
-                self.retired_ir = Some(old_t);
-            }
+            self.push_retired_ir(old_t);
         }
     }
 
@@ -896,7 +921,7 @@ impl VirtualCabProcessor {
             self.set_custom_ir(ir);
         } else {
             if let Some(old_t) = self.target_ir.replace(ir) {
-                self.retired_ir = Some(old_t);
+                self.push_retired_ir(old_t);
             }
             self.conv_target.reset();
             self.ir_crossfade = 0.0;
@@ -904,11 +929,16 @@ impl VirtualCabProcessor {
     }
 
     pub fn take_retired_ir(&mut self) -> Option<ImpulseResponse> {
-        self.retired_ir.take()
+        for slot in &mut self.retired_irs {
+            if slot.is_some() {
+                return slot.take();
+            }
+        }
+        None
     }
 
     pub fn has_retired_ir(&self) -> bool {
-        self.retired_ir.is_some()
+        self.retired_irs.iter().any(Option::is_some)
     }
 
     pub fn reset_ir_state(&mut self) {
@@ -1193,13 +1223,9 @@ impl VirtualCabProcessor {
                     std::mem::swap(&mut self.conv_custom, &mut self.conv_target);
                     self.conv_target.reset();
                     self.ir_crossfade = 1.0;
-                    // Move a IR antiga para retired_ir sem desalocar na thread de áudio (Spec 037, CA-3)
+                    // Move a IR antiga para retired_irs sem desalocar na thread de áudio (Spec 037 CA-3 / AUD-07)
                     if let Some(old) = old_ir {
-                        if self.retired_ir.is_none() {
-                            self.retired_ir = Some(old);
-                        } else {
-                            std::mem::forget(self.retired_ir.replace(old));
-                        }
+                        self.push_retired_ir(old);
                     }
                 }
             }
