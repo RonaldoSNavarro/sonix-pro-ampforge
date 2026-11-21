@@ -1382,6 +1382,19 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     hardwareBehavior: 'Calcula e reporta latência de driver + latência algorítmica em ms.',
     pendingSpec: null,
   },
+  {
+    id: 'audio.midi_port',
+    screen: 'audio',
+    group: 'audio_hw',
+    label: 'Porta MIDI de Entrada',
+    kind: 'action',
+    backendKey: null,
+    ipcAction: 'connect_midi_port',
+    type: 'action',
+    defaultValue: '',
+    hardwareBehavior: 'Conecta ou desconecta porta física MIDI IN (CC, Program Change, Clock) via midir.',
+    pendingSpec: null,
+  },
 
   // ── PALCO (AFINADOR + LOOPER + FOOTSWITCHES + EXP1) ───────────────────────
   {

@@ -216,6 +216,8 @@ pub struct AppRuntime {
     pub api_ctx: ApiContext,
     pub streams: Arc<StreamCoordinator>,
     pub audio_ctrl: Option<Arc<AudioRuntimeControl>>,
+    pub midi_host: Arc<Mutex<sonix_desktop::midi::DesktopMidiHost>>,
+    pub midi_router: Arc<Mutex<sonix_desktop::midi::MidiRouter>>,
     pub _keep_alive: Arc<dyn std::any::Any + Send + Sync>,
 }
 
@@ -678,4 +680,45 @@ pub fn start_streams(
         Some(app),
     );
     Ok(json!({ "ok": true, "interval_ms": 33 }))
+}
+
+#[tauri::command]
+pub fn list_midi_ports(state: State<'_, AppRuntime>) -> Result<Value, String> {
+    let host = state
+        .midi_host
+        .lock()
+        .map_err(|_| "E_ENGINE: falha ao acessar host MIDI".to_string())?;
+    let ports = host.enumerate_input_ports();
+    let connected = host.connected_port().map(ToString::to_string);
+    Ok(json!({
+        "ports": ports,
+        "connected_port": connected,
+    }))
+}
+
+#[tauri::command]
+pub fn connect_midi_port(port_name: String, state: State<'_, AppRuntime>) -> Result<Value, String> {
+    let mut host = state
+        .midi_host
+        .lock()
+        .map_err(|_| "E_ENGINE: falha ao acessar host MIDI".to_string())?;
+    host.connect_port_with_router(&port_name, Arc::clone(&state.midi_router))
+        .map_err(|e| format!("E_VALIDATION: {e}"))?;
+    Ok(json!({
+        "ok": true,
+        "connected_port": port_name,
+    }))
+}
+
+#[tauri::command]
+pub fn disconnect_midi_port(state: State<'_, AppRuntime>) -> Result<Value, String> {
+    let mut host = state
+        .midi_host
+        .lock()
+        .map_err(|_| "E_ENGINE: falha ao acessar host MIDI".to_string())?;
+    host.disconnect();
+    Ok(json!({
+        "ok": true,
+        "connected_port": Value::Null,
+    }))
 }

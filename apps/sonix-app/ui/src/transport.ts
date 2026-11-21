@@ -191,6 +191,21 @@ function offlinePreviewStub(
       return {
         presets: (fixture?.presets as unknown[]) ?? [],
       };
+    case 'list_midi_ports':
+      return {
+        ports: (fixture?.midiPorts as unknown[]) ?? [],
+        connected_port: (fixture?.midiConnectedPort as string | null) ?? null,
+      };
+    case 'connect_midi_port':
+      return {
+        ok: true,
+        connected_port: String(args?.portName ?? ''),
+      };
+    case 'disconnect_midi_port':
+      return {
+        ok: true,
+        connected_port: null,
+      };
     case 'get_scope': {
       const mode = String(args?.mode ?? 'waveform');
       const scopeFix = fixture?.scope as Record<string, unknown> | undefined;
@@ -352,6 +367,18 @@ export class SonixTransport {
 
   setAudioDevice(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.call('set_audio_device', { payload });
+  }
+
+  listMidiPorts(): Promise<Record<string, unknown>> {
+    return this.call('list_midi_ports');
+  }
+
+  connectMidiPort(portName: string): Promise<Record<string, unknown>> {
+    return this.call('connect_midi_port', { portName });
+  }
+
+  disconnectMidiPort(): Promise<Record<string, unknown>> {
+    return this.call('disconnect_midi_port');
   }
 
   setStreamVisible(visible: boolean, scopeMode?: string): Promise<Record<string, unknown>> {

@@ -82,13 +82,15 @@ fn build_runtime_with_calibration(
     let telemetry = Arc::new(TelemetryBuffer::new(512));
     let mut chain = RealtimeDspChain::new(48000.0);
     chain.prepare(48000.0, 2048);
+    let mut initial_state = AppState::default();
+    chain.set_compiled_modifiers(sonix_desktop::api::compile_modifiers_table(
+        &initial_state.modifiers,
+    ));
     let dsp_chain = Arc::new(Mutex::new(chain));
     let param_queue = dsp_chain
         .lock()
         .ok()
         .map(|chain| chain.param_queue());
-
-    let mut initial_state = AppState::default();
     if let Some((boost, gate)) = calib {
         initial_state.input_boost = boost;
         initial_state.gate_threshold_db = gate;
@@ -275,10 +277,16 @@ fn build_runtime_with_calibration(
         None
     };
 
+    let midi_router = Arc::new(Mutex::new(sonix_desktop::midi::MidiRouter::new(
+        api_ctx.clone(),
+    )));
+    let midi_host = Arc::new(Mutex::new(sonix_desktop::midi::DesktopMidiHost::new()));
     let runtime = AppRuntime {
         api_ctx,
         streams: Arc::new(StreamCoordinator::new()),
         audio_ctrl: Some(audio_ctrl),
+        midi_host,
+        midi_router,
         _keep_alive: Arc::new(RuntimeKeepAlive {
             supervisor,
             _streams: active_streams,
@@ -351,6 +359,9 @@ pub fn run() {
             commands::set_audio_device,
             commands::set_stream_visible,
             commands::start_streams,
+            commands::list_midi_ports,
+            commands::connect_midi_port,
+            commands::disconnect_midi_port,
         ])
         .run(tauri::generate_context!())
         .expect("Erro ao executar aplicação Tauri SONIX PRO // AMPFORGE");

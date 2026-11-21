@@ -2366,3 +2366,34 @@ fn handle_post_footswitch_press(body: &[u8], ctx: &ApiContext) -> (u16, &'static
         }
     }
 }
+
+/// Roteia um evento MIDI CC pelo mesmo caminho validado de `/api/params` e fila lock-free do DSP.
+pub fn dispatch_midi_cc(ctx: &ApiContext, controller: u8, value: u8) -> Result<(), String> {
+    let norm = (value.min(127) as f32) / 127.0;
+    let upd = crate::audio::DspParamUpdate::MidiCcValue(controller, norm);
+    if let Some(ref q) = ctx.param_queue {
+        let _ = q.push(upd);
+    } else if let Some(ref dsp) = ctx.dsp_chain {
+        if let Ok(mut chain) = dsp.lock() {
+            chain.set_modifier_source_value(
+                crate::audio::CompiledModifierSource::MidiCc(controller),
+                norm,
+            );
+        }
+    }
+
+    if let Some((key, val)) = crate::midi::DesktopMidiHost::map_cc_to_param(controller, value) {
+        let patch = serde_json::json!({ key: val });
+        let body = serde_json::to_vec(&patch).map_err(|e| e.to_string())?;
+        let (code, _, resp) = dispatch(ctx, "/api/params", "POST", &body);
+        if code >= 400 {
+            return Err(format!(
+                "Falha ao rotear MIDI CC {} via Spec 014 ({}): {}",
+                controller,
+                code,
+                String::from_utf8_lossy(&resp)
+            ));
+        }
+    }
+    Ok(())
+}

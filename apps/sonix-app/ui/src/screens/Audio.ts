@@ -250,6 +250,45 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     });
     devCard.appendChild(makeRow('Tamanho de Buffer', bufSelect));
 
+    const midiWrap = document.createElement('div');
+    midiWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:0;';
+    const midiSel = document.createElement('select');
+    midiSel.style.cssText = selStyle;
+    midiSel.dataset.controlId = 'audio.midi_port';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'Nenhuma porta MIDI (desconectado)';
+    if (!store.midiConnectedPort) noneOpt.selected = true;
+    midiSel.appendChild(noneOpt);
+    const knownMidiPorts = [...store.midiPorts];
+    if (store.midiConnectedPort && !knownMidiPorts.includes(store.midiConnectedPort)) {
+      knownMidiPorts.push(store.midiConnectedPort);
+    }
+    for (const mp of knownMidiPorts) {
+      const o = document.createElement('option');
+      o.value = mp;
+      o.textContent = mp;
+      if (store.midiConnectedPort === mp) o.selected = true;
+      midiSel.appendChild(o);
+    }
+    midiSel.addEventListener('change', () => {
+      void store.connectMidiPort(midiSel.value);
+    });
+    const midiStatus = document.createElement('span');
+    midiStatus.setAttribute('data-midi-status', '');
+    midiStatus.style.cssText = store.midiError
+      ? 'font-size:10.5px;color:#ff7b7b;'
+      : store.midiConnectedPort
+        ? 'font-size:10.5px;color:#57ffb0;'
+        : 'font-size:10.5px;color:#8e96a0;';
+    midiStatus.textContent = store.midiError
+      ? `Erro MIDI: ${store.midiError}`
+      : store.midiConnectedPort
+        ? `Conectado: ${store.midiConnectedPort}`
+        : 'Nenhuma porta MIDI ativa';
+    midiWrap.append(midiSel, midiStatus);
+    devCard.appendChild(makeRow('Entrada MIDI', midiWrap));
+
     if (store.devices.length === 0) {
       const emptyBanner = document.createElement('div');
       emptyBanner.style.cssText =

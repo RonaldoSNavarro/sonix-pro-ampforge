@@ -2422,6 +2422,7 @@ pub enum DspParamUpdate {
     Cab2ResonanceHz(f32),
     Cab2HicutKhz(f32),
     Exp1Value(f32),
+    MidiCcValue(u8, f32),
     Wah1Enabled(bool),
     Wah1Position(f32),
     Wah1Q(f32),
@@ -3837,6 +3838,11 @@ impl RealtimeDspChain {
                     self.modifier_exp1 = n;
                     self.modifier_base_values[ModifierTargetParam::Wah1Position.index()] = n;
                     self.wah_1.set_position(n);
+                }
+            }
+            DspParamUpdate::MidiCcValue(cc, norm) => {
+                if norm.is_finite() {
+                    self.set_modifier_source_value(CompiledModifierSource::MidiCc(cc), norm);
                 }
             }
             DspParamUpdate::BeginPresetCrossfade | DspParamUpdate::TriggerPresetCrossfade => {}

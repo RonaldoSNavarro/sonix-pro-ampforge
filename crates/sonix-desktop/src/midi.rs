@@ -1,14 +1,17 @@
 //! crates/sonix-desktop/src/midi.rs
 //! Host MIDI Nativo Desktop (Portas USB / MIDI Din e Roteamento Spec 014)
 
-use crate::api::{dispatch, ApiContext};
-use ampforge_dsp::queue::{DspCommand, SpscCommandQueue};
-use std::sync::Arc;
+use crate::api::{dispatch, dispatch_midi_cc, ApiContext};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+pub const DECISAO_SONIX_CC_CENA: u8 = 69;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MidiMessageType {
     ControlChange { controller: u8, value: u8 },
     ProgramChange { program: u8 },
+    Clock,
     Other,
 }
 
@@ -25,75 +28,24 @@ impl OsMidiEnumerator {
     }
 }
 
-#[cfg(target_os = "windows")]
-mod winmm_midi {
-    #[repr(C)]
-    struct MidiInCapsW {
-        w_mid: u16,
-        w_pid: u16,
-        v_driver_version: u32,
-        sz_pname: [u16; 32],
-        dw_support: u32,
-    }
-
-    #[link(name = "winmm")]
-    extern "system" {
-        fn midiInGetNumDevs() -> u32;
-        fn midiInGetDevCapsW(u_device_id: usize, pmic: *mut MidiInCapsW, cbmic: u32) -> u32;
-    }
-
-    pub fn list_ports() -> Vec<String> {
-        let count = unsafe { midiInGetNumDevs() };
-        let mut ports = Vec::new();
-        for idx in 0..count {
-            let mut caps = MidiInCapsW {
-                w_mid: 0,
-                w_pid: 0,
-                v_driver_version: 0,
-                sz_pname: [0u16; 32],
-                dw_support: 0,
-            };
-            let res = unsafe {
-                midiInGetDevCapsW(
-                    idx as usize,
-                    &mut caps as *mut MidiInCapsW,
-                    std::mem::size_of::<MidiInCapsW>() as u32,
-                )
-            };
-            if res == 0 {
-                let end = caps
-                    .sz_pname
-                    .iter()
-                    .position(|&c| c == 0)
-                    .unwrap_or(caps.sz_pname.len());
-                let name = String::from_utf16_lossy(&caps.sz_pname[..end])
-                    .trim()
-                    .to_string();
-                if !name.is_empty() {
-                    ports.push(name);
-                }
-            }
-        }
-        ports
-    }
-}
-
 impl MidiPortEnumerator for OsMidiEnumerator {
     fn enumerate_input_ports(&self) -> Vec<String> {
-        #[cfg(target_os = "windows")]
-        {
-            return winmm_midi::list_ports();
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            Vec::new()
-        }
+        let Ok(midi_in) = midir::MidiInput::new("SonixProMidiEnum") else {
+            return Vec::new();
+        };
+        midi_in
+            .ports()
+            .iter()
+            .filter_map(|p| midi_in.port_name(p).ok())
+            .filter(|name| !name.trim().is_empty())
+            .collect()
     }
 }
 
 pub struct DesktopMidiHost {
     connected_port: Option<String>,
     enumerator: Arc<dyn MidiPortEnumerator>,
+    active_connection: Option<midir::MidiInputConnection<()>>,
 }
 
 impl Default for DesktopMidiHost {
@@ -107,6 +59,7 @@ impl DesktopMidiHost {
         Self {
             connected_port: None,
             enumerator: Arc::new(OsMidiEnumerator::new()),
+            active_connection: None,
         }
     }
 
@@ -114,6 +67,7 @@ impl DesktopMidiHost {
         Self {
             connected_port: None,
             enumerator,
+            active_connection: None,
         }
     }
 
@@ -121,7 +75,57 @@ impl DesktopMidiHost {
         self.enumerator.enumerate_input_ports()
     }
 
+    pub fn connected_port(&self) -> Option<&str> {
+        self.connected_port.as_deref()
+    }
+
+    pub fn disconnect(&mut self) {
+        self.active_connection = None;
+        self.connected_port = None;
+    }
+
     pub fn connect_port(&mut self, port_name: &str) -> Result<(), String> {
+        self.connect_port_internal(port_name, None)
+    }
+
+    pub fn connect_port_with_router(
+        &mut self,
+        port_name: &str,
+        router: Arc<Mutex<MidiRouter>>,
+    ) -> Result<(), String> {
+        self.connect_port_internal(port_name, Some(router))
+    }
+
+    fn connect_port_internal(
+        &mut self,
+        port_name: &str,
+        router: Option<Arc<Mutex<MidiRouter>>>,
+    ) -> Result<(), String> {
+        self.disconnect();
+        let midi_in = midir::MidiInput::new("SonixProMidiIn")
+            .map_err(|e| format!("falha ao inicializar MIDI IN: {e}"))?;
+        let target_port = midi_in
+            .ports()
+            .into_iter()
+            .find(|p| midi_in.port_name(p).ok().as_deref() == Some(port_name))
+            .ok_or_else(|| format!("porta MIDI não encontrada: {port_name}"))?;
+
+        let conn = midi_in
+            .connect(
+                &target_port,
+                "sonix-pro-midi-in",
+                move |_timestamp, message, _| {
+                    if let Some(ref r) = router {
+                        if let Ok(mut guard) = r.lock() {
+                            guard.on_message(message);
+                        }
+                    }
+                },
+                (),
+            )
+            .map_err(|e| format!("falha ao conectar porta MIDI {port_name}: {e}"))?;
+
+        self.active_connection = Some(conn);
         self.connected_port = Some(port_name.to_string());
         Ok(())
     }
@@ -180,63 +184,114 @@ impl DesktopMidiHost {
             _ => None,
         }
     }
+}
 
-    pub fn process_midi_cc_to_params(
-        &self,
-        bytes: &[u8],
-        ctx: &ApiContext,
-        command_queue: &mut SpscCommandQueue,
-    ) -> Result<MidiMessageType, String> {
-        let msg = self.process_raw_midi_message(bytes, command_queue)?;
-        if let MidiMessageType::ControlChange { controller, value } = msg {
-            if let Some((key, val)) = Self::map_cc_to_param(controller, value) {
-                let patch = serde_json::json!({ key: val });
-                let body = serde_json::to_vec(&patch).map_err(|e| e.to_string())?;
-                let (code, _, resp) = dispatch(ctx, "/api/params", "POST", &body);
-                if code >= 400 {
-                    return Err(format!(
-                        "Falha ao rotear MIDI CC {} via Spec 014 ({}): {}",
-                        controller,
-                        code,
-                        String::from_utf8_lossy(&resp)
-                    ));
-                }
-            }
+pub struct MidiRouter {
+    ctx: ApiContext,
+    start_instant: Instant,
+    clock_prev_us: Option<u64>,
+    clock_intervals_us: [u64; 24],
+    clock_fill: usize,
+    clock_idx: usize,
+    last_clock_send_us: Option<u64>,
+    last_sent_bpm: Option<f32>,
+}
+
+impl MidiRouter {
+    pub fn new(ctx: ApiContext) -> Self {
+        Self {
+            ctx,
+            start_instant: Instant::now(),
+            clock_prev_us: None,
+            clock_intervals_us: [0; 24],
+            clock_fill: 0,
+            clock_idx: 0,
+            last_clock_send_us: None,
+            last_sent_bpm: None,
         }
-        Ok(msg)
     }
 
-    pub fn process_raw_midi_message(
-        &self,
-        bytes: &[u8],
-        command_queue: &mut SpscCommandQueue,
-    ) -> Result<MidiMessageType, String> {
-        if bytes.is_empty() {
-            return Err("Mensagem MIDI vazia".to_string());
-        }
+    pub fn on_message(&mut self, bytes: &[u8]) -> MidiMessageType {
+        let now_us = self.start_instant.elapsed().as_micros() as u64;
+        self.on_message_at(bytes, now_us)
+    }
 
-        let status = bytes[0] & 0xF0;
-        match status {
-            0xB0 if bytes.len() >= 3 => {
-                let controller = bytes[1];
-                let value = bytes[2];
-                // Forward lock-free to DSP command queue
-                let _ = command_queue.push(DspCommand::SetParameter {
-                    block_id: 0,
-                    param_id: controller as usize,
-                    value: value as f32 / 127.0,
-                });
-                Ok(MidiMessageType::ControlChange { controller, value })
+    pub fn on_message_at(&mut self, bytes: &[u8], now_us: u64) -> MidiMessageType {
+        if bytes.is_empty() {
+            return MidiMessageType::Other;
+        }
+        match bytes[0] {
+            0xF8 => {
+                if let Some(prev) = self.clock_prev_us {
+                    let dt = now_us.saturating_sub(prev);
+                    if dt > 100 && dt < 2_000_000 {
+                        self.clock_intervals_us[self.clock_idx] = dt;
+                        self.clock_idx = (self.clock_idx + 1) % 24;
+                        if self.clock_fill < 24 {
+                            self.clock_fill += 1;
+                        }
+                        if self.clock_fill == 24 {
+                            let sum_us: u64 = self.clock_intervals_us.iter().sum();
+                            let avg_dt_us = (sum_us as f64) / 24.0;
+                            let bpm = (60_000_000.0 / (avg_dt_us * 24.0)).clamp(20.0, 300.0) as f32;
+                            let rate_ok = self
+                                .last_clock_send_us
+                                .map(|last| now_us.saturating_sub(last) >= 100_000)
+                                .unwrap_or(true);
+                            let delta_ok = self
+                                .last_sent_bpm
+                                .map(|prev_bpm| (bpm - prev_bpm).abs() >= 0.5)
+                                .unwrap_or(true);
+                            if rate_ok && delta_ok {
+                                let body = serde_json::json!({ "dly_1.tempo_bpm": bpm });
+                                if let Ok(bytes) = serde_json::to_vec(&body) {
+                                    let (code, _, _) = dispatch(&self.ctx, "/api/params", "POST", &bytes);
+                                    if code < 400 {
+                                        self.last_clock_send_us = Some(now_us);
+                                        self.last_sent_bpm = Some(bpm);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.clock_prev_us = Some(now_us);
+                MidiMessageType::Clock
             }
-            0xC0 if bytes.len() >= 2 => {
-                let program = bytes[1];
-                let _ = command_queue.push(DspCommand::SelectChannel {
-                    block_id: 0,
-                    channel_index: program as usize,
-                });
-                Ok(MidiMessageType::ProgramChange { program })
+            0xFA | 0xFC => MidiMessageType::Other,
+            _ => {
+                let status = bytes[0] & 0xF0;
+                match status {
+                    0xB0 if bytes.len() >= 3 => {
+                        let controller = bytes[1];
+                        let value = bytes[2];
+                        if controller == DECISAO_SONIX_CC_CENA && value <= 7 {
+                            if let Ok(req) = serde_json::to_vec(&serde_json::json!({ "index": value })) {
+                                let _ = dispatch(&self.ctx, "/api/scenes/select", "POST", &req);
+                            }
+                        }
+                        let _ = dispatch_midi_cc(&self.ctx, controller, value);
+                        MidiMessageType::ControlChange { controller, value }
+                    }
+                    0xC0 if bytes.len() >= 2 => {
+                        let program = bytes[1];
+                        let (_, _, sl_bytes) = dispatch(&self.ctx, "/api/setlist", "GET", b"");
+                        if let Ok(sl_json) = serde_json::from_slice::<serde_json::Value>(&sl_bytes) {
+                            if let Some(pid) = sl_json["active_setlist"]["presets"]
+                                .as_array()
+                                .and_then(|arr| arr.get(program as usize))
+                                .and_then(|v| v.as_str())
+                            {
+                                if let Ok(req) = serde_json::to_vec(&serde_json::json!({ "id": pid })) {
+                                    let _ = dispatch(&self.ctx, "/api/presets/load", "POST", &req);
+                                }
+                            }
+                        }
+                        MidiMessageType::ProgramChange { program }
+                    }
+                    _ => MidiMessageType::Other,
+                }
             }
-            _ => Ok(MidiMessageType::Other),
         }
     }
 }

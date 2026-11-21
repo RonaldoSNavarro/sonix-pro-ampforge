@@ -188,6 +188,9 @@ export class AppStore {
   };
 
   devices: Array<{ name: string; is_input?: boolean; is_output?: boolean; is_default?: boolean }> = [];
+  midiPorts: string[] = [];
+  midiConnectedPort: string | null = null;
+  midiError: string | null = null;
 
   telemetry: TelemetryData = {
     input_peak_db: -60,
@@ -400,6 +403,8 @@ export class AppStore {
     } catch {
       // offline mock or unavailable
     }
+
+    await this.refreshMidiPorts();
 
     try {
       const st = await this.transport.getAudioStatus();
@@ -814,5 +819,35 @@ export class AppStore {
       this.audioDeviceState = 'lost';
     }
     this.emit();
+  }
+
+  async refreshMidiPorts(): Promise<void> {
+    try {
+      const res = await this.transport.listMidiPorts();
+      if (Array.isArray(res?.ports)) {
+        this.midiPorts = res.ports.map((p) => String(p));
+      }
+      this.midiConnectedPort =
+        typeof res?.connected_port === 'string' ? res.connected_port : null;
+    } catch {
+      // offline mock or unavailable
+    }
+  }
+
+  async connectMidiPort(portName: string): Promise<void> {
+    this.midiError = null;
+    try {
+      if (!portName) {
+        await this.transport.disconnectMidiPort();
+        this.midiConnectedPort = null;
+      } else {
+        const res = await this.transport.connectMidiPort(portName);
+        this.midiConnectedPort =
+          typeof res?.connected_port === 'string' ? res.connected_port : portName;
+      }
+    } catch (err) {
+      this.midiError = err instanceof Error ? err.message : String(err);
+    }
+    this.emit('status');
   }
 }

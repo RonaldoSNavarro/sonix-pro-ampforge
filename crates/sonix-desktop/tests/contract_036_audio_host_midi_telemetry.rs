@@ -1,7 +1,6 @@
 //! crates/sonix-desktop/tests/contract_036_audio_host_midi_telemetry.rs
 //! Testes de contrato da Spec 036: Host de áudio real, entrada linear, MIDI real e telemetria honesta.
 
-use ampforge_dsp::queue::SpscCommandQueue;
 use serde_json::Value;
 use sonix_desktop::api::{dispatch, ApiContext, AppState};
 use sonix_desktop::audio::{
@@ -281,10 +280,16 @@ fn test_ca_08_midi_enumerator_injection_and_cc_routing_via_param_table() {
     assert_eq!(ports, vec!["Morningstar MC6".to_string()]);
 
     let ctx = base_context();
-    let (mut cmd_q, _cmd_rx) = SpscCommandQueue::new();
+    let mut router = sonix_desktop::midi::MidiRouter::new(ctx.clone());
     // CC 7 = 64 -> amp_1.master = (64/127)*10.0 ~= 5.03937 (tolerância 0.05)
-    let res = midi_host.process_midi_cc_to_params(&[0xB0, 0x07, 64], &ctx, &mut cmd_q);
-    assert!(res.is_ok(), "CA-8: MIDI CC 7=64 deve aplicar na tabela Spec 014: {:?}", res);
+    let msg = router.on_message(&[0xB0, 0x07, 64]);
+    assert_eq!(
+        msg,
+        sonix_desktop::midi::MidiMessageType::ControlChange {
+            controller: 7,
+            value: 64
+        }
+    );
 
     let master = ctx.app_state.lock().unwrap().amp_master;
     assert!(
