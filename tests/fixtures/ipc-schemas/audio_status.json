@@ -2,11 +2,14 @@
   "adc_clips": 0,
   "algorithmic_latency_samples": 4,
   "backend": "wasapi",
+  "connected": true,
   "cpu_avg_pct": 6.5,
   "cpu_peak_pct": 9.1,
+  "device_state": "ok",
   "driver_input_latency_ms": 2.67,
   "driver_output_latency_ms": 2.67,
   "dsp_contention_silence_blocks": 0,
+  "engine_faulted": false,
   "estimated_roundtrip_ms": 5.423,
   "fallback_reason": null,
   "input_device": "Focusrite USB",
@@ -25,6 +28,7 @@
   "oversampling": "2x",
   "panics": 0,
   "raw_processing": false,
+  "recovery_count": 0,
   "sample_rate": 48000,
   "underruns": 0
 }

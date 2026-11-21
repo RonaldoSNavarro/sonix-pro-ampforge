@@ -1,11 +1,16 @@
 {
   "b_plus_v": 280.0,
+  "connected": true,
   "cpu_usage_pct": 37.5,
+  "device_state": "ok",
   "dsp_contention_silence_blocks": 0,
+  "engine_faulted": false,
   "gate_gr_db": -18.2,
   "gate_state": "CLOSED",
   "input_peak_db": -18.5,
   "output_peak_db": -12.0,
+  "panic_count": 0,
+  "recovery_count": 0,
   "waveform": [
     0.0,
     0.0,
