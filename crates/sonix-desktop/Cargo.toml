@@ -89,6 +89,10 @@ name = "auditoria_2026_11_20_seguranca"
 required-features = ["dev-http"]
 
 [[test]]
+name = "auditoria_2026_11_20_parametros"
+required-features = ["dev-http"]
+
+[[test]]
 name = "auditoria_2026_11_20_fault_injection"
 required-features = ["fault-injection"]
 

@@ -134,8 +134,6 @@ fn default_input_mode() -> String {
 pub struct AppState {
     #[serde(rename = "amp_1.gain")]
     pub amp_gain: f32,
-    #[serde(rename = "amp_1.overdrive")]
-    pub amp_overdrive: f32,
     #[serde(rename = "amp_1.bass")]
     pub amp_bass: f32,
     #[serde(rename = "amp_1.middle")]
@@ -144,8 +142,6 @@ pub struct AppState {
     pub amp_treble: f32,
     #[serde(rename = "amp_1.presence")]
     pub amp_presence: f32,
-    #[serde(rename = "amp_1.depth")]
-    pub amp_depth: f32,
     #[serde(rename = "amp_1.master")]
     pub amp_master: f32,
     #[serde(rename = "amp_1.volume_2")]
@@ -543,12 +539,10 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             amp_gain: 8.0,
-            amp_overdrive: 5.0,
             amp_bass: 5.0,
             amp_middle: 5.0,
             amp_treble: 5.0,
             amp_presence: 5.0,
-            amp_depth: 5.0,
             amp_master: 7.0,
             amp_volume_2: 0.0,
             amp_cut: 5.0,
@@ -1929,12 +1923,10 @@ fn parse_tonestack(s: &str) -> ToneStackTopology {
 fn json_kv_to_dsp_updates(k: &str, v: &serde_json::Value, out: &mut Vec<DspParamUpdate>) {
     match k {
         "amp_1.gain" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpGain(num as f32)); },
-        "amp_1.overdrive" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpOverdrive(num as f32)); },
         "amp_1.bass" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpBass(num as f32)); },
         "amp_1.middle" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpMiddle(num as f32)); },
         "amp_1.treble" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpTreble(num as f32)); },
         "amp_1.presence" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpPresence(num as f32)); },
-        "amp_1.depth" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpDepth(num as f32)); },
         "amp_1.master" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpMaster(num as f32)); },
         "amp_1.volume_2" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpVolume2(num as f32)); },
         "amp_1.cut" => if let Some(num) = v.as_f64() { out.push(DspParamUpdate::AmpCut(num as f32)); },
@@ -2231,16 +2223,6 @@ pub fn handle_post_params(
                     .unwrap_or_else(|_| "jcm800_2203".to_string())
             };
 
-            let is_param_on_model = |model: &str, key: &str| -> bool {
-                match key {
-                    "amp_1.master" => model != "plexi_1959" && model != "twin_ab763",
-                    "amp_1.middle" => model != "ac30_tb",
-                    "amp_1.volume_2" => model == "plexi_1959",
-                    "amp_1.cut" => model == "ac30_tb",
-                    _ => true,
-                }
-            };
-
             for (k, v) in &map {
                 if k.starts_with("cab_1.mic") {
                     if ir_active {
@@ -2334,17 +2316,21 @@ pub fn handle_post_params(
                 }
 
                 match k.as_str() {
-                    "amp_1.gain" | "amp_1.overdrive" | "amp_1.bass"
+                    "amp_1.gain" | "amp_1.bass"
                     | "amp_1.middle" | "amp_1.treble"
-                    | "amp_1.presence" | "amp_1.depth"
+                    | "amp_1.presence"
                     | "amp_1.master" | "amp_1.volume_2" | "amp_1.cut"
                     | "amp_1.reverb" | "amp_1.vibrato_speed" | "amp_1.vibrato_depth" => {
                         if let Some(num) = v.as_f64() {
                             if num >= 0.0 && num <= 10.0 {
-                                if is_param_on_model(&active_model, k) {
+                                if is_amp_param_valid_for_model(&active_model, k) {
                                     applied.push(k.clone());
                                 } else {
-                                    ignored.push(k.clone());
+                                    validation_error = Some(format!(
+                                        "{} não existe no modelo {}",
+                                        k, active_model
+                                    ));
+                                    break;
                                 }
                             } else {
                                 validation_error = Some(format!("{} fora da faixa 0..10", k));
@@ -2529,7 +2515,7 @@ pub fn handle_post_params(
                     }
                     "amp_1.bright" => {
                         if v.is_boolean() {
-                            if is_param_on_model(&active_model, k) {
+                            if is_amp_param_valid_for_model(&active_model, k) {
                                 applied.push(k.clone());
                             } else {
                                 ignored.push(k.clone());
@@ -2541,10 +2527,25 @@ pub fn handle_post_params(
                     }
                     "drive.enabled" | "gate.enabled"
                     | "amp_1.enabled" | "cab_1.enabled"
-                    | "amp_1.power" | "amp_1.standby"
-                    | "amp_1.jumpered" | "amp_1.spongy" => {
+                    | "amp_1.power" | "amp_1.standby" => {
                         if v.is_boolean() {
                             applied.push(k.clone());
+                        } else {
+                            validation_error = Some(format!("{} deve ser booleano", k));
+                            break;
+                        }
+                    }
+                    "amp_1.jumpered" | "amp_1.spongy" => {
+                        if v.is_boolean() {
+                            if is_amp_param_valid_for_model(&active_model, k) {
+                                applied.push(k.clone());
+                            } else {
+                                validation_error = Some(format!(
+                                    "{} não existe no modelo {}",
+                                    k, active_model
+                                ));
+                                break;
+                            }
                         } else {
                             validation_error = Some(format!("{} deve ser booleano", k));
                             break;
@@ -3507,12 +3508,10 @@ pub fn handle_post_params(
                         }
                         match k.as_str() {
                             "amp_1.gain" => if let Some(n) = v.as_f64() { st.amp_gain = n as f32; },
-                            "amp_1.overdrive" => if let Some(n) = v.as_f64() { st.amp_overdrive = n as f32; },
                             "amp_1.bass" => if let Some(n) = v.as_f64() { st.amp_bass = n as f32; },
                             "amp_1.middle" => if let Some(n) = v.as_f64() { st.amp_middle = n as f32; },
                             "amp_1.treble" => if let Some(n) = v.as_f64() { st.amp_treble = n as f32; },
                             "amp_1.presence" => if let Some(n) = v.as_f64() { st.amp_presence = n as f32; },
-                            "amp_1.depth" => if let Some(n) = v.as_f64() { st.amp_depth = n as f32; },
                             "amp_1.master" => if let Some(n) = v.as_f64() { st.amp_master = n as f32; },
                             "amp_1.volume_2" => if let Some(n) = v.as_f64() { st.amp_volume_2 = n as f32; },
                             "amp_1.cut" => if let Some(n) = v.as_f64() { st.amp_cut = n as f32; },
@@ -3832,13 +3831,21 @@ pub fn is_valid_preset_id(id: &str) -> bool {
 
 const EMBEDDED_FACTORY_PRESETS: &[(&str, &str, &str)] = &[
     ("brit800", "Brit 800 Crunch", include_str!("../../../presets/factory/brit800.sonixpreset")),
-    ("usdeluxe", "US Deluxe Clean", include_str!("../../../presets/factory/usdeluxe.sonixpreset")),
+    ("ustwin", "US Twin Clean", include_str!("../../../presets/factory/usdeluxe.sonixpreset")),
     ("recto", "Recto High Gain", include_str!("../../../presets/factory/recto.sonixpreset")),
     ("ac30", "AC30 Top Boost", include_str!("../../../presets/factory/ac30.sonixpreset")),
 ];
 
+fn canonical_factory_preset_id(id: &str) -> &str {
+    if id == "usdeluxe" {
+        "ustwin"
+    } else {
+        id
+    }
+}
+
 fn embedded_factory_preset_content(id: &str) -> Option<&'static str> {
-    let clean_id = id.trim_end_matches(".sonixpreset");
+    let clean_id = canonical_factory_preset_id(id.trim_end_matches(".sonixpreset"));
     EMBEDDED_FACTORY_PRESETS
         .iter()
         .find(|(fid, _, _)| *fid == clean_id)
@@ -3870,6 +3877,14 @@ fn find_preset_file_in(custom_dir: Option<&std::path::Path>, id: &str) -> Option
             return Some(p);
         }
     }
+    if canonical_factory_preset_id(clean_id) == "ustwin" {
+        for dir in ["presets/factory", "../../presets/factory", "../presets/factory"] {
+            let p = std::path::PathBuf::from(format!("{}/usdeluxe.sonixpreset", dir));
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
     if let Ok(appdata) = std::env::var("APPDATA") {
         let appdata_path = std::path::PathBuf::from(appdata)
             .join("SonixPro")
@@ -3885,11 +3900,20 @@ fn find_preset_file_in(custom_dir: Option<&std::path::Path>, id: &str) -> Option
 fn handle_get_presets() -> (u16, &'static str, Vec<u8>) {
     let mut list = Vec::new();
     for &(id, name, _) in EMBEDDED_FACTORY_PRESETS {
-        list.push(serde_json::json!({
-            "id": id,
-            "name": name,
-            "type": "factory"
-        }));
+        if id == "ustwin" {
+            list.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "aliases": ["usdeluxe"],
+                "type": "factory"
+            }));
+        } else {
+            list.push(serde_json::json!({
+                "id": id,
+                "name": name,
+                "type": "factory"
+            }));
+        }
     }
 
     let mut scan_dir = |dir: std::path::PathBuf| {
@@ -3955,22 +3979,27 @@ fn handle_post_presets_load(
         return (400, "application/json", b"{\"error\":\"invalid_preset_schema\"}".to_vec());
     };
 
-    if let Some(ref params) = doc.params {
-        if let Err(e) = apply_preset_params_queued(params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain) {
-            return match e {
-                PresetApplyError::Validation(msg) => (
-                    400,
-                    "application/json",
-                    format!("{{\"error\":\"invalid_preset_param\",\"message\":\"{}\"}}", msg).into_bytes(),
-                ),
-                PresetApplyError::QueueFull => (
-                    503,
-                    "application/json",
-                    br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
-                ),
-            };
+    let ignored_keys = if let Some(ref params) = doc.params {
+        match apply_preset_params_queued(params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain) {
+            Ok(ignored) => ignored,
+            Err(e) => {
+                return match e {
+                    PresetApplyError::Validation(msg) => (
+                        400,
+                        "application/json",
+                        format!("{{\"error\":\"invalid_preset_param\",\"message\":\"{}\"}}", msg).into_bytes(),
+                    ),
+                    PresetApplyError::QueueFull => (
+                        503,
+                        "application/json",
+                        br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                    ),
+                };
+            }
         }
-    }
+    } else {
+        Vec::new()
+    };
 
     let state_json = if let Ok(mut st) = ctx.app_state.lock() {
         st.active_preset_id = id.to_string();
@@ -4004,6 +4033,7 @@ fn handle_post_presets_load(
             "status": "ok",
             "loaded": id,
             "name": doc.metadata.name,
+            "ignored_keys": ignored_keys,
             "state": state_json
         }),
     )
@@ -4062,7 +4092,9 @@ fn handle_post_presets_save(
                     | "preset.name"
                     | "amp_1.is_modded"
                     | "is_modded"
-            ) {
+            ) || !is_amp_param_valid_for_model(&current_state.amp_model, k.as_str())
+                || (k == "amp_1.channel_mode" && current_state.amp_model != "dual_rect")
+            {
                 continue;
             }
             params_map.insert(k, val);
@@ -4146,22 +4178,27 @@ fn handle_post_presets_import(
         }
     };
 
-    if let Some(ref params) = doc.params {
-        if let Err(e) = apply_preset_params_queued(params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain) {
-            return match e {
-                PresetApplyError::Validation(msg) => (
-                    400,
-                    "application/json",
-                    format!("{{\"error\":\"invalid_preset_param\",\"message\":\"{}\"}}", msg).into_bytes(),
-                ),
-                PresetApplyError::QueueFull => (
-                    503,
-                    "application/json",
-                    br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
-                ),
-            };
+    let ignored_keys = if let Some(ref params) = doc.params {
+        match apply_preset_params_queued(params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain) {
+            Ok(ignored) => ignored,
+            Err(e) => {
+                return match e {
+                    PresetApplyError::Validation(msg) => (
+                        400,
+                        "application/json",
+                        format!("{{\"error\":\"invalid_preset_param\",\"message\":\"{}\"}}", msg).into_bytes(),
+                    ),
+                    PresetApplyError::QueueFull => (
+                        503,
+                        "application/json",
+                        br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
+                    ),
+                };
+            }
         }
-    }
+    } else {
+        Vec::new()
+    };
 
     if let Ok(mut st) = ctx.app_state.lock() {
         st.active_preset_id = doc.metadata.id.clone();
@@ -4190,7 +4227,8 @@ fn handle_post_presets_import(
         200,
         &serde_json::json!({
             "status": "ok",
-            "imported": doc.metadata.id
+            "imported": doc.metadata.id,
+            "ignored_keys": ignored_keys
         }),
     )
 }
@@ -4290,7 +4328,7 @@ fn handle_post_scenes_select(
 
     match apply_preset_params_queued(&scene_params, &ctx.app_state, &ctx.param_queue, &ctx.dsp_chain)
     {
-        Ok(()) => {}
+        Ok(_) => {}
         Err(PresetApplyError::Validation(msg)) => {
             return json_error_response(400, &msg);
         }
@@ -4331,16 +4369,29 @@ pub enum PresetApplyError {
     QueueFull,
 }
 
+pub fn is_amp_param_valid_for_model(model: &str, key: &str) -> bool {
+    match key {
+        "amp_1.presence" => matches!(model, "plexi_1959" | "jcm800_2203" | "dual_rect"),
+        "amp_1.master" => matches!(model, "jcm800_2203" | "dual_rect"),
+        "amp_1.middle" => model != "ac30_tb",
+        "amp_1.volume_2" => matches!(model, "plexi_1959" | "ac30_tb"),
+        "amp_1.cut" => model == "ac30_tb",
+        "amp_1.reverb" => model == "twin_ab763",
+        "amp_1.vibrato_speed" | "amp_1.vibrato_depth" => matches!(model, "twin_ab763" | "ac30_tb"),
+        "amp_1.jumpered" => model == "plexi_1959",
+        "amp_1.spongy" => model == "dual_rect",
+        _ => true,
+    }
+}
+
 fn validate_preset_param_kv(k: &str, v: &serde_json::Value) -> Result<(), String> {
     let is_known = matches!(
         k,
         "amp_1.gain"
-            | "amp_1.overdrive"
             | "amp_1.bass"
             | "amp_1.middle"
             | "amp_1.treble"
             | "amp_1.presence"
-            | "amp_1.depth"
             | "amp_1.master"
             | "amp_1.volume_2"
             | "amp_1.cut"
@@ -4524,14 +4575,37 @@ pub fn apply_preset_params_queued(
     app_state: &Arc<Mutex<AppState>>,
     param_queue: &Option<Arc<LockFreeParamQueue>>,
     _dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
-) -> Result<(), PresetApplyError> {
-    for (k, v) in params {
-        validate_preset_param_kv(k.as_str(), v).map_err(PresetApplyError::Validation)?;
-    }
+) -> Result<Vec<String>, PresetApplyError> {
+    let target_model = params
+        .get("amp_1.model")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            app_state
+                .lock()
+                .map(|st| st.amp_model.clone())
+                .unwrap_or_else(|_| "jcm800_2203".to_string())
+        });
 
-    let mut updates = Vec::with_capacity(params.len() + 2);
-    updates.push(DspParamUpdate::BeginPresetCrossfade);
+    let mut valid_params: Vec<(&String, &serde_json::Value)> = Vec::with_capacity(params.len());
+    let mut ignored_keys: Vec<String> = Vec::new();
     for (k, v) in params {
+        let key = k.as_str();
+        if matches!(key, "amp_1.overdrive" | "amp_1.depth")
+            || !is_amp_param_valid_for_model(&target_model, key)
+            || (key == "amp_1.channel_mode" && target_model != "dual_rect")
+        {
+            ignored_keys.push(k.clone());
+            continue;
+        }
+        validate_preset_param_kv(key, v).map_err(PresetApplyError::Validation)?;
+        valid_params.push((k, v));
+    }
+    ignored_keys.sort();
+
+    let mut updates = Vec::with_capacity(valid_params.len() + 2);
+    updates.push(DspParamUpdate::BeginPresetCrossfade);
+    for (k, v) in &valid_params {
         json_kv_to_dsp_updates(k.as_str(), v, &mut updates);
     }
 
@@ -4540,15 +4614,13 @@ pub fn apply_preset_params_queued(
     }
 
     if let Ok(mut st) = app_state.lock() {
-        for (k, v) in params {
+        for (k, v) in valid_params {
             match k.as_str() {
                 "amp_1.gain" => if let Some(n) = v.as_f64() { st.amp_gain = n as f32; },
-                "amp_1.overdrive" => if let Some(n) = v.as_f64() { st.amp_overdrive = n as f32; },
                 "amp_1.bass" => if let Some(n) = v.as_f64() { st.amp_bass = n as f32; },
                 "amp_1.middle" => if let Some(n) = v.as_f64() { st.amp_middle = n as f32; },
                 "amp_1.treble" => if let Some(n) = v.as_f64() { st.amp_treble = n as f32; },
                 "amp_1.presence" => if let Some(n) = v.as_f64() { st.amp_presence = n as f32; },
-                "amp_1.depth" => if let Some(n) = v.as_f64() { st.amp_depth = n as f32; },
                 "amp_1.master" => if let Some(n) = v.as_f64() { st.amp_master = n as f32; },
                 "amp_1.volume_2" => if let Some(n) = v.as_f64() { st.amp_volume_2 = n as f32; },
                 "amp_1.cut" => if let Some(n) = v.as_f64() { st.amp_cut = n as f32; },
@@ -4690,7 +4762,7 @@ pub fn apply_preset_params_queued(
         }
         st.is_modded = st.check_is_modded();
     }
-    Ok(())
+    Ok(ignored_keys)
 }
 
 /// Aplica um mapa completo de parâmetros de preset em `AppState` e no `RealtimeDspChain`.

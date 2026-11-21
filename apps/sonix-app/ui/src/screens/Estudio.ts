@@ -206,16 +206,29 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
 
   if (blk === 'amp' || blk === 'amp2') {
     if (blk === 'amp') {
-      container.append(
-        makeControlSlider(store, 'amp.gain', 'amp_1.gain', 'Gain', 7.0),
-        makeControlSlider(store, 'amp.treble', 'amp_1.treble', 'Treble', 6.0),
-        makeControlSlider(store, 'amp.middle', 'amp_1.middle', 'Mid', 4.0),
-        makeControlSlider(store, 'amp.bass', 'amp_1.bass', 'Bass', 6.0),
-        makeControlSlider(store, 'amp.presence', 'amp_1.presence', 'Presence', 5.0),
-        makeControlSlider(store, 'amp.master', 'amp_1.master', 'Master', 3.5),
+      const activeModel = str(store, 'amp_1.model', 'dual_rect') as AmpModelId;
+      const ampSliders: Array<[string, string, string, number]> = [
+        ['amp.gain', 'amp_1.gain', 'Gain', 7.0],
+        ['amp.volume_2', 'amp_1.volume_2', 'Vol II', 4.5],
+        ['amp.treble', 'amp_1.treble', 'Treble', 6.0],
+        ['amp.middle', 'amp_1.middle', 'Mid', 4.0],
+        ['amp.bass', 'amp_1.bass', 'Bass', 6.0],
+        ['amp.presence', 'amp_1.presence', 'Presence', 5.0],
+        ['amp.cut', 'amp_1.cut', 'Tone Cut', 5.0],
+        ['amp.master', 'amp_1.master', 'Master', 3.5],
+        ['amp.reverb', 'amp_1.reverb', 'Reverb', 3.0],
+      ];
+      const slidersToRender = ampSliders
+        .filter(([cid]) => {
+          const models = store.getDescriptor(cid)?.models;
+          return !models || models.includes(activeModel);
+        })
+        .map(([cid, key, label, def]) => makeControlSlider(store, cid, key, label, def));
+      slidersToRender.push(
         makeControlSlider(store, 'chassi.sag', 'amp_1.sag', 'Sag da fonte', 3.0),
         makeControlSlider(store, 'chassi.nfb', 'amp_1.nfb', 'Realim. (NFB)', 5.0)
       );
+      container.append(...slidersToRender);
     } else {
       const chips = document.createElement('div');
       chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';

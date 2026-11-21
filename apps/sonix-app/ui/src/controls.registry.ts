@@ -17,6 +17,21 @@ export type ControlKind =
   | 'expression'
   | 'action';
 
+export type AmpModelId =
+  | 'plexi_1959'
+  | 'jcm800_2203'
+  | 'twin_ab763'
+  | 'dual_rect'
+  | 'ac30_tb';
+
+export const ALL_AMP_MODELS: AmpModelId[] = [
+  'plexi_1959',
+  'jcm800_2203',
+  'twin_ab763',
+  'dual_rect',
+  'ac30_tb',
+];
+
 export type ScreenId =
   | 'topbar'
   | 'main'
@@ -36,6 +51,7 @@ export interface ControlDescriptor {
   ipcAction?: string;
   uiMappingFrom?: string;
   visualOnly?: boolean;
+  models?: AmpModelId[];
   type: 'number' | 'boolean' | 'enum' | 'action' | 'visual';
   range?: [number, number];
   step?: number;
@@ -208,6 +224,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Modelo do Amplificador',
     kind: 'select',
     backendKey: 'amp_1.model',
+    models: ALL_AMP_MODELS,
     type: 'enum',
     options: ['plexi_1959', 'jcm800_2203', 'twin_ab763', 'dual_rect', 'ac30_tb'],
     defaultValue: 'jcm800_2203',
@@ -221,6 +238,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Bypass do Amp',
     kind: 'toggle',
     backendKey: 'amp_1.enabled',
+    models: ALL_AMP_MODELS,
     type: 'boolean',
     defaultValue: true,
     hardwareBehavior: 'Tira o cabeçote da cadeia em bypass verdadeiro.',
@@ -233,6 +251,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'POWER / MAINS',
     kind: 'toggle',
     backendKey: 'amp_1.power',
+    models: ALL_AMP_MODELS,
     uiMappingFrom: 'AmpHead mains -> amp_1.power',
     type: 'boolean',
     defaultValue: true,
@@ -246,6 +265,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'STANDBY',
     kind: 'toggle',
     backendKey: 'amp_1.standby',
+    models: ALL_AMP_MODELS,
     type: 'boolean',
     defaultValue: false,
     hardwareBehavior: 'Ativar STANDBY corta B+ nas placas mantendo filamentos aquecidos; saída cai a silêncio.',
@@ -258,6 +278,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'BRIGHT',
     kind: 'toggle',
     backendKey: 'amp_1.bright',
+    models: ['twin_ab763'],
     type: 'boolean',
     defaultValue: false,
     hardwareBehavior: 'Liga capacitor bright sobre o potenciômetro de ganho; ganho baixo fica mais brilhante e o efeito reduz com o ganho aberto.',
@@ -270,6 +291,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Entrada (HIGH/LOW / Canal)',
     kind: 'jack',
     backendKey: 'amp_1.input_jack',
+    models: ['plexi_1959', 'jcm800_2203', 'twin_ab763', 'ac30_tb'],
     uiMappingFrom: 'AmpHead jack -> amp_1.input_jack',
     type: 'enum',
     options: [
@@ -298,6 +320,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'JUMPER (I-Low -> II-High)',
     kind: 'toggle',
     backendKey: 'amp_1.jumpered',
+    models: ['plexi_1959'],
     uiMappingFrom: 'AmpHead jumper -> amp_1.jumpered',
     type: 'boolean',
     defaultValue: false,
@@ -311,6 +334,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Modo de Canal (Dual Rectifier)',
     kind: 'select',
     backendKey: 'amp_1.channel_mode',
+    models: ['dual_rect'],
     uiMappingFrom: 'AmpHead chMode -> amp_1.channel_mode',
     type: 'enum',
     options: ['clean', 'pushed', 'vintage', 'modern'],
@@ -325,6 +349,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'POWER Bold / Spongy',
     kind: 'toggle',
     backendKey: 'amp_1.spongy',
+    models: ['dual_rect'],
     uiMappingFrom: 'AmpHead variac (bold/spongy) -> amp_1.spongy',
     type: 'boolean',
     defaultValue: false,
@@ -338,6 +363,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Gain / Pre-Amp / Volume I',
     kind: 'knob',
     backendKey: 'amp_1.gain',
+    models: ALL_AMP_MODELS,
     type: 'number',
     range: [0, 10],
     step: 0.1,
@@ -352,25 +378,12 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Volume II (Normal)',
     kind: 'knob',
     backendKey: 'amp_1.volume_2',
+    models: ['plexi_1959', 'ac30_tb'],
     type: 'number',
     range: [0, 10],
     step: 0.1,
     defaultValue: 4.5,
     hardwareBehavior: 'No Plexi 1959 dosa o canal Normal quando selecionado ou jumpered.',
-    pendingSpec: null,
-  },
-  {
-    id: 'amp.overdrive',
-    screen: 'main',
-    group: 'amp_controls',
-    label: 'Drive / Overdrive Trim',
-    kind: 'knob',
-    backendKey: 'amp_1.overdrive',
-    type: 'number',
-    range: [0, 10],
-    step: 0.1,
-    defaultValue: 5.0,
-    hardwareBehavior: 'Ajusta ganho intermediário entre estágios de pré.',
     pendingSpec: null,
   },
   {
@@ -380,6 +393,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Bass',
     kind: 'knob',
     backendKey: 'amp_1.bass',
+    models: ALL_AMP_MODELS,
     type: 'number',
     range: [0, 10],
     step: 0.1,
@@ -394,6 +408,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Middle',
     kind: 'knob',
     backendKey: 'amp_1.middle',
+    models: ['plexi_1959', 'jcm800_2203', 'twin_ab763', 'dual_rect'],
     type: 'number',
     range: [0, 10],
     step: 0.1,
@@ -408,6 +423,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Treble',
     kind: 'knob',
     backendKey: 'amp_1.treble',
+    models: ALL_AMP_MODELS,
     type: 'number',
     range: [0, 10],
     step: 0.1,
@@ -422,25 +438,12 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Presence',
     kind: 'knob',
     backendKey: 'amp_1.presence',
+    models: ['plexi_1959', 'jcm800_2203', 'dual_rect'],
     type: 'number',
     range: [0, 10],
     step: 0.1,
     defaultValue: 5.0,
     hardwareBehavior: 'Reduz realimentação negativa de agudos no inversor de fase.',
-    pendingSpec: null,
-  },
-  {
-    id: 'amp.depth',
-    screen: 'main',
-    group: 'amp_controls',
-    label: 'Depth / Resonance',
-    kind: 'knob',
-    backendKey: 'amp_1.depth',
-    type: 'number',
-    range: [0, 10],
-    step: 0.1,
-    defaultValue: 5.0,
-    hardwareBehavior: 'Reforça graves via malha NFB de baixa frequência no estágio de potência.',
     pendingSpec: null,
   },
   {
@@ -450,11 +453,12 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Master Volume',
     kind: 'knob',
     backendKey: 'amp_1.master',
+    models: ['jcm800_2203', 'dual_rect'],
     type: 'number',
     range: [0, 10],
     step: 0.1,
     defaultValue: 5.0,
-    hardwareBehavior: 'Atenua sinal entre pré e inversor/power (ausente em non-master 1959/AB763).',
+    hardwareBehavior: 'Atenua sinal entre pré e inversor/power (ausente em non-master 1959/AB763/AC30).',
     pendingSpec: null,
   },
   {
@@ -464,6 +468,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Tone Cut (AC30)',
     kind: 'knob',
     backendKey: 'amp_1.cut',
+    models: ['ac30_tb'],
     type: 'number',
     range: [0, 10],
     step: 0.1,
@@ -478,6 +483,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Spring Reverb (Twin AB763)',
     kind: 'knob',
     backendKey: 'amp_1.reverb',
+    models: ['twin_ab763'],
     type: 'number',
     range: [0, 10],
     step: 0.1,
@@ -492,6 +498,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Speed (Vib/Trem)',
     kind: 'knob',
     backendKey: 'amp_1.vibrato_speed',
+    models: ['twin_ab763', 'ac30_tb'],
     uiMappingFrom: 'AmpHead vibSpeed -> amp_1.vibrato_speed',
     type: 'number',
     range: [0, 10],
@@ -507,6 +514,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Intensity / Depth (Vib/Trem)',
     kind: 'knob',
     backendKey: 'amp_1.vibrato_depth',
+    models: ['twin_ab763', 'ac30_tb'],
     uiMappingFrom: 'AmpHead vibInt / vibDepth -> amp_1.vibrato_depth',
     type: 'number',
     range: [0, 10],

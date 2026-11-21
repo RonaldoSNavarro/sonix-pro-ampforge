@@ -712,7 +712,6 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
     pushKnob('amp.cut', 'amp_1.cut', 'TONE CUT', 4.0);
     pushKnob('amp.vibrato_speed', 'amp_1.vibrato_speed', 'VIB SPEED', 4.0);
     pushKnob('amp.vibrato_depth', 'amp_1.vibrato_depth', 'VIB DEPTH', 3.5);
-    pushKnob('amp.master', 'amp_1.master', 'MASTER', 7.0);
 
     panel.appendChild(createJewelLight(isLit, 'Pilot Lamp AC30'));
     panel.appendChild(

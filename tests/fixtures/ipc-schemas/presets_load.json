@@ -1,4 +1,5 @@
 {
+  "ignored_keys": [],
   "loaded": "recto",
   "name": "Recto High Gain",
   "state": {
@@ -7,7 +8,6 @@
     "amp_1.bright": false,
     "amp_1.channel_mode": "modern",
     "amp_1.cut": 5.0,
-    "amp_1.depth": 5.0,
     "amp_1.enabled": true,
     "amp_1.gain": 8.0,
     "amp_1.impedance_ohms": "16",
@@ -17,7 +17,6 @@
     "amp_1.middle": 4.0,
     "amp_1.model": "dual_rect",
     "amp_1.nfb": 5.0,
-    "amp_1.overdrive": 5.0,
     "amp_1.power": true,
     "amp_1.power_tube": "el34",
     "amp_1.preamp_plate_v": 280.0,

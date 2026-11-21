@@ -300,12 +300,10 @@ fn test_ca_08_presence_and_depth_scale_with_effective_nfb() {
     let mut rect_mod_0 = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
     rect_mod_0.set_channel_mode(AmpChannelMode::Modern);
     rect_mod_0.panel_mut().set_presence(0.0);
-    rect_mod_0.panel_mut().set_depth(0.0);
 
     let mut rect_mod_10 = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
     rect_mod_10.set_channel_mode(AmpChannelMode::Modern);
     rect_mod_10.panel_mut().set_presence(10.0);
-    rect_mod_10.panel_mut().set_depth(10.0);
 
     let g0_hi = measure_sine_gain_db(&mut rect_mod_0, 4200.0, 48000.0);
     let g10_hi = measure_sine_gain_db(&mut rect_mod_10, 4200.0, 48000.0);

@@ -13,12 +13,10 @@ fn test_ca_01_front_panel_exposes_11_controls_and_clamps() {
 
     // Verify initial defaults
     assert_eq!(panel.input_gain, 5.0);
-    assert_eq!(panel.overdrive, 5.0);
     assert_eq!(panel.bass, 5.0);
     assert_eq!(panel.middle, 5.0);
     assert_eq!(panel.treble, 5.0);
     assert_eq!(panel.presence, 5.0);
-    assert_eq!(panel.depth, 5.0);
     assert_eq!(panel.master_volume, 5.0);
     assert_eq!(panel.output_level_db, 0.0);
     assert!(!panel.bright_switch);
@@ -168,27 +166,11 @@ fn test_ca_05_presence_and_depth_in_negative_feedback_loop() {
     amp.set_sample_rate(48000.0);
 
     let n = 1024;
-    let sig_100hz: Vec<f32> = (0..n)
-        .map(|i| 0.2 * (2.0 * std::f32::consts::PI * 100.0 * (i as f32 / 48000.0)).sin())
-        .collect();
     let sig_5khz: Vec<f32> = (0..n)
         .map(|i| 0.2 * (2.0 * std::f32::consts::PI * 5000.0 * (i as f32 / 48000.0)).sin())
         .collect();
 
-    // Test Depth (100 Hz resonance damping reduction)
-    amp.panel_mut().depth = 0.0;
-    let mut out_depth_0 = vec![0.0f32; n];
-    amp.process(&sig_100hz, &mut out_depth_0);
-    let rms_d0: f32 = out_depth_0[256..].iter().map(|s| s * s).sum();
-
-    amp.panel_mut().depth = 10.0;
-    let mut out_depth_10 = vec![0.0f32; n];
-    amp.process(&sig_100hz, &mut out_depth_10);
-    let rms_d10: f32 = out_depth_10[256..].iter().map(|s| s * s).sum();
-
-    assert!(rms_d10 > rms_d0 * 1.2, "Depth=10 must increase 100Hz resonance output");
-
-    // Test Presence (5 kHz treble boost)
+    // Test Presence (5 kHz treble boost in NFB loop)
     amp.panel_mut().presence = 0.0;
     let mut out_pres_0 = vec![0.0f32; n];
     amp.process(&sig_5khz, &mut out_pres_0);

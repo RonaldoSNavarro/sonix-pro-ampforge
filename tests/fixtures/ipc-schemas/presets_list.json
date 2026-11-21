@@ -6,8 +6,11 @@
       "type": "factory"
     },
     {
-      "id": "usdeluxe",
-      "name": "US Deluxe Clean",
+      "aliases": [
+        "usdeluxe"
+      ],
+      "id": "ustwin",
+      "name": "US Twin Clean",
       "type": "factory"
     },
     {
@@ -23,6 +26,11 @@
     {
       "id": "ca9_test",
       "name": "ca9_test",
+      "type": "user"
+    },
+    {
+      "id": "usdeluxe",
+      "name": "usdeluxe",
       "type": "user"
     }
   ]

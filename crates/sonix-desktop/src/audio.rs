@@ -2282,12 +2282,10 @@ impl Drop for RetiredReaper {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DspParamUpdate {
     AmpGain(f32),
-    AmpOverdrive(f32),
     AmpBass(f32),
     AmpMiddle(f32),
     AmpTreble(f32),
     AmpPresence(f32),
-    AmpDepth(f32),
     AmpMaster(f32),
     AmpVolume2(f32),
     AmpCut(f32),
@@ -3473,12 +3471,10 @@ impl RealtimeDspChain {
     fn apply_param_update_inner(&mut self, update: DspParamUpdate) {
         match update {
             DspParamUpdate::AmpGain(v) => self.set_amp_gain(v),
-            DspParamUpdate::AmpOverdrive(v) => self.set_amp_overdrive(v),
             DspParamUpdate::AmpBass(v) => self.set_amp_bass(v),
             DspParamUpdate::AmpMiddle(v) => self.set_amp_middle(v),
             DspParamUpdate::AmpTreble(v) => self.set_amp_treble(v),
             DspParamUpdate::AmpPresence(v) => self.set_amp_presence(v),
-            DspParamUpdate::AmpDepth(v) => self.set_amp_depth(v),
             DspParamUpdate::AmpMaster(v) => self.set_amp_master(v),
             DspParamUpdate::AmpVolume2(v) => self.set_amp_volume_2(v),
             DspParamUpdate::AmpCut(v) => self.set_amp_cut(v),
@@ -4076,11 +4072,6 @@ impl RealtimeDspChain {
         self.gain_smoother.set_target(gain as f64);
     }
 
-    pub fn set_amp_overdrive(&mut self, od: f32) {
-        if !od.is_finite() { return; }
-        self.amp.panel_mut().set_overdrive(od);
-    }
-
     pub fn set_amp_bass(&mut self, bass: f32) {
         if !bass.is_finite() { return; }
         self.modifier_base_values[ModifierTargetParam::Amp1Bass.index()] = bass;
@@ -4103,11 +4094,6 @@ impl RealtimeDspChain {
         if !pres.is_finite() { return; }
         self.modifier_base_values[ModifierTargetParam::Amp1Presence.index()] = pres;
         self.amp.panel_mut().set_presence(pres);
-    }
-
-    pub fn set_amp_depth(&mut self, depth: f32) {
-        if !depth.is_finite() { return; }
-        self.amp.panel_mut().set_depth(depth);
     }
 
     pub fn set_amp_master(&mut self, master: f32) {

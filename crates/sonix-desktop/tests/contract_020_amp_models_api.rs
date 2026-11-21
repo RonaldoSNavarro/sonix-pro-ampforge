@@ -77,20 +77,19 @@ fn test_ca_04_controls_per_model_validation_and_model_switching() {
     );
     assert_eq!(code_switch, 200, "Troca de modelo deve retornar 200: {}", resp_switch);
 
-    // 3. POST {"amp_1.master": 3} com plexi_1959 ativo deve retornar 200 e constar em ignored com not_on_model
-    let (code_ignored, resp_ignored) = http_request(
+    // 3. POST {"amp_1.master": 3} com plexi_1959 ativo deve retornar 400 E_VALIDATION (AUD-08)
+    let (code_rejected, resp_rejected) = http_request(
         port,
         "POST",
         "/api/params",
         &[("Content-Type", "application/json"), ("X-Sonix-Token", &token)],
         Some(r#"{"amp_1.master": 3.0}"#),
     );
-    assert_eq!(code_ignored, 200);
-    let json_ignored: serde_json::Value = serde_json::from_str(&resp_ignored).unwrap();
-    let ignored_arr = json_ignored["ignored"].as_array().expect("ignored deve ser array");
+    assert_eq!(code_rejected, 400, "amp_1.master deve ser rejeitado com 400 para plexi_1959: {}", resp_rejected);
     assert!(
-        ignored_arr.iter().any(|v| v == "amp_1.master"),
-        "amp_1.master deve ser ignorado para modelo sem master"
+        resp_rejected.contains("E_VALIDATION") && resp_rejected.contains("amp_1.master"),
+        "resposta deve mencionar E_VALIDATION e amp_1.master: {}",
+        resp_rejected
     );
 
     // 4. engine.oversampling = "4x" e "8x" válidos

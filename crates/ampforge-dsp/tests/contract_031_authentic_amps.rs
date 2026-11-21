@@ -208,7 +208,6 @@ fn test_ca_04_jcm800_cold_clipper_even_harmonics_and_low_input_pad() {
     let mut amp_clean = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_clean.set_sample_rate(48000.0);
     amp_clean.panel_mut().set_input_gain(2.5);
-    amp_clean.panel_mut().set_overdrive(0.0);
     let small_in: Vec<f32> = (0..n)
         .map(|i| 0.015 * (2.0 * PI * 440.0 * (i as f32 / 48000.0)).sin())
         .collect();
@@ -356,7 +355,6 @@ fn test_ca_07_real_selectable_oversampling_2x_4x_8x() {
         amp.set_sample_rate(sr);
         amp.set_channel_mode(AmpChannelMode::Modern);
         amp.panel_mut().set_input_gain(10.0);
-        amp.panel_mut().set_overdrive(9.0);
         amp.set_oversampling_factor(factor);
         let lat = amp.algorithmic_latency_samples();
         let mut out = vec![0.0f32; n];
@@ -435,7 +433,6 @@ fn test_ca_10_safety_power_standby_and_no_nan_clip() {
         let mut amp = WhiteBoxAmpProcessor::new(m);
         amp.set_sample_rate(48000.0);
         amp.panel_mut().set_input_gain(10.0);
-        amp.panel_mut().set_overdrive(10.0);
         amp.panel_mut().set_master_volume(10.0);
         amp.panel_mut().set_output_level_db(12.0);
         amp.process(&in_buf, &mut out_buf);

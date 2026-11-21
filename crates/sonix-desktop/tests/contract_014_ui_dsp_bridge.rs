@@ -74,12 +74,10 @@ fn test_ca_04_post_params_applies_all_keys_and_state_reflects_them() {
     assert_eq!(code, 200);
     let state: serde_json::Value = serde_json::from_str(&state_json).expect("JSON de estado inválido");
     assert_eq!(state["amp_1.gain"], 8.0);
-    assert_eq!(state["amp_1.overdrive"], 5.0);
     assert_eq!(state["amp_1.bass"], 5.0);
     assert_eq!(state["amp_1.middle"], 5.0);
     assert_eq!(state["amp_1.treble"], 5.0);
     assert_eq!(state["amp_1.presence"], 5.0);
-    assert_eq!(state["amp_1.depth"], 5.0);
     assert_eq!(state["amp_1.master"], 7.0);
     assert_eq!(state["input.boost"], 2.5);
     assert_eq!(state["gate.threshold_db"], -65.0);
@@ -92,12 +90,10 @@ fn test_ca_04_post_params_applies_all_keys_and_state_reflects_them() {
     // 2. Aplica novas configurações de todas as chaves
     let update_payload = r#"{
         "amp_1.gain": 9.2,
-        "amp_1.overdrive": 6.5,
         "amp_1.bass": 4.0,
         "amp_1.middle": 7.0,
         "amp_1.treble": 8.0,
         "amp_1.presence": 6.0,
-        "amp_1.depth": 3.5,
         "amp_1.master": 5.5,
         "input.boost": 3.2,
         "gate.threshold_db": -50.0,
@@ -123,12 +119,10 @@ fn test_ca_04_post_params_applies_all_keys_and_state_reflects_them() {
     let (_, new_state_json) = http_request(port, "GET", "/api/state", &[], None);
     let new_state: serde_json::Value = serde_json::from_str(&new_state_json).unwrap();
     assert_eq!(new_state["amp_1.gain"], 9.2);
-    assert_eq!(new_state["amp_1.overdrive"], 6.5);
     assert_eq!(new_state["amp_1.bass"], 4.0);
     assert_eq!(new_state["amp_1.middle"], 7.0);
     assert_eq!(new_state["amp_1.treble"], 8.0);
     assert_eq!(new_state["amp_1.presence"], 6.0);
-    assert_eq!(new_state["amp_1.depth"], 3.5);
     assert_eq!(new_state["amp_1.master"], 5.5);
     assert_eq!(new_state["input.boost"], 3.2);
     assert_eq!(new_state["gate.threshold_db"], -50.0);

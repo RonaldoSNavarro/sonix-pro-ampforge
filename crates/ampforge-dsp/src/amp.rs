@@ -14,6 +14,14 @@ pub enum AmpModelId {
 }
 
 impl AmpModelId {
+    pub const ALL: [Self; 5] = [
+        Self::BritJcm800_2203,
+        Self::BritPlexi1959,
+        Self::UsTwinBlackface65,
+        Self::CaliDualRectoRevF,
+        Self::UkAc30TopBoost,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::BritJcm800_2203 => "jcm800_2203",
@@ -22,6 +30,21 @@ impl AmpModelId {
             Self::CaliDualRectoRevF => "dual_rect",
             Self::UkAc30TopBoost => "ac30_tb",
         }
+    }
+
+    pub fn has_presence(self) -> bool {
+        matches!(
+            self,
+            Self::BritPlexi1959 | Self::BritJcm800_2203 | Self::CaliDualRectoRevF
+        )
+    }
+
+    pub fn has_master(self) -> bool {
+        matches!(self, Self::BritJcm800_2203 | Self::CaliDualRectoRevF)
+    }
+
+    pub fn has_middle(self) -> bool {
+        !matches!(self, Self::UkAc30TopBoost)
     }
 }
 
@@ -150,12 +173,10 @@ pub struct AmpModelDescriptor {
 #[derive(Debug, Clone)]
 pub struct AmpFrontPanel {
     pub input_gain: f32,
-    pub overdrive: f32,
     pub bass: f32,
     pub middle: f32,
     pub treble: f32,
     pub presence: f32,
-    pub depth: f32,
     pub master_volume: f32,
     pub output_level_db: f32,
     pub bright_switch: bool,
@@ -178,12 +199,10 @@ impl Default for AmpFrontPanel {
     fn default() -> Self {
         Self {
             input_gain: 5.0,
-            overdrive: 5.0,
             bass: 5.0,
             middle: 5.0,
             treble: 5.0,
             presence: 5.0,
-            depth: 5.0,
             master_volume: 5.0,
             output_level_db: 0.0,
             bright_switch: false,
@@ -217,10 +236,6 @@ impl AmpFrontPanel {
         self.input_gain = Self::sanitize_val(val, 0.0, 10.0, 5.0);
     }
 
-    pub fn set_overdrive(&mut self, val: f32) {
-        self.overdrive = Self::sanitize_val(val, 0.0, 10.0, 5.0);
-    }
-
     pub fn set_bass(&mut self, val: f32) {
         self.bass = Self::sanitize_val(val, 0.0, 10.0, 5.0);
     }
@@ -235,10 +250,6 @@ impl AmpFrontPanel {
 
     pub fn set_presence(&mut self, val: f32) {
         self.presence = Self::sanitize_val(val, 0.0, 10.0, 5.0);
-    }
-
-    pub fn set_depth(&mut self, val: f32) {
-        self.depth = Self::sanitize_val(val, 0.0, 10.0, 5.0);
     }
 
     pub fn set_master_volume(&mut self, val: f32) {
@@ -461,7 +472,6 @@ pub struct WhiteBoxAmpProcessor {
     miller_lp2: f64,
     ac30_cut_lp: f64,
     passive_tonestack: PassiveToneStack,
-    depth_filter: BiquadFilter,
     presence_filter: BiquadFilter,
     voicing_filter1: BiquadFilter,
     voicing_filter2: BiquadFilter,
@@ -805,6 +815,32 @@ const SINC_WEIGHTS: [[f64; 8]; 8] = [
     [ -0.00002736,   0.00369401,  -0.02536934,   0.11443573,   0.97053650,  -0.07812250,   0.01676671,  -0.00191376], // step 7
 ];
 
+const TRIODE_12AX7_MU: f64 = 100.0;
+const TRIODE_12AX7_RP_OHM: f64 = 62_500.0;
+// DECISAO_SONIX_PREAMP_STAGE_NORM (2026-11-20): normalização grade-placa (~10x entre grade V1 ~1,5 V e estágio seguinte/PI ~15 V)
+// usada enquanto triode_adaa1 opera normalizado em v1_headroom ~ 1,0; confirmável por calibração nodal SPICE/WDF completa.
+const DECISAO_SONIX_PREAMP_STAGE_NORM: f64 = 10.0;
+
+// DECISAO_SONIX_RECTO_STAGE_* (2026-11-20): esquema primário Rev F (`RF-1F`) é UNKNOWN em docs/amps/voicing-fontes.md §4;
+// valores típicos de cascata 12AX7 de alto ganho (s2 e s4 com cátodo 1.8 kΩ || 1 µF bypassado acima de ~88 Hz -> Rk_sem_bypass = 0;
+// cold clipper s3 com Rk = 39 kΩ sem capacitor de bypass), confirmáveis com esquema primário RF-1F.
+const DECISAO_SONIX_RECTO_S2_RA: f64 = 100_000.0;
+const DECISAO_SONIX_RECTO_S2_RL: f64 = 470_000.0;
+const DECISAO_SONIX_RECTO_S2_RK_UNBYPASSED: f64 = 0.0;
+const DECISAO_SONIX_RECTO_S3_RA: f64 = 100_000.0;
+const DECISAO_SONIX_RECTO_S3_RL: f64 = 470_000.0;
+const DECISAO_SONIX_RECTO_S3_RK_UNBYPASSED: f64 = 39_000.0;
+const DECISAO_SONIX_RECTO_S4_RA: f64 = 100_000.0;
+const DECISAO_SONIX_RECTO_S4_RL: f64 = 1_000_000.0;
+const DECISAO_SONIX_RECTO_S4_RK_UNBYPASSED: f64 = 0.0;
+
+#[inline]
+fn triode_stage_gain(ra_ohm: f64, rl_ohm: f64, rk_unbypassed_ohm: f64) -> f64 {
+    let r_ac = (ra_ohm * rl_ohm) / (ra_ohm + rl_ohm);
+    (TRIODE_12AX7_MU * r_ac)
+        / (r_ac + TRIODE_12AX7_RP_OHM + (TRIODE_12AX7_MU + 1.0) * rk_unbypassed_ohm)
+}
+
 impl WhiteBoxAmpProcessor {
     pub fn create_voicing_filters(model: AmpModelId, sr: f64) -> (BiquadFilter, BiquadFilter) {
         // Curvas físicas documentadas em docs/amps/voicing-fontes.md e esquemas elétricos originais
@@ -850,7 +886,6 @@ impl WhiteBoxAmpProcessor {
             miller_lp2: 0.0,
             ac30_cut_lp: 0.0,
             passive_tonestack: PassiveToneStack::new(),
-            depth_filter: BiquadFilter::default(),
             presence_filter: BiquadFilter::default(),
             voicing_filter1: v1,
             voicing_filter2: v2,
@@ -1157,11 +1192,12 @@ impl WhiteBoxAmpProcessor {
         };
         let nfb_scale = (eff_nfb / 10.0).clamp(0.0, 1.0);
 
-        // Feedback loop filters: Depth (65-130 Hz) & Presence (>2 kHz) modulated by NFB loop (Spec 016 CA-7, Spec 039 CA-8)
-        let depth_db = (self.panel.depth as f64 / 10.0) * 6.5 * nfb_scale;
-        let pres_db = (self.panel.presence as f64 / 10.0) * 10.0 * nfb_scale;
-        self.depth_filter.update_coeffs(BiquadFilter::peaking(85.0, depth_db, 2.5, sr));
-        self.presence_filter.update_coeffs(BiquadFilter::peaking(4000.0, pres_db, 1.4, sr));
+        // Feedback loop filter: Presence (>2 kHz) modulated by NFB loop somente nos modelos com Presence real
+        if self.model_id.has_presence() {
+            let pres_db = (self.panel.presence as f64 / 10.0) * 10.0 * nfb_scale;
+            self.presence_filter
+                .update_coeffs(BiquadFilter::peaking(4000.0, pres_db, 1.4, sr));
+        }
 
         // Subtle power-section/transformer voicing per model
         let (v1_cur, v2_cur) = if self.mod_settings.tonestack != ToneStackTopology::Model {
@@ -1202,17 +1238,6 @@ impl WhiteBoxAmpProcessor {
 
         let pre_gain_db = -44.0 + (self.panel.input_gain as f64 / 10.0) * 62.0;
         let pre_gain_lin = 10.0f64.powf(pre_gain_db / 20.0);
-
-        let od_norm = (self.panel.overdrive as f64 / 10.0).clamp(0.0, 1.0);
-        let od_gain_db = match self.model_id {
-            // Twin Reverb AB763 não tem estágio de Overdrive: em overdrive=5.0 (padrão) mantém headroom limpo real
-            AmpModelId::UsTwinBlackface65 => ((od_norm - 0.5).max(0.0)) * 22.0,
-            // Plexi 1959 & AC30 Top Boost: overdrive atua como trim moderado sem mascarar dinâmica limpa
-            AmpModelId::BritPlexi1959 | AmpModelId::UkAc30TopBoost => od_norm * 18.0,
-            // JCM800 2203 & Dual Rectifier Rev F: cascata de alto ganho
-            AmpModelId::BritJcm800_2203 | AmpModelId::CaliDualRectoRevF => od_norm * 36.0,
-        };
-        let od_gain_lin = 10.0f64.powf(od_gain_db / 20.0);
 
         let vol2_gain_db = -44.0 + (self.panel.volume_2 as f64 / 10.0) * 62.0;
         let vol2_lin = if self.panel.volume_2 <= 0.05 {
@@ -1280,8 +1305,9 @@ impl WhiteBoxAmpProcessor {
                     (1.0 + master_pot * 4.2 * m_mult) / power_tube_headroom
                 }
                 AmpModelId::UkAc30TopBoost => {
-                    let master_pot = master as f64 / 10.0;
-                    (1.2 + master_pot * 5.0 + (gain as f64 / 10.0) * 1.6) / power_tube_headroom
+                    // AC30 Top Boost clássico (JMI OS/010 / OS/056) não possui Master Volume:
+                    // excitação do estágio EL84 em Classe A é governada pelos volumes dos canais (Brilliant e Normal).
+                    (1.2 + (gain as f64 / 10.0) * 5.0 + (vol2 as f64 / 10.0) * 1.6) / power_tube_headroom
                 }
                 AmpModelId::BritJcm800_2203 => {
                     let master_pot = master as f64 / 10.0;
@@ -1453,27 +1479,30 @@ impl WhiteBoxAmpProcessor {
                         let ch2_on = is_jumpered || self.panel.input_jack.is_normal_channel();
 
                         let ch1_sig = if ch1_on {
-                            let g1 = (s * pre_gain_lin * od_gain_lin * lead_mult * tube_gain) / v1_headroom;
+                            let g1 = (s * pre_gain_lin * lead_mult * tube_gain) / v1_headroom;
                             // Canal I High Treble do Super Lead mantem corpo nos graves ao somar no V2a
                             triode_adaa1(g1, &mut self.adaa_pre_prev, kp_base, kn_base) * v1_headroom
                         } else {
                             0.0
                         };
                         let ch2_sig = if ch2_on {
-                            let g2 = (s_ch2_base * od_gain_lin * tube_gain) / v1_headroom;
+                            let g2 = (s_ch2_base * tube_gain) / v1_headroom;
                             triode_adaa1(g2, &mut self.adaa_s2_prev, kp_base * 0.9, kn_base) * v1_headroom
                         } else {
                             0.0
                         };
-                        // V2a + V2b Cathode Follower
+                        // Fonte: Marshall 1959HW Owners Manual p. 3 & Dr. Tube 1969 SL/A:
+                        // resistor de mixagem de 470k do Canal I é bypassado por 470pF acima de ~720 Hz + V2a (Ra=100k, Rl=1M, Rk=820Ω -> gain/norm = 3.848)
+                        let v2a_gain = triode_stage_gain(100_000.0, 1_000_000.0, 820.0)
+                            / DECISAO_SONIX_PREAMP_STAGE_NORM;
                         let sum_v2 = one_pole_hpf(&mut self.interstage_hp1, ch1_sig + ch2_sig, alpha_hp_loose);
-                        triode_adaa1((sum_v2 * 1.15) / v1_headroom, &mut self.adaa_s3_prev, kp_base, kn_base)
+                        triode_adaa1((sum_v2 * v2a_gain) / v1_headroom, &mut self.adaa_s3_prev, kp_base, kn_base)
                             * v1_headroom
                     }
                     AmpModelId::BritJcm800_2203 => {
                         let is_low = self.panel.input_jack.is_low_pad();
-                        let raw_drive = pre_gain_lin * od_gain_lin * lead_mult * tube_gain;
-                        // Limitação física de condução de grade em cascata extrema (joelho de 4a ordem preserva gain=10, od=0 linear)
+                        let raw_drive = pre_gain_lin * lead_mult * tube_gain;
+                        // Limitação física de condução de grade em cascata extrema (joelho de 4a ordem)
                         let base_drive = raw_drive / (1.0 + (raw_drive / 18.5).powi(4)).powf(0.25);
                         // Grid-stopper de 68 kΩ + capacitância de Miller de V1a (~6.4 kHz)
                         let alpha_grid_jcm = (2.0 * std::f64::consts::PI * 6400.0 / sr).clamp(0.01, 0.85);
@@ -1492,11 +1521,12 @@ impl WhiteBoxAmpProcessor {
                                 kn_base,
                             ) * v1_headroom
                         };
-                        // V1b Asymmetric Cold Clipper (Rk = 10k -> pronounced 2f0 when triode_asym > 0; symmetric if dialed to 0 in Mod Shop)
+                        // Fonte: Dr. Tube 1981 JCM800 2203 & Rob Robinette (V1b cold clipper: Ra=100k, Rl=470k, Rk=10k sem bypass -> ~7.139)
+                        let v1b_gain = triode_stage_gain(100_000.0, 470_000.0, 10_000.0);
                         let v1b_in = one_pole_hpf(&mut self.interstage_hp1, s_after_v1a, alpha_hp_tight);
                         let kp_cold = (1.0 + 11.0 * asym) * ef86_knee;
                         let kn_cold = ((1.0 - 2.6 * asym) * ef86_knee).max(0.35);
-                        let v1b = triode_adaa1((v1b_in * 1.12) / v1_headroom, &mut self.adaa_s2_prev, kp_cold, kn_cold)
+                        let v1b = triode_adaa1((v1b_in * v1b_gain) / v1_headroom, &mut self.adaa_s2_prev, kp_cold, kn_cold)
                             * v1_headroom;
                         // Divisor 470k + capacitância de Miller entre V1b e V2a (~7.0 kHz) antes do cathode follower
                         let alpha_miller_jcm = (2.0 * std::f64::consts::PI * 7000.0 / sr).clamp(0.01, 0.85);
@@ -1511,7 +1541,7 @@ impl WhiteBoxAmpProcessor {
                     AmpModelId::UsTwinBlackface65 => {
                         // Circuito AB763: V1a (1.5k/22uF) -> Volume + Bright -> Tone Stack passivo ENTRE V1a e V1b -> V1b recovery
                         let twin_headroom = v1_headroom * 2.50;
-                        let g_v1a = (s * pre_gain_lin * 1.95 * od_gain_lin * lead_mult * tube_gain) / twin_headroom;
+                        let g_v1a = (s * pre_gain_lin * 1.95 * lead_mult * tube_gain) / twin_headroom;
                         let v1a = triode_adaa1(g_v1a, &mut self.adaa_pre_prev, kp_base * 0.78, kn_base * 0.88) * twin_headroom;
                         let v1a_hp = one_pole_hpf(&mut self.interstage_hp1, v1a, alpha_hp_loose * 0.40);
                         let after_ts = self.passive_tonestack.process(v1a_hp) * ts_recovery;
@@ -1526,35 +1556,53 @@ impl WhiteBoxAmpProcessor {
                             AmpChannelMode::Modern => (3.10, 4usize, true),
                         };
                         let hp_a = if use_tight_hp { alpha_hp_tight } else { alpha_hp_loose };
-                        let g1 = (s * pre_gain_lin * od_gain_lin * lead_mult * stage_drive * tube_gain) / v1_headroom;
+                        let g1 = (s * pre_gain_lin * lead_mult * stage_drive * tube_gain) / v1_headroom;
                         let s1 = triode_adaa1(g1, &mut self.adaa_pre_prev, kp_base, kn_base) * v1_headroom;
                         let hp1 = one_pole_hpf(&mut self.interstage_hp1, s1, hp_a);
-                        let s2 = triode_adaa1((hp1 * (0.9 + 0.35 * stage_drive)) / v1_headroom, &mut self.adaa_s2_prev, kp_base * 1.25, kn_base * 0.85) * v1_headroom;
+                        let s2_gain = triode_stage_gain(
+                            DECISAO_SONIX_RECTO_S2_RA,
+                            DECISAO_SONIX_RECTO_S2_RL,
+                            DECISAO_SONIX_RECTO_S2_RK_UNBYPASSED,
+                        ) / DECISAO_SONIX_PREAMP_STAGE_NORM;
+                        let s2 = triode_adaa1((hp1 * s2_gain) / v1_headroom, &mut self.adaa_s2_prev, kp_base * 1.25, kn_base * 0.85) * v1_headroom;
                         if n_stages == 2 {
                             s2
                         } else {
                             let hp2 = one_pole_hpf(&mut self.interstage_hp2, s2, hp_a);
-                            let s3 = triode_adaa1((hp2 * 1.85) / v1_headroom, &mut self.adaa_s3_prev, kp_base * 1.45, kn_base * 0.7) * v1_headroom;
+                            let s3_gain = triode_stage_gain(
+                                DECISAO_SONIX_RECTO_S3_RA,
+                                DECISAO_SONIX_RECTO_S3_RL,
+                                DECISAO_SONIX_RECTO_S3_RK_UNBYPASSED,
+                            );
+                            let s3 = triode_adaa1((hp2 * s3_gain) / v1_headroom, &mut self.adaa_s3_prev, kp_base * 1.45, kn_base * 0.7) * v1_headroom;
                             if n_stages == 3 {
                                 s3
                             } else {
                                 self.miller_lp1 = crate::denormal::flush_f64(
                                     self.miller_lp1 + alpha_miller * (s3 - self.miller_lp1),
                                 );
-                                let s4 = triode_adaa1((self.miller_lp1 * 2.1) / v1_headroom, &mut self.adaa_s4_prev, kp_base * 1.15, kn_base * 0.9) * v1_headroom;
+                                let s4_gain = triode_stage_gain(
+                                    DECISAO_SONIX_RECTO_S4_RA,
+                                    DECISAO_SONIX_RECTO_S4_RL,
+                                    DECISAO_SONIX_RECTO_S4_RK_UNBYPASSED,
+                                ) / DECISAO_SONIX_PREAMP_STAGE_NORM;
+                                let s4 = triode_adaa1((self.miller_lp1 * s4_gain) / v1_headroom, &mut self.adaa_s4_prev, kp_base * 1.15, kn_base * 0.9) * v1_headroom;
                                 s4
                             }
                         }
                     }
                     AmpModelId::UkAc30TopBoost => {
                         let is_norm = self.panel.input_jack.is_normal_channel();
-                        let g1 = (s * pre_gain_lin * od_gain_lin * lead_mult * tube_gain * 1.05) / v1_headroom;
+                        let g1 = (s * pre_gain_lin * lead_mult * tube_gain * 1.05) / v1_headroom;
                         let v1 = triode_adaa1(g1, &mut self.adaa_pre_prev, kp_base * 1.05, kn_base * 0.92) * v1_headroom;
                         if is_norm {
                             v1
                         } else {
+                            // Fonte: JMI AC30 Top Boost OS/010 & OS/056 (V2a: Ra=100k, Rl=220k, Rk=1.5k -> gain/norm = 2.431)
+                            let tb_v2_gain = triode_stage_gain(100_000.0, 220_000.0, 1_500.0)
+                                / DECISAO_SONIX_PREAMP_STAGE_NORM;
                             let hp1 = one_pole_hpf(&mut self.interstage_hp1, v1, alpha_hp_loose);
-                            triode_adaa1((hp1 * 1.35) / v1_headroom, &mut self.adaa_s2_prev, kp_base * 1.1, kn_base * 0.88)
+                            triode_adaa1((hp1 * tb_v2_gain) / v1_headroom, &mut self.adaa_s2_prev, kp_base * 1.1, kn_base * 0.88)
                                 * v1_headroom
                         }
                     }
@@ -1634,10 +1682,11 @@ impl WhiteBoxAmpProcessor {
                 let power_stage_dist = power_sat_raw - power_in_raw;
                 let power_sat = power_in_raw + power_stage_dist * nfb_linearization;
 
-                // 5. Speaker Resonance (NFB + Secondary Impedance) + Depth & Presence
+                // 5. Speaker Resonance (NFB + Secondary Impedance) + Presence
                 let mut power_out = self.speaker_res_filter.process(power_sat * 0.30 * spongy_power_atten);
-                power_out = self.depth_filter.process(power_out);
-                power_out = self.presence_filter.process(power_out);
+                if self.model_id.has_presence() {
+                    power_out = self.presence_filter.process(power_out);
+                }
 
                 // 6. Transformer Saturation (Feedforward Frequency-Dependent LF Core Saturation at 150 Hz)
                 if xf_val > 0.01 {

@@ -140,21 +140,20 @@ fn test_ca_02_middle_tone_stack_band() {
 fn test_ca_03_overdrive_gain_and_thd_increase() {
     let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp.set_sample_rate(48000.0);
-    amp.panel_mut().input_gain = 5.0;
-    amp.panel_mut().master_volume = 3.0;
+    amp.panel_mut().master_volume = 5.0;
 
-    // Pequeno sinal: -40 dBFS (0.01)
+    // Pequeno sinal: -40 dBFS (0.01) — controle real de ganho do pré (input_gain)
     let small_sig = 0.01f32;
-    amp.panel_mut().overdrive = 0.0;
+    amp.panel_mut().input_gain = 2.0;
     let gain_od0 = calc_peak_gain_at_freq(&mut amp, 1000.0, 48000.0, small_sig);
 
-    amp.panel_mut().overdrive = 10.0;
+    amp.panel_mut().input_gain = 10.0;
     let gain_od10 = calc_peak_gain_at_freq(&mut amp, 1000.0, 48000.0, small_sig);
 
     let diff_db = 20.0 * (gain_od10 / gain_od0.max(1e-6)).log10();
     assert!(
         diff_db >= 20.0,
-        "overdrive 0 vs 10 deve elevar ganho de pequeno sinal em >= 20 dB (foi {:.2} dB)",
+        "input_gain 2 vs 10 deve elevar ganho de pequeno sinal em >= 20 dB (foi {:.2} dB)",
         diff_db
     );
 
@@ -164,12 +163,12 @@ fn test_ca_03_overdrive_gain_and_thd_increase() {
         .map(|i| 0.1 * (2.0 * PI * 1000.0 * (i as f32 / 48000.0)).sin())
         .collect();
 
-    amp.panel_mut().overdrive = 0.0;
+    amp.panel_mut().input_gain = 2.0;
     let mut out_thd0 = vec![0.0f32; n];
     amp.process(&in_01, &mut out_thd0);
     let thd0 = amp.compute_thd(&out_thd0[512..]);
 
-    amp.panel_mut().overdrive = 10.0;
+    amp.panel_mut().input_gain = 10.0;
     let mut out_thd10 = vec![0.0f32; n];
     amp.process(&in_01, &mut out_thd10);
     let thd10 = amp.compute_thd(&out_thd10[512..]);
@@ -177,7 +176,7 @@ fn test_ca_03_overdrive_gain_and_thd_increase() {
     let thd_increase_pct = (thd10 - thd0) * 100.0;
     assert!(
         thd_increase_pct >= 10.0,
-        "overdrive 0 vs 10 deve elevar THD em >= 10 pontos percentuais (foi {:.2} p.p.)",
+        "input_gain 2 vs 10 deve elevar THD em >= 10 pontos percentuais (foi {:.2} p.p.)",
         thd_increase_pct
     );
 }
@@ -186,7 +185,6 @@ fn test_ca_03_overdrive_gain_and_thd_increase() {
 fn test_ca_04_preamp_gain_range_input_gain() {
     let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp.set_sample_rate(48000.0);
-    amp.panel_mut().overdrive = 0.0;
     amp.panel_mut().master_volume = 5.0;
 
     let small_in = 0.01f32; // -40 dBFS
@@ -197,7 +195,7 @@ fn test_ca_04_preamp_gain_range_input_gain() {
     let gain_max_db = 20.0 * gain_max.log10();
     assert!(
         gain_max_db >= 20.0,
-        "inputGain=10 com overdrive=0 deve ter ganho >= +20 dB (foi {:.2} dB)",
+        "inputGain=10 deve ter ganho >= +20 dB (foi {:.2} dB)",
         gain_max_db
     );
 
@@ -209,7 +207,7 @@ fn test_ca_04_preamp_gain_range_input_gain() {
     let gain_min_db = 20.0 * gain_min.log10();
     assert!(
         gain_min_db <= -20.0,
-        "inputGain=0 com overdrive=0 deve ter ganho <= -20 dB (foi {:.2} dB)",
+        "inputGain=0 deve ter ganho <= -20 dB (foi {:.2} dB)",
         gain_min_db
     );
 }
@@ -238,7 +236,6 @@ fn test_ca_05_all_10_pairs_of_5_amp_models_differ() {
         let mut proc = WhiteBoxAmpProcessor::new(m);
         proc.set_sample_rate(48000.0);
         proc.panel_mut().input_gain = 7.0;
-        proc.panel_mut().overdrive = 6.0;
         proc.panel_mut().master_volume = 6.0;
         let mut out = vec![0.0f32; n];
         proc.process(&in_sig, &mut out);
@@ -369,35 +366,7 @@ fn test_ca_07_depth_and_presence_frequency_isolation() {
         })
         .collect();
 
-    // 1. Depth: 0 vs 10 -> muda 65-130 Hz >= 3 dB e muda > 1 kHz <= 0.5 dB
-    amp.panel_mut().presence = 5.0;
-    amp.panel_mut().depth = 0.0;
-    let mut out_d0 = vec![0.0f32; n];
-    amp.process(&in_sig, &mut out_d0);
-    let e_d0_low = calc_band_energy(&out_d0[512..], 48000.0, 65.0, 130.0);
-    let e_d0_high = calc_band_energy(&out_d0[512..], 48000.0, 1000.0, 10000.0);
-
-    amp.panel_mut().depth = 10.0;
-    let mut out_d10 = vec![0.0f32; n];
-    amp.process(&in_sig, &mut out_d10);
-    let e_d10_low = calc_band_energy(&out_d10[512..], 48000.0, 65.0, 130.0);
-    let e_d10_high = calc_band_energy(&out_d10[512..], 48000.0, 1000.0, 10000.0);
-
-    let diff_d_low = 10.0 * (e_d10_low / e_d0_low).log10();
-    let diff_d_high = (10.0 * (e_d10_high / e_d0_high).log10()).abs();
-    assert!(
-        diff_d_low >= 3.0,
-        "depth deve mudar energia em 65-130 Hz em >= 3 dB (foi {:.2} dB)",
-        diff_d_low
-    );
-    assert!(
-        diff_d_high <= 0.5,
-        "depth não deve alterar energia > 1 kHz em mais de 0.5 dB (foi {:.2} dB)",
-        diff_d_high
-    );
-
-    // 2. Presence: 0 vs 10 -> muda > 2 kHz >= 3 dB e muda < 500 Hz <= 0.5 dB
-    amp.panel_mut().depth = 5.0;
+    // Presence: 0 vs 10 -> muda > 2 kHz >= 3 dB e muda < 500 Hz <= 0.5 dB
     amp.panel_mut().presence = 0.0;
     let mut out_p0 = vec![0.0f32; n];
     amp.process(&in_sig, &mut out_p0);
@@ -506,12 +475,10 @@ fn test_ca_09_safe_output_limiter_never_exceeds_0_dbfs() {
 
     for _ in 0..1000 {
         amp.panel_mut().input_gain = next_rand() * 10.0;
-        amp.panel_mut().overdrive = next_rand() * 10.0;
         amp.panel_mut().bass = next_rand() * 10.0;
         amp.panel_mut().middle = next_rand() * 10.0;
         amp.panel_mut().treble = next_rand() * 10.0;
         amp.panel_mut().presence = next_rand() * 10.0;
-        amp.panel_mut().depth = next_rand() * 10.0;
         amp.panel_mut().master_volume = next_rand() * 10.0;
         amp.panel_mut().output_level_db = next_rand() * 12.0 - 12.0;
 
@@ -564,7 +531,6 @@ fn test_ca_11_aliasing_suppression_with_oversampling() {
     let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp.set_sample_rate(48000.0);
     amp.panel_mut().input_gain = 10.0;
-    amp.panel_mut().overdrive = 10.0;
     amp.panel_mut().master_volume = 5.0;
 
     let n = 4096;

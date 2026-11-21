@@ -109,8 +109,8 @@ fn test_ca_02_bias_crossover_distortion() {
     let mut amp_cold = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_cold.set_sample_rate(sr);
     amp_cold.set_triode_asymmetry(0.0);
-    amp_cold.panel_mut().set_input_gain(7.1);
-    amp_cold.panel_mut().set_overdrive(0.0);
+    // Spec 021 CA-2 mede -30 dBFS na entrada do estágio de potência; com ganho real do clipper V1b (Rk=10k), gain=4.5 entrega nível unitário ao power.
+    amp_cold.panel_mut().set_input_gain(4.5);
     amp_cold.panel_mut().set_master_volume(5.0);
     amp_cold.set_negative_feedback(0.0);
     amp_cold.set_power_tube_bias_ma(20.0);
@@ -118,8 +118,7 @@ fn test_ca_02_bias_crossover_distortion() {
     let mut amp_warm = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_warm.set_sample_rate(sr);
     amp_warm.set_triode_asymmetry(0.0);
-    amp_warm.panel_mut().set_input_gain(7.1);
-    amp_warm.panel_mut().set_overdrive(0.0);
+    amp_warm.panel_mut().set_input_gain(4.5);
     amp_warm.panel_mut().set_master_volume(5.0);
     amp_warm.set_negative_feedback(0.0);
     amp_warm.set_power_tube_bias_ma(45.0);
@@ -220,7 +219,6 @@ fn test_ca_04_nfb_thd_and_speaker_resonance() {
     let mut amp_nfb0 = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_nfb0.set_sample_rate(sr);
     amp_nfb0.panel_mut().set_input_gain(2.5);
-    amp_nfb0.panel_mut().set_overdrive(0.0);
     amp_nfb0.panel_mut().set_presence(0.0);
     amp_nfb0.panel_mut().set_master_volume(9.0);
     amp_nfb0.set_triode_asymmetry(0.0);
@@ -230,7 +228,6 @@ fn test_ca_04_nfb_thd_and_speaker_resonance() {
     let mut amp_nfb10 = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_nfb10.set_sample_rate(sr);
     amp_nfb10.panel_mut().set_input_gain(2.5);
-    amp_nfb10.panel_mut().set_overdrive(0.0);
     amp_nfb10.panel_mut().set_presence(0.0);
     amp_nfb10.panel_mut().set_master_volume(9.0);
     amp_nfb10.set_triode_asymmetry(0.0);
@@ -284,7 +281,6 @@ fn test_ca_05_transformer_saturation_low_freq() {
     let mut amp_x10 = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_x10.set_sample_rate(sr);
     amp_x10.panel_mut().set_input_gain(1.0);
-    amp_x10.panel_mut().set_overdrive(0.0);
     amp_x10.panel_mut().set_bass(9.0);
     amp_x10.panel_mut().set_middle(3.0);
     amp_x10.panel_mut().set_treble(3.0);
@@ -296,7 +292,6 @@ fn test_ca_05_transformer_saturation_low_freq() {
     let mut amp_x0 = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_x0.set_sample_rate(sr);
     amp_x0.panel_mut().set_input_gain(1.0);
-    amp_x0.panel_mut().set_overdrive(0.0);
     amp_x0.panel_mut().set_bass(9.0);
     amp_x0.panel_mut().set_middle(3.0);
     amp_x0.panel_mut().set_treble(3.0);
@@ -345,7 +340,6 @@ fn test_ca_06_plate_voltage_headroom() {
     let mut amp_low_v = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_low_v.set_sample_rate(sr);
     amp_low_v.panel_mut().set_input_gain(8.0);
-    amp_low_v.panel_mut().set_overdrive(0.0);
     amp_low_v.panel_mut().set_master_volume(1.0);
     amp_low_v.set_power_tube_bias_ma(45.0);
     amp_low_v.set_sag_amount(0.0);
@@ -356,7 +350,6 @@ fn test_ca_06_plate_voltage_headroom() {
     let mut amp_high_v = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_high_v.set_sample_rate(sr);
     amp_high_v.panel_mut().set_input_gain(8.0);
-    amp_high_v.panel_mut().set_overdrive(0.0);
     amp_high_v.panel_mut().set_master_volume(1.0);
     amp_high_v.set_power_tube_bias_ma(45.0);
     amp_high_v.set_sag_amount(0.0);

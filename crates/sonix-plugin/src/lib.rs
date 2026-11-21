@@ -186,10 +186,6 @@ impl SonixPluginProcessor {
                 self.chain.set_amp_presence(value.clamp(0.0, 10.0));
                 Ok(())
             }
-            "amp_1.depth" => {
-                self.chain.set_amp_depth(value.clamp(0.0, 10.0));
-                Ok(())
-            }
             "gate.enabled" => {
                 self.chain.set_gate_enabled(value >= 0.5);
                 Ok(())
@@ -326,8 +322,6 @@ pub struct SonixPluginParams {
     pub amp_master: FloatParam,
     #[id = "amp_1.presence"]
     pub amp_presence: FloatParam,
-    #[id = "amp_1.depth"]
-    pub amp_depth: FloatParam,
     #[id = "gate.threshold_db"]
     pub gate_threshold_db: FloatParam,
     #[id = "dly_1.intensity"]
@@ -349,7 +343,6 @@ impl Default for SonixPluginParams {
             amp_treble: FloatParam::new("Amp Treble", 5.0, FloatRange::Linear { min: 0.0, max: 10.0 }),
             amp_master: FloatParam::new("Amp Master", 5.0, FloatRange::Linear { min: 0.0, max: 10.0 }),
             amp_presence: FloatParam::new("Amp Presence", 5.0, FloatRange::Linear { min: 0.0, max: 10.0 }),
-            amp_depth: FloatParam::new("Amp Depth", 5.0, FloatRange::Linear { min: 0.0, max: 10.0 }),
             gate_threshold_db: FloatParam::new(
                 "Gate Threshold",
                 -50.0,
@@ -413,7 +406,6 @@ impl SonixProPlugin {
             "amp_1.treble",
             "amp_1.master",
             "amp_1.presence",
-            "amp_1.depth",
             "amp_1.model",
             "amp_1.bright",
             "amp_1.channel",
@@ -503,7 +495,6 @@ impl Plugin for SonixProPlugin {
         self.chain.set_amp_treble(self.params.amp_treble.smoothed.next());
         self.chain.set_amp_master(self.params.amp_master.smoothed.next());
         self.chain.set_amp_presence(self.params.amp_presence.smoothed.next());
-        self.chain.set_amp_depth(self.params.amp_depth.smoothed.next());
         self.chain
             .set_gate_threshold_db(self.params.gate_threshold_db.smoothed.next());
         self.chain

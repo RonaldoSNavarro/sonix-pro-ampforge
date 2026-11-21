@@ -72,6 +72,10 @@ fn test_ca_00_every_param_write_the_ui_really_sends_is_accepted() {
     let mut rejeitados = Vec::new();
     for w in fx["param_writes"].as_array().unwrap() {
         let ctx = make_ctx();
+        if let Some(model) = w["source"].as_str().and_then(|s| s.strip_prefix("AmpHead:")) {
+            let (mcode, mbody) = post_params(&ctx, "amp_1.model", &serde_json::json!(model));
+            assert_eq!(mcode, 200, "falha ao selecionar modelo {model}: {mbody}");
+        }
         let (code, body) = post_params(&ctx, w["key"].as_str().unwrap(), &w["value"]);
         if code != 200 {
             rejeitados.push(format!("{} {}={} -> {code} {body}", w["source"], w["key"], w["value"]));
