@@ -906,3 +906,119 @@ fn aud_14_banda_de_rejeicao() {
         }
     }
 }
+
+#[test]
+fn aud_15_saida_igual_a_convolucao_direta() {
+    use ampforge_dsp::cab::{ImpulseResponse, VirtualCabProcessor};
+
+    let ir_len = 24_000usize;
+    let mut ir_samples = vec![0.0_f32; ir_len];
+    for (i, s) in ir_samples.iter_mut().enumerate() {
+        let t = i as f32 / 48_000.0;
+        *s = (-t * 14.0).exp() * (2.0 * PI * 430.0 * t).sin() * 0.15;
+    }
+    ir_samples[0] = 0.5;
+    ir_samples[128] = -0.22;
+    ir_samples[513] = 0.11;
+
+    let mut cab = VirtualCabProcessor::new();
+    cab.set_sample_rate(48_000.0);
+    cab.set_custom_ir(ImpulseResponse::from_samples(48_000.0, ir_samples.clone()));
+    cab.set_ir_enabled(true);
+
+    let sig_len = 4096usize;
+    let mut input = vec![0.0_f32; sig_len];
+    for (i, s) in input.iter_mut().enumerate() {
+        let t = i as f32 / 48_000.0;
+        *s = 0.4 * (2.0 * PI * 190.0 * t).sin() + 0.25 * (2.0 * PI * 1150.0 * t).cos();
+    }
+
+    let mut out = vec![0.0_f32; sig_len];
+    let mut pos = 0usize;
+    while pos < sig_len {
+        let end = (pos + 32).min(sig_len);
+        cab.process(&input[pos..end], &mut out[pos..end]);
+        pos = end;
+    }
+
+    let mut max_err = 0.0_f32;
+    for n in 0..sig_len {
+        let mut ref_y = 0.0_f64;
+        let k_max = n.min(ir_len - 1);
+        for k in 0..=k_max {
+            ref_y += (input[n - k] as f64) * (ir_samples[k] as f64);
+        }
+        let err = (out[n] - ref_y as f32).abs();
+        if err > max_err {
+            max_err = err;
+        }
+    }
+    assert!(
+        max_err < 1e-4,
+        "AUD-15: erro máximo vs convolução direta = {max_err:.6} (>= 1e-4)"
+    );
+}
+
+#[test]
+fn aud_15_custo_distribuido() {
+    use ampforge_dsp::cab::{ImpulseResponse, VirtualCabProcessor};
+
+    let ir_len = 48_000usize; // 500 ms @ 96 kHz
+    let mut ir_samples = vec![0.0_f32; ir_len];
+    for (i, s) in ir_samples.iter_mut().enumerate() {
+        let t = i as f32 / 96_000.0;
+        *s = (-t * 10.0).exp() * (2.0 * PI * 310.0 * t).sin() * 0.05;
+    }
+
+    let mut cab = VirtualCabProcessor::new();
+    cab.set_sample_rate(96_000.0);
+    cab.set_custom_ir(ImpulseResponse::from_samples(96_000.0, ir_samples));
+    cab.set_ir_enabled(true);
+
+    let inp = [0.1_f32; 32];
+    let mut out = [0.0_f32; 32];
+    // Aquecimento para preencher FDL (48000 amostras)
+    for _ in 0..(48_000 / 32 + 4) {
+        cab.process(&inp, &mut out);
+    }
+
+    let mut macs = Vec::with_capacity(64);
+    for _ in 0..64 {
+        cab.process(&inp, &mut out);
+        macs.push(cab.ultima_chamada_macs() as f64);
+    }
+    let media = macs.iter().sum::<f64>() / (macs.len() as f64);
+    let max_macs = macs.iter().copied().fold(0.0_f64, f64::max);
+    let razao = if media > 0.0 { max_macs / media } else { f64::INFINITY };
+    assert!(
+        media > 0.0 && razao <= 1.25,
+        "AUD-15: pico de MACs por bloco de 32 alto demais: max={max_macs:.1}, media={media:.2}, max/media={razao:.3} (> 1.25)"
+    );
+}
+
+#[test]
+fn aud_15_zero_alloc() {
+    use ampforge_dsp::cab::{ImpulseResponse, VirtualCabProcessor};
+
+    verify_allocator_self_check();
+
+    let ir_samples = vec![0.01_f32; 48_000];
+    let mut cab = VirtualCabProcessor::new();
+    cab.set_sample_rate(96_000.0);
+    cab.set_custom_ir(ImpulseResponse::from_samples(96_000.0, ir_samples));
+    cab.set_ir_enabled(true);
+
+    let inp = [0.1_f32; 32];
+    let mut out = [0.0_f32; 32];
+    for _ in 0..16 {
+        cab.process(&inp, &mut out);
+    }
+
+    let (allocs, deallocs) = measure_allocs(|| {
+        for _ in 0..32 {
+            cab.process(&inp, &mut out);
+        }
+    });
+    assert_eq!(allocs, 0, "AUD-15: Cab IR alocou {allocs} vez(es)");
+    assert_eq!(deallocs, 0, "AUD-15: Cab IR desalocou {deallocs} vez(es)");
+}

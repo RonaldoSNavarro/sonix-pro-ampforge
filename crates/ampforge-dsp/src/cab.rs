@@ -312,7 +312,9 @@ impl std::fmt::Display for InvalidImpulseResponseError {
 impl std::error::Error for InvalidImpulseResponseError {}
 
 const PART_B: usize = 128;
+const HALF_N: usize = 128;
 const FFT_N: usize = 256;
+const SPEC_BINS: usize = 129;
 const MAX_PARTITIONS: usize = 512;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -328,11 +330,10 @@ impl Complex32 {
     }
 }
 
-/// FFT Radix-2 Cooley-Tukey in-place de 256 pontos (zero-alloc).
-fn fft_256(buf: &mut [Complex32; FFT_N], inverse: bool) {
-    // Bit-reversal permutation (8 bits para 256)
-    for i in 0..FFT_N {
-        let rev = (i as u8).reverse_bits() as usize;
+/// FFT Radix-2 Cooley-Tukey in-place de 128 pontos (zero-alloc).
+fn fft_128(buf: &mut [Complex32; HALF_N], inverse: bool) {
+    for i in 0..HALF_N {
+        let rev = ((i as u8).reverse_bits() >> 1) as usize;
         if i < rev {
             buf.swap(i, rev);
         }
@@ -340,14 +341,14 @@ fn fft_256(buf: &mut [Complex32; FFT_N], inverse: bool) {
 
     let sign = if inverse { 1.0f32 } else { -1.0f32 };
     let mut half = 1usize;
-    while half < FFT_N {
+    while half < HALF_N {
         let step = half << 1;
         let angle_step = sign * std::f32::consts::PI / (half as f32);
         let w_step_re = angle_step.cos();
         let w_step_im = angle_step.sin();
 
         let mut start = 0usize;
-        while start < FFT_N {
+        while start < HALF_N {
             let mut w_re = 1.0f32;
             let mut w_im = 0.0f32;
             for k in 0..half {
@@ -371,7 +372,7 @@ fn fft_256(buf: &mut [Complex32; FFT_N], inverse: bool) {
     }
 
     if inverse {
-        let inv_n = 1.0f32 / (FFT_N as f32);
+        let inv_n = 1.0f32 / (HALF_N as f32);
         for c in buf.iter_mut() {
             c.re *= inv_n;
             c.im *= inv_n;
@@ -379,11 +380,80 @@ fn fft_256(buf: &mut [Complex32; FFT_N], inverse: bool) {
     }
 }
 
+/// Real FFT de 256 amostras via FFT complexa de 128 pontos (retorna 129 bins).
+fn rfft_256_forward(
+    input: &[f32; FFT_N],
+    out: &mut [Complex32; SPEC_BINS],
+    scratch: &mut [Complex32; HALF_N],
+) {
+    for k in 0..HALF_N {
+        scratch[k] = Complex32::new(input[2 * k], input[2 * k + 1]);
+    }
+    fft_128(scratch, false);
+
+    out[0] = Complex32::new(scratch[0].re + scratch[0].im, 0.0);
+    out[HALF_N] = Complex32::new(scratch[0].re - scratch[0].im, 0.0);
+
+    for k in 1..=(HALF_N / 2) {
+        let c_k = scratch[k];
+        let c_nk = scratch[HALF_N - k];
+        let even_re = 0.5 * (c_k.re + c_nk.re);
+        let even_im = 0.5 * (c_k.im - c_nk.im);
+        let odd_re = 0.5 * (c_k.im + c_nk.im);
+        let odd_im = -0.5 * (c_k.re - c_nk.re);
+
+        let angle = -std::f32::consts::PI * (k as f32) / (HALF_N as f32);
+        let (w_im, w_re) = angle.sin_cos();
+        let rot_re = w_re * odd_re - w_im * odd_im;
+        let rot_im = w_re * odd_im + w_im * odd_re;
+
+        out[k] = Complex32::new(even_re + rot_re, even_im + rot_im);
+        out[HALF_N - k] = Complex32::new(even_re - rot_re, -(even_im - rot_im));
+    }
+}
+
+/// Inverse Real FFT de 129 bins para 256 amostras reais via IFFT complexa de 128 pontos.
+fn rfft_256_inverse(
+    spec: &[Complex32; SPEC_BINS],
+    out: &mut [f32; FFT_N],
+    scratch: &mut [Complex32; HALF_N],
+) {
+    scratch[0] = Complex32::new(
+        0.5 * (spec[0].re + spec[HALF_N].re),
+        0.5 * (spec[0].re - spec[HALF_N].re),
+    );
+
+    for k in 1..=(HALF_N / 2) {
+        let y_k = spec[k];
+        let y_nk = Complex32::new(spec[HALF_N - k].re, -spec[HALF_N - k].im);
+        let even_re = 0.5 * (y_k.re + y_nk.re);
+        let even_im = 0.5 * (y_k.im + y_nk.im);
+        let diff_re = 0.5 * (y_k.re - y_nk.re);
+        let diff_im = 0.5 * (y_k.im - y_nk.im);
+
+        let angle = std::f32::consts::PI * (k as f32) / (HALF_N as f32);
+        let (w_im, w_re) = angle.sin_cos();
+        let w_diff_re = w_re * diff_re - w_im * diff_im;
+        let w_diff_im = w_re * diff_im + w_im * diff_re;
+        let odd_re = -w_diff_im;
+        let odd_im = w_diff_re;
+
+        scratch[k] = Complex32::new(even_re + odd_re, even_im + odd_im);
+        scratch[HALF_N - k] = Complex32::new(even_re - odd_re, -(even_im - odd_im));
+    }
+
+    fft_128(scratch, true);
+    for k in 0..HALF_N {
+        out[2 * k] = scratch[k].re;
+        out[2 * k + 1] = scratch[k].im;
+    }
+}
+
 #[derive(Debug)]
 struct IrPartitionedData {
     head_taps: [f32; PART_B],
     head_len: usize,
-    tail_partitions: Vec<[Complex32; FFT_N]>,
+    tail_partitions: Vec<[Complex32; SPEC_BINS]>,
 }
 
 impl IrPartitionedData {
@@ -396,15 +466,15 @@ impl IrPartitionedData {
         let num_parts = (capped_len + PART_B - 1) / PART_B;
         let tail_count = num_parts.saturating_sub(1);
         let mut tail_partitions = Vec::with_capacity(tail_count);
+        let mut scratch = [Complex32::default(); HALF_N];
         for p in 1..num_parts {
             let start = p * PART_B;
             let end = (start + PART_B).min(capped_len);
-            let mut buf = [Complex32::default(); FFT_N];
-            for (i, &s) in samples[start..end].iter().enumerate() {
-                buf[i] = Complex32::new(s, 0.0);
-            }
-            fft_256(&mut buf, false);
-            tail_partitions.push(buf);
+            let mut time_buf = [0.0f32; FFT_N];
+            time_buf[..end - start].copy_from_slice(&samples[start..end]);
+            let mut spec_buf = [Complex32::default(); SPEC_BINS];
+            rfft_256_forward(&time_buf, &mut spec_buf, &mut scratch);
+            tail_partitions.push(spec_buf);
         }
 
         Self {
@@ -422,11 +492,14 @@ struct PartitionedConvolverState {
     block_pos: usize,
     tail_out: [f32; PART_B],
     saved_overlap: [f32; PART_B],
-    fdl: Vec<[Complex32; FFT_N]>,
+    fdl: Vec<[Complex32; SPEC_BINS]>,
     fdl_pos: usize,
     fdl_valid_count: usize,
-    fft_buf: [Complex32; FFT_N],
-    acc_buf: [Complex32; FFT_N],
+    acc_buf: [Complex32; SPEC_BINS],
+    fft_scratch: [Complex32; HALF_N],
+    time_scratch: [f32; FFT_N],
+    mac_cursor: usize,
+    last_call_macs: u32,
 }
 
 impl PartitionedConvolverState {
@@ -438,11 +511,14 @@ impl PartitionedConvolverState {
             block_pos: 0,
             tail_out: [0.0; PART_B],
             saved_overlap: [0.0; PART_B],
-            fdl: vec![[Complex32::default(); FFT_N]; MAX_PARTITIONS],
+            fdl: vec![[Complex32::default(); SPEC_BINS]; MAX_PARTITIONS],
             fdl_pos: 0,
             fdl_valid_count: 0,
-            fft_buf: [Complex32::default(); FFT_N],
-            acc_buf: [Complex32::default(); FFT_N],
+            acc_buf: [Complex32::default(); SPEC_BINS],
+            fft_scratch: [Complex32::default(); HALF_N],
+            time_scratch: [0.0; FFT_N],
+            mac_cursor: 1,
+            last_call_macs: 0,
         }
     }
 
@@ -455,6 +531,23 @@ impl PartitionedConvolverState {
         self.saved_overlap.fill(0.0);
         self.fdl_pos = 0;
         self.fdl_valid_count = 0;
+        self.acc_buf.fill(Complex32::default());
+        self.mac_cursor = 1;
+        self.last_call_macs = 0;
+    }
+
+    #[inline]
+    fn accumulate_partition(&mut self, p: usize, data: &IrPartitionedData) {
+        let fdl_idx = (self.fdl_pos + MAX_PARTITIONS - p) % MAX_PARTITIONS;
+        let x_spec = &self.fdl[fdl_idx];
+        let h_spec = &data.tail_partitions[p];
+        for k in 0..SPEC_BINS {
+            let a = x_spec[k];
+            let b = h_spec[k];
+            self.acc_buf[k].re += a.re * b.re - a.im * b.im;
+            self.acc_buf[k].im += a.re * b.im + a.im * b.re;
+        }
+        self.last_call_macs = self.last_call_macs.saturating_add(1);
     }
 
     #[inline]
@@ -470,48 +563,58 @@ impl PartitionedConvolverState {
         }
         self.head_pos = (self.head_pos + 1) & (PART_B - 1);
 
-        // 2. Cauda pré-computada por FFT
+        // 2. Cauda pré-computada por FFT distribuída no período de 128 amostras
         let y_tail = self.tail_out[self.block_pos];
-        self.in_block[self.block_pos] = x;
+        let sample_idx = self.block_pos;
+        self.in_block[sample_idx] = x;
         self.block_pos += 1;
 
-        // 3. Ao completar bloco de 128 amostras, computa FFT Overlap-Add das partições p >= 1
-        if self.block_pos == PART_B {
-            self.block_pos = 0;
-            if !data.tail_partitions.is_empty() {
-                for i in 0..PART_B {
-                    self.fft_buf[i] = Complex32::new(self.in_block[i], 0.0);
-                    self.fft_buf[PART_B + i] = Complex32::default();
-                }
-                fft_256(&mut self.fft_buf, false);
-                self.fdl[self.fdl_pos] = self.fft_buf;
-
+        if !data.tail_partitions.is_empty() {
+            let max_p = data.tail_partitions.len().min(self.fdl_valid_count + 1);
+            if sample_idx == 0 {
                 self.acc_buf.fill(Complex32::default());
-                let valid = self.fdl_valid_count + 1;
-                let max_p = data.tail_partitions.len().min(valid);
-                for p in 0..max_p {
-                    let fdl_idx = (self.fdl_pos + MAX_PARTITIONS - p) % MAX_PARTITIONS;
-                    let x_spec = &self.fdl[fdl_idx];
-                    let h_spec = &data.tail_partitions[p];
-                    for k in 0..FFT_N {
-                        let a = x_spec[k];
-                        let b = h_spec[k];
-                        self.acc_buf[k].re += a.re * b.re - a.im * b.im;
-                        self.acc_buf[k].im += a.re * b.im + a.im * b.re;
-                    }
-                }
-                fft_256(&mut self.acc_buf, true);
+                self.mac_cursor = 1;
+            }
 
+            if sample_idx < PART_B - 1 {
+                let tail_rest = max_p.saturating_sub(1);
+                let target_end = 1 + ((sample_idx + 1) * tail_rest) / (PART_B - 1);
+                let end_p = target_end.min(max_p);
+                for p in self.mac_cursor..end_p {
+                    self.accumulate_partition(p, data);
+                }
+                self.mac_cursor = end_p;
+            } else {
+                // Amostra 127: Real FFT do bloco atual + partição p=0 + Inverse Real FFT
+                self.block_pos = 0;
+                self.time_scratch[..PART_B].copy_from_slice(&self.in_block);
+                self.time_scratch[PART_B..].fill(0.0);
+                rfft_256_forward(
+                    &self.time_scratch,
+                    &mut self.fdl[self.fdl_pos],
+                    &mut self.fft_scratch,
+                );
+
+                for p in self.mac_cursor..max_p {
+                    self.accumulate_partition(p, data);
+                }
+                self.accumulate_partition(0, data);
+
+                rfft_256_inverse(&self.acc_buf, &mut self.time_scratch, &mut self.fft_scratch);
                 for i in 0..PART_B {
-                    self.tail_out[i] = self.saved_overlap[i] + self.acc_buf[i].re;
-                    self.saved_overlap[i] = self.acc_buf[PART_B + i].re;
+                    self.tail_out[i] = self.saved_overlap[i] + self.time_scratch[i];
+                    self.saved_overlap[i] = self.time_scratch[PART_B + i];
                 }
 
                 self.fdl_pos = (self.fdl_pos + 1) % MAX_PARTITIONS;
                 if self.fdl_valid_count < MAX_PARTITIONS {
                     self.fdl_valid_count += 1;
                 }
+                self.acc_buf.fill(Complex32::default());
+                self.mac_cursor = 1;
             }
+        } else if self.block_pos == PART_B {
+            self.block_pos = 0;
         }
 
         y_head + y_tail
@@ -1247,7 +1350,13 @@ impl VirtualCabProcessor {
         }
     }
 
+    pub fn ultima_chamada_macs(&self) -> u32 {
+        self.conv_custom.last_call_macs
+    }
+
     fn process_ir_convolution(&mut self, input: &[f32], output: &mut [f32]) {
+        self.conv_custom.last_call_macs = 0;
+        self.conv_target.last_call_macs = 0;
         for i in 0..input.len() {
             let x = input[i];
 
