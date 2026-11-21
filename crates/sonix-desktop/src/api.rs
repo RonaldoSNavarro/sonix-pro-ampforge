@@ -787,6 +787,12 @@ pub fn route_matches(pattern: &str, path: &str) -> bool {
     false
 }
 
+#[inline]
+fn sync_telemetry_output_muted(telemetry: &TelemetryBuffer, st: &AppState) {
+    let muted = st.amp_standby || (st.tuner_enabled && st.tuner_output == "mute");
+    telemetry.set_output_muted(muted);
+}
+
 impl ApiContext {
     pub fn new(
         audio_telemetry: Arc<Mutex<Option<AudioStatusTelemetry>>>,
@@ -797,6 +803,7 @@ impl ApiContext {
         device_id: Option<&str>,
         calibration_store: Option<CalibrationStore>,
     ) -> Self {
+        let mut resolved_param_queue = param_queue;
         let mut resource_queue = None;
         let mut shared_adc_clips = None;
         let mut shared_sample_rate_bits = None;
@@ -807,9 +814,12 @@ impl ApiContext {
 
         if let Some(ref d) = dsp_chain {
             if let Ok(mut chain) = d.lock() {
-                if let Some(ref pq) = param_queue {
+                if let Some(ref pq) = resolved_param_queue {
                     chain.set_param_queue(pq.clone());
+                } else {
+                    resolved_param_queue = Some(chain.param_queue());
                 }
+                telemetry.set_output_muted(chain.is_output_muted());
                 resource_queue = Some(chain.resource_queue());
                 shared_adc_clips = Some(chain.adc_clips_handle());
                 shared_sample_rate_bits = Some(chain.shared_sample_rate_bits());
@@ -825,7 +835,7 @@ impl ApiContext {
             app_state,
             telemetry,
             dsp_chain,
-            param_queue,
+            param_queue: resolved_param_queue,
             resource_queue,
             shared_adc_clips,
             shared_sample_rate_bits,
@@ -1203,16 +1213,6 @@ pub fn dispatch(
                                     frequency_hz: 0.0,
                                 }
                             }
-                        } else {
-                            TunerPitchResult {
-                                note_name: "---".to_string(),
-                                cents_deviation: 0.0,
-                                frequency_hz: 0.0,
-                            }
-                        }
-                    } else if let Some(ref dsp_ref) = ctx.dsp_chain {
-                        if let Ok(mut dsp) = dsp_ref.try_lock() {
-                            dsp.tuner_latest_result()
                         } else {
                             TunerPitchResult {
                                 note_name: "---".to_string(),
@@ -1688,7 +1688,8 @@ pub fn dispatch(
             if method == "POST" {
                 let res = handle_post_params(body, &ctx.app_state, &ctx.dsp_chain, &ctx.param_queue);
                 if res.0 == 200 {
-                    if let Ok(st) = ctx.app_state.try_lock() {
+                    if let Ok(st) = ctx.app_state.lock() {
+                        sync_telemetry_output_muted(&ctx.telemetry, &st);
                         if st.tuner_enabled {
                             if let (Some(ref ring), Ok(mut sess)) =
                                 (&ctx.clean_input_ring, ctx.calibration_session.lock())
@@ -2185,7 +2186,7 @@ fn json_kv_to_dsp_updates(k: &str, v: &serde_json::Value, out: &mut Vec<DspParam
 pub fn handle_post_params(
     body: &[u8],
     app_state_clone: &Arc<Mutex<AppState>>,
-    dsp_chain_clone: &Option<Arc<Mutex<RealtimeDspChain>>>,
+    _dsp_chain_clone: &Option<Arc<Mutex<RealtimeDspChain>>>,
     param_queue_clone: &Option<Arc<LockFreeParamQueue>>,
 ) -> (u16, &'static str, Vec<u8>) {
     if body.len() > 4096 {
@@ -3481,12 +3482,6 @@ pub fn handle_post_params(
                             br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
                         );
                     }
-                } else if let Some(ref dsp_ref) = dsp_chain_clone {
-                    if let Ok(mut dsp) = dsp_ref.try_lock() {
-                        for u in &updates {
-                            dsp.apply_param_update(*u);
-                        }
-                    }
                 }
 
                 if let Ok(mut st) = app_state_clone.lock() {
@@ -3746,11 +3741,6 @@ fn handle_post_di(
                         );
                     }
                 }
-            } else if let Some(ref dsp_ref) = ctx.dsp_chain {
-                if let Ok(mut dsp) = dsp_ref.lock() {
-                    dsp.load_di_wav(samples);
-                    dsp.set_input_source("di_file");
-                }
             }
             if let Ok(mut st) = ctx.app_state.lock() {
                 st.input_source = "di_file".to_string();
@@ -3796,11 +3786,6 @@ fn handle_post_cab_ir(
                             br#"{"error":"queue_full","retry_after_ms":5}"#.to_vec(),
                         );
                     }
-                }
-            } else if let Some(ref dsp_ref) = ctx.dsp_chain {
-                if let Ok(mut dsp) = dsp_ref.lock() {
-                    let _ = dsp.load_cab_ir(body);
-                    dsp.set_cab_ir_enabled(true);
                 }
             }
             if let Ok(mut st) = ctx.app_state.lock() {
@@ -4007,6 +3992,7 @@ fn handle_post_presets_load(
                 st.scene_active = l.to_string();
             }
         }
+        sync_telemetry_output_muted(&ctx.telemetry, &st);
         serde_json::to_value(&*st).unwrap_or_else(|_| serde_json::json!({}))
     } else {
         serde_json::json!({})
@@ -4197,6 +4183,7 @@ fn handle_post_presets_import(
                 st.scene_active = l.to_string();
             }
         }
+        sync_telemetry_output_muted(&ctx.telemetry, &st);
     }
 
     json_response(
@@ -4321,7 +4308,10 @@ fn handle_post_scenes_select(
         .app_state
         .lock()
         .ok()
-        .and_then(|st| serde_json::to_value(&*st).ok())
+        .and_then(|st| {
+            sync_telemetry_output_muted(&ctx.telemetry, &st);
+            serde_json::to_value(&*st).ok()
+        })
         .unwrap_or_else(|| serde_json::json!({}));
 
     json_response(
@@ -4533,7 +4523,7 @@ pub fn apply_preset_params_queued(
     params: &std::collections::HashMap<String, serde_json::Value>,
     app_state: &Arc<Mutex<AppState>>,
     param_queue: &Option<Arc<LockFreeParamQueue>>,
-    dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
+    _dsp_chain: &Option<Arc<Mutex<RealtimeDspChain>>>,
 ) -> Result<(), PresetApplyError> {
     for (k, v) in params {
         validate_preset_param_kv(k.as_str(), v).map_err(PresetApplyError::Validation)?;
@@ -4547,12 +4537,6 @@ pub fn apply_preset_params_queued(
 
     if let Some(ref pq) = param_queue {
         pq.push_batch(&updates).map_err(|_| PresetApplyError::QueueFull)?;
-    } else if let Some(ref dsp_ref) = dsp_chain {
-        if let Ok(mut dsp) = dsp_ref.lock() {
-            for u in &updates {
-                dsp.apply_param_update(*u);
-            }
-        }
     }
 
     if let Ok(mut st) = app_state.lock() {
@@ -4805,17 +4789,12 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
                 st.input_boost = result.proposed_boost;
                 st.gate_threshold_db = result.proposed_gate_threshold_db;
                 st.amp_standby = false;
+                sync_telemetry_output_muted(&ctx.telemetry, &st);
             }
             if let Some(ref pq) = ctx.param_queue {
                 let _ = pq.push(DspParamUpdate::InputBoost(result.proposed_boost));
                 let _ = pq.push(DspParamUpdate::GateThreshold(result.proposed_gate_threshold_db));
                 let _ = pq.push(DspParamUpdate::AmpStandby(false));
-            } else if let Some(ref dsp_ref) = ctx.dsp_chain {
-                if let Ok(mut dsp) = dsp_ref.try_lock() {
-                    dsp.set_input_boost(result.proposed_boost);
-                    dsp.set_gate_threshold_db(result.proposed_gate_threshold_db);
-                    dsp.set_amp_standby(false);
-                }
             }
             if let Some(ref store) = ctx.calibration_store {
                 let dev_id = ctx.active_device_id.as_deref().unwrap_or("default");

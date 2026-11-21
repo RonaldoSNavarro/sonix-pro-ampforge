@@ -529,6 +529,14 @@ where
     };
 
     duplex.set_input_channel(InputChannel::from_str_opt(&input_channel));
+    duplex.set_target_period(buffer_size.unwrap_or(128) as usize);
+    // AUD-06: prepara a cadeia com o stream antigo já fechado e ANTES do novo callback rodar.
+    if let Ok(mut d) = dsp_chain.lock() {
+        d.prepare(
+            sample_rate as f32,
+            (buffer_size.unwrap_or(2048) as usize).max(2048),
+        );
+    }
 
     let open_res = opener(
         duplex.clone(),
@@ -546,6 +554,12 @@ where
             // CA-4: Se o novo falhar e havia stream anterior, restaura o stream anterior com mesma configuração.
             if had_prev_stream {
                 if let Some(prev) = prev_telemetry {
+                    if let Ok(mut d) = dsp_chain.lock() {
+                        d.prepare(
+                            prev.sample_rate as f32,
+                            (prev.output_period_frames as usize).max(2048),
+                        );
+                    }
                     if let Ok((restored_stream, restored_tele)) = opener(
                         duplex.clone(),
                         dsp_chain.clone(),
@@ -569,12 +583,6 @@ where
     };
 
     duplex.set_target_period(actual_telemetry.output_period_frames as usize);
-    if let Ok(mut d) = dsp_chain.lock() {
-        d.prepare(
-            actual_telemetry.sample_rate as f32,
-            (actual_telemetry.output_period_frames as usize).max(2048),
-        );
-    }
 
     if let Ok(mut stream_guard) = active_streams.lock() {
         *stream_guard = new_streams;

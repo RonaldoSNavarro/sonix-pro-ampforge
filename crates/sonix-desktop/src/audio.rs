@@ -1008,6 +1008,7 @@ impl DesktopAudioHost {
                 }));
                 match res {
                     Ok(()) => {
+                        telemetry.set_output_muted(dsp.is_output_muted());
                         gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
                     }
                     Err(_payload) => {
@@ -1017,9 +1018,14 @@ impl DesktopAudioHost {
                     }
                 }
             } else {
-                // Contenção não silencia áudio: encaminha o sinal de entrada em bypass sem zeros (Spec 034, CA-6)
+                // Contenção não vaza sinal seco com afinador em mute ou amp em standby (AUD-06);
+                // caso contrário encaminha sinal de entrada em bypass seguro (Spec 034, CA-6).
                 telemetry.record_dsp_contention_silence();
-                mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+                if telemetry.is_output_muted() {
+                    mono_out[..frames].fill(0.0);
+                } else {
+                    mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+                }
             }
             if faulted {
                 data.fill(0.0);
@@ -1125,6 +1131,7 @@ impl DesktopAudioHost {
                 }));
                 match res {
                     Ok(()) => {
+                        telemetry.set_output_muted(dsp.is_output_muted());
                         gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
                     }
                     Err(_payload) => {
@@ -1135,7 +1142,11 @@ impl DesktopAudioHost {
                 }
             } else {
                 telemetry.record_dsp_contention_silence();
-                mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+                if telemetry.is_output_muted() {
+                    mono_out[..frames].fill(0.0);
+                } else {
+                    mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+                }
             }
             if faulted {
                 data.fill(0);
@@ -1468,8 +1479,10 @@ impl DesktopAudioHost {
 
         let effective_out_sr = out_stream_config.sample_rate;
         let out_sample_rate_f = effective_out_sr as f32;
+        let mut algo_lat_samples = 4u32;
         if let Ok(mut dsp) = dsp_chain.lock() {
             dsp.prepare(out_sample_rate_f, (target_period as usize).max(4096));
+            algo_lat_samples = dsp.algorithmic_latency_samples();
         }
 
         let obs_out_c = observed_out_period.clone();
@@ -1635,10 +1648,6 @@ impl DesktopAudioHost {
         let out_sr = effective_out_sr;
         let in_lat_ms = (in_period_frames as f32 / in_sr as f32) * 1000.0;
         let out_lat_ms = (out_period_frames as f32 / out_sr as f32) * 1000.0;
-        let algo_lat_samples = dsp_chain
-            .try_lock()
-            .map(|d| d.algorithmic_latency_samples())
-            .unwrap_or(4);
         let duplex_queue_ms = (out_period_frames as f32 / out_sr.max(1) as f32) * 1000.0;
         let algo_lat_ms = (algo_lat_samples as f32 / out_sr.max(1) as f32) * 1000.0;
 
@@ -2679,6 +2688,7 @@ pub struct RealtimeDspChain {
     drive_enabled: bool,
     amp: WhiteBoxAmpProcessor,
     amp_enabled: bool,
+    amp_standby: bool,
     cab: VirtualCabProcessor,
     cab_enabled: bool,
     input_boost: f32,
@@ -2937,6 +2947,7 @@ impl RealtimeDspChain {
             drive_enabled: false,
             amp,
             amp_enabled: true,
+            amp_standby: false,
             cab,
             cab_enabled: true,
             input_boost: 2.5,
@@ -4069,7 +4080,13 @@ impl RealtimeDspChain {
     }
 
     pub fn set_amp_standby(&mut self, standby: bool) {
+        self.amp_standby = standby;
         self.amp.set_standby(standby);
+    }
+
+    #[inline]
+    pub fn is_output_muted(&self) -> bool {
+        self.amp_standby || (self.tuner_enabled && self.tuner_output_mode == TunerOutputMode::Mute)
     }
 
     pub fn set_amp_input_jack(&mut self, jack: &str) {
@@ -5302,6 +5319,7 @@ pub struct TelemetryBuffer {
     recovery_count: AtomicU64,
     stream_error_code: Arc<AtomicU8>,
     device_lost: AtomicBool,
+    output_muted: AtomicBool,
 }
 
 impl TelemetryBuffer {
@@ -5326,7 +5344,18 @@ impl TelemetryBuffer {
             recovery_count: AtomicU64::new(0),
             stream_error_code: Arc::new(AtomicU8::new(STREAM_ERR_OK)),
             device_lost: AtomicBool::new(false),
+            output_muted: AtomicBool::new(false),
         }
+    }
+
+    #[inline]
+    pub fn set_output_muted(&self, muted: bool) {
+        self.output_muted.store(muted, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn is_output_muted(&self) -> bool {
+        self.output_muted.load(Ordering::Acquire)
     }
 
     #[inline]

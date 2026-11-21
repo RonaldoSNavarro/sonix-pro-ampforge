@@ -102,6 +102,7 @@ fn build_runtime_with_calibration(
         if let Ok(mut dsp) = dsp_chain.lock() {
             dsp.set_amp_standby(true);
         }
+        telemetry.set_output_muted(true);
     }
 
     let shared_app_state = Arc::new(Mutex::new(initial_state));
