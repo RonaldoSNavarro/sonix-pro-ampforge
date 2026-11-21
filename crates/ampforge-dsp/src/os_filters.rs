@@ -2,7 +2,7 @@
 //! Gerado automaticamente por `tools/gerar_filtros_os.py`.
 
 /// Coeficientes `[b0, b1, b2, a1, a2]` para as 4 secoes biquad de um filtro eliptico de 8a ordem.
-pub type Elliptic8Sos = [[f64; 5]; 4];
+pub(crate) type Elliptic8Sos = [[f64; 5]; 4];
 
 pub const ELLIP8_44100_2X: Elliptic8Sos = [
     [1.5630478667016157e-01, -1.1236271359484422e-02, 1.5630478667016151e-01, -1.0079188672844817e+00, 3.1016084087527857e-01],
@@ -88,7 +88,7 @@ pub const ELLIP8_96000_8X: Elliptic8Sos = [
     [5.9761719962645676e-02, -2.3840674539725319e-02, 5.9761719962645676e-02, -1.8820041900565110e+00, 9.7796274928747218e-01],
 ];
 
-pub fn elliptic8_sos(sample_rate: f32, os_factor: usize) -> &'static Elliptic8Sos {
+pub(crate) fn elliptic8_sos(sample_rate: f32, os_factor: usize) -> &'static Elliptic8Sos {
     let sr_key = match sample_rate.round() as u32 {
         0..=46000 => 44100,
         46001..=68000 => 48000,

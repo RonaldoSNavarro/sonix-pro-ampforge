@@ -51,6 +51,7 @@ fn mock_telemetry(sr: u32, period: u32, in_dev: &str, out_dev: &str) -> AudioSta
         measured_roundtrip_ms: None,
         estimated_roundtrip_ms: 5.33,
         algorithmic_latency_samples: 16,
+        pitch_wet_latency_ms: 0.0,
     }
 }
 

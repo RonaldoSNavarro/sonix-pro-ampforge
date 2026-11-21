@@ -45,6 +45,7 @@ fn mock_audio_telemetry() -> AudioStatusTelemetry {
         measured_roundtrip_ms: None,
         estimated_roundtrip_ms: 8.0,
         algorithmic_latency_samples: 4,
+        pitch_wet_latency_ms: 0.0,
     }
 }
 
