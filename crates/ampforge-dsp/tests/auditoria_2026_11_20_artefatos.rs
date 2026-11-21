@@ -221,3 +221,511 @@ fn aud_10_zero_alloc() {
         "AUD-10: troca de modelo desalocou {deallocs} vez(es)"
     );
 }
+
+use ampforge_dsp::cab::VirtualCabProcessor;
+use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
+use ampforge_dsp::fx::wah::{WahMode, WahProcessor};
+use ampforge_dsp::regua::ganho_db;
+
+fn gen_sine(freq_hz: f32) -> Vec<f32> {
+    (0..TOTAL_AMOSTRAS)
+        .map(|i| {
+            let t = i as f32 / SR;
+            0.2512 * (2.0 * PI * freq_hz * t).sin() // -12 dBFS
+        })
+        .collect()
+}
+
+fn run_amp_step_configured<F: Fn(&mut WhiteBoxAmpProcessor, bool), S: Fn(&mut WhiteBoxAmpProcessor)>(
+    model: AmpModelId,
+    freq_hz: f32,
+    init: S,
+    apply: F,
+    forward: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    let mut amp = WhiteBoxAmpProcessor::new(model);
+    amp.set_sample_rate(SR);
+    amp.panel_mut().set_input_gain(3.0);
+    amp.panel_mut().set_master_volume(6.0);
+    amp.panel_mut().set_volume_2(5.0);
+    amp.panel_mut().set_bass(5.0);
+    amp.panel_mut().set_middle(5.0);
+    amp.panel_mut().set_treble(5.0);
+    amp.panel_mut().set_presence(5.0);
+    amp.panel_mut().set_cut(2.0);
+    amp.set_standby(false);
+    init(&mut amp);
+    apply(&mut amp, !forward);
+
+    let input = gen_sine(freq_hz);
+    let mut output = vec![0.0_f32; TOTAL_AMOSTRAS];
+    let block = 128usize;
+    let mut pos = 0;
+    let mut stepped = false;
+    while pos < TOTAL_AMOSTRAS {
+        if !stepped && pos >= EVENTO_AMOSTRA {
+            apply(&mut amp, forward);
+            stepped = true;
+        }
+        let end = (pos + block).min(TOTAL_AMOSTRAS);
+        amp.process(&input[pos..end], &mut output[pos..end]);
+        pos = end;
+    }
+    (input, output)
+}
+
+fn run_amp_step<F: Fn(&mut WhiteBoxAmpProcessor, bool)>(
+    model: AmpModelId,
+    freq_hz: f32,
+    apply: F,
+    forward: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    run_amp_step_configured(model, freq_hz, |_| {}, apply, forward)
+}
+
+fn run_cab_hicut_step(freq_hz: f32, forward: bool) -> (Vec<f32>, Vec<f32>) {
+    let mut cab = VirtualCabProcessor::new();
+    cab.set_sample_rate(SR);
+    cab.set_hicut_khz(if forward { 3.5 } else { 18.0 });
+
+    let input = gen_sine(freq_hz);
+    let mut output = vec![0.0_f32; TOTAL_AMOSTRAS];
+    let block = 128usize;
+    let mut pos = 0;
+    let mut stepped = false;
+    while pos < TOTAL_AMOSTRAS {
+        if !stepped && pos >= EVENTO_AMOSTRA {
+            cab.set_hicut_khz(if forward { 18.0 } else { 3.5 });
+            stepped = true;
+        }
+        let end = (pos + block).min(TOTAL_AMOSTRAS);
+        cab.process(&input[pos..end], &mut output[pos..end]);
+        pos = end;
+    }
+    (input, output)
+}
+
+fn run_eq_step<F: Fn(&mut EqProcessor, bool)>(
+    mode: EqMode,
+    freq_hz: f32,
+    apply: F,
+    forward: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    let mut eq = EqProcessor::new(mode);
+    eq.set_sample_rate(SR);
+    apply(&mut eq, !forward);
+
+    let input = gen_sine(freq_hz);
+    let mut output = vec![0.0_f32; TOTAL_AMOSTRAS];
+    let block = 128usize;
+    let mut pos = 0;
+    let mut stepped = false;
+    while pos < TOTAL_AMOSTRAS {
+        if !stepped && pos >= EVENTO_AMOSTRA {
+            apply(&mut eq, forward);
+            stepped = true;
+        }
+        let end = (pos + block).min(TOTAL_AMOSTRAS);
+        eq.process(&input[pos..end], &mut output[pos..end]);
+        pos = end;
+    }
+    (input, output)
+}
+
+fn run_wah_step<F: Fn(&mut WahProcessor, bool)>(
+    freq_hz: f32,
+    apply: F,
+    forward: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    let mut wah = WahProcessor::new();
+    wah.set_sample_rate(SR);
+    wah.set_mode(WahMode::CryBabyGcb95);
+    wah.set_q(4.0);
+    wah.set_position(0.5);
+    wah.set_bypassed(false);
+    apply(&mut wah, !forward);
+
+    let input = gen_sine(freq_hz);
+    let mut output = vec![0.0_f32; TOTAL_AMOSTRAS];
+    let block = 128usize;
+    let mut pos = 0;
+    let mut stepped = false;
+    while pos < TOTAL_AMOSTRAS {
+        if !stepped && pos >= EVENTO_AMOSTRA {
+            apply(&mut wah, forward);
+            stepped = true;
+        }
+        let end = (pos + block).min(TOTAL_AMOSTRAS);
+        wah.process(&input[pos..end], &mut output[pos..end]);
+        pos = end;
+    }
+    (input, output)
+}
+
+fn collect_aud_11_step_cases() -> Vec<(&'static str, bool, f32, Vec<f32>, Vec<f32>)> {
+    let mut cases = Vec::new();
+    let specs: &[(&str, &[f32], AmpModelId, fn(&mut WhiteBoxAmpProcessor, bool))] = &[
+        ("amp.bass", &[1000.0, 100.0], AmpModelId::BritJcm800_2203, |a, hi| {
+            a.panel_mut().set_bass(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.middle", &[1000.0], AmpModelId::BritJcm800_2203, |a, hi| {
+            a.panel_mut().set_middle(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.treble", &[1000.0], AmpModelId::BritJcm800_2203, |a, hi| {
+            a.panel_mut().set_treble(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.presence", &[1000.0, 4000.0], AmpModelId::BritJcm800_2203, |a, hi| {
+            a.panel_mut().set_presence(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.master", &[1000.0], AmpModelId::BritJcm800_2203, |a, hi| {
+            a.panel_mut().set_master_volume(if hi { 9.5 } else { 0.5 });
+        }),
+        ("amp.volume_2", &[1000.0], AmpModelId::UkAc30TopBoost, |a, hi| {
+            a.panel_mut().set_volume_2(if hi { 9.5 } else { 0.5 });
+        }),
+        ("amp.cut", &[1000.0, 4000.0], AmpModelId::UkAc30TopBoost, |a, hi| {
+            a.panel_mut().set_cut(if hi { 10.0 } else { 0.0 });
+        }),
+        (
+            "amp.speaker_resonance_hz",
+            &[1000.0, 100.0],
+            AmpModelId::BritJcm800_2203,
+            |a, hi| {
+                a.set_speaker_resonance_hz(if hi { 135.0 } else { 55.0 });
+            },
+        ),
+    ];
+
+    for &(nome, freqs, model, func) in specs {
+        for &freq in freqs {
+            for forward in [true, false] {
+                let (inp, out) = run_amp_step(model, freq, func, forward);
+                cases.push((nome, forward, freq, inp, out));
+            }
+        }
+    }
+
+    for freq in [1000.0, 4500.0] {
+        for forward in [true, false] {
+            let (inp, out) = run_cab_hicut_step(freq, forward);
+            cases.push(("cab.hicut_khz", forward, freq, inp, out));
+        }
+    }
+
+    for forward in [true, false] {
+        let (inp, out) = run_eq_step(
+            EqMode::Graphic10BandPedal,
+            1000.0,
+            |e, hi| e.set_graphic_band_db(6, if hi { 12.0 } else { -12.0 }),
+            forward,
+        );
+        cases.push(("eq.graphic_band_gain", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Parametric8Band,
+            1000.0,
+            |e, hi| e.set_parametric_band(3, 1000.0, if hi { 12.0 } else { -12.0 }, 1.5),
+            forward,
+        );
+        cases.push(("eq.param_gain", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Parametric8Band,
+            1000.0,
+            |e, hi| e.set_parametric_band(3, if hi { 1000.0 } else { 300.0 }, 9.0, 2.0),
+            forward,
+        );
+        cases.push(("eq.param_freq", forward, 1000.0, inp, out));
+
+        for freq in [1000.0, 1400.0] {
+            let (inp, out) = run_eq_step(
+                EqMode::Parametric8Band,
+                freq,
+                |e, hi| e.set_parametric_band(3, 1000.0, 9.0, if hi { 6.0 } else { 0.7 }),
+                forward,
+            );
+            cases.push(("eq.param_q", forward, freq, inp, out));
+        }
+
+        let (inp, out) = run_eq_step(
+            EqMode::Graphic10BandPedal,
+            1000.0,
+            |e, hi| e.set_input_gain_db(if hi { 12.0 } else { -12.0 }),
+            forward,
+        );
+        cases.push(("eq.input_gain_db", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Graphic10BandPedal,
+            1000.0,
+            |e, hi| e.set_output_level_db(if hi { 12.0 } else { -12.0 }),
+            forward,
+        );
+        cases.push(("eq.output_level_db", forward, 1000.0, inp, out));
+    }
+
+    for forward in [true, false] {
+        for freq in [350.0, 2200.0] {
+            let (inp, out) = run_wah_step(
+                freq,
+                |w, hi| w.set_position(if hi { 1.0 } else { 0.0 }),
+                forward,
+            );
+            cases.push(("wah.position", forward, freq, inp, out));
+        }
+        for freq in [1000.0, 900.0] {
+            let (inp, out) = run_wah_step(
+                freq,
+                |w, hi| w.set_q(if hi { 10.0 } else { 1.0 }),
+                forward,
+            );
+            cases.push(("wah.q", forward, freq, inp, out));
+        }
+    }
+
+    cases
+}
+
+fn collect_aud_11_ramp_cases() -> Vec<(&'static str, bool, f32, Vec<f32>, Vec<f32>)> {
+    let mut cases = Vec::new();
+    let amp_specs: &[(&str, f32, AmpModelId, fn(&mut WhiteBoxAmpProcessor), fn(&mut WhiteBoxAmpProcessor, bool))] = &[
+        ("amp.bass", 1000.0, AmpModelId::BritJcm800_2203, |_| {}, |a, hi| {
+            a.panel_mut().set_bass(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.middle", 1000.0, AmpModelId::BritJcm800_2203, |_| {}, |a, hi| {
+            a.panel_mut().set_middle(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.treble", 1000.0, AmpModelId::BritJcm800_2203, |_| {}, |a, hi| {
+            a.panel_mut().set_treble(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.presence", 4000.0, AmpModelId::BritJcm800_2203, |_| {}, |a, hi| {
+            a.panel_mut().set_presence(if hi { 10.0 } else { 0.0 });
+        }),
+        ("amp.master", 1000.0, AmpModelId::BritJcm800_2203, |a| {
+            a.set_sag_amount(0.0);
+        }, |a, hi| {
+            a.panel_mut().set_master_volume(if hi { 9.5 } else { 0.5 });
+        }),
+        ("amp.volume_2", 1000.0, AmpModelId::UkAc30TopBoost, |_| {}, |a, hi| {
+            a.panel_mut().set_volume_2(if hi { 9.5 } else { 0.5 });
+        }),
+        ("amp.cut", 4000.0, AmpModelId::UkAc30TopBoost, |_| {}, |a, hi| {
+            a.panel_mut().set_cut(if hi { 10.0 } else { 0.0 });
+        }),
+        (
+            "amp.speaker_resonance_hz",
+            200.0,
+            AmpModelId::BritJcm800_2203,
+            |a| {
+                a.set_sag_amount(0.0);
+                a.set_transformer_saturation(0.0);
+            },
+            |a, hi| {
+                a.set_speaker_resonance_hz(if hi { 135.0 } else { 55.0 });
+            },
+        ),
+    ];
+
+    for &(nome, freq, model, init, func) in amp_specs {
+        for forward in [true, false] {
+            let (inp, out) = run_amp_step_configured(model, freq, init, func, forward);
+            cases.push((nome, forward, freq, inp, out));
+        }
+    }
+
+    for forward in [true, false] {
+        let (inp, out) = run_cab_hicut_step(4500.0, forward);
+        cases.push(("cab.hicut_khz", forward, 4500.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Graphic10BandPedal,
+            1000.0,
+            |e, hi| e.set_graphic_band_db(6, if hi { 12.0 } else { -12.0 }),
+            forward,
+        );
+        cases.push(("eq.graphic_band_gain", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Parametric8Band,
+            1000.0,
+            |e, hi| e.set_parametric_band(3, 1000.0, if hi { 12.0 } else { -12.0 }, 1.5),
+            forward,
+        );
+        cases.push(("eq.param_gain", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Parametric8Band,
+            1000.0,
+            |e, hi| e.set_parametric_band(3, if hi { 1000.0 } else { 300.0 }, 9.0, 2.0),
+            forward,
+        );
+        cases.push(("eq.param_freq", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Parametric8Band,
+            1400.0,
+            |e, hi| e.set_parametric_band(3, 1000.0, 9.0, if hi { 6.0 } else { 0.7 }),
+            forward,
+        );
+        cases.push(("eq.param_q", forward, 1400.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Graphic10BandPedal,
+            1000.0,
+            |e, hi| e.set_input_gain_db(if hi { 12.0 } else { -12.0 }),
+            forward,
+        );
+        cases.push(("eq.input_gain_db", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_eq_step(
+            EqMode::Graphic10BandPedal,
+            1000.0,
+            |e, hi| e.set_output_level_db(if hi { 12.0 } else { -12.0 }),
+            forward,
+        );
+        cases.push(("eq.output_level_db", forward, 1000.0, inp, out));
+
+        let (inp, out) = run_wah_step(
+            2200.0,
+            |w, hi| w.set_position(if hi { 1.0 } else { 0.0 }),
+            forward,
+        );
+        cases.push(("wah.position", forward, 2200.0, inp, out));
+
+        let (inp, out) = run_wah_step(
+            900.0,
+            |w, hi| w.set_q(if hi { 10.0 } else { 1.0 }),
+            forward,
+        );
+        cases.push(("wah.q", forward, 900.0, inp, out));
+    }
+
+    cases
+}
+
+#[test]
+fn aud_11_degrau_sem_zipper() {
+    let cases = collect_aud_11_step_cases();
+    let mut falhas = Vec::new();
+    let mut max_ratio = 0.0_f32;
+
+    for (nome, forward, freq, _inp, out) in &cases {
+        let ratio = razao_transiente(out, EVENTO_AMOSTRA, SR);
+        max_ratio = max_ratio.max(ratio);
+        if ratio > 2.0 {
+            let dir = if *forward { "min->max" } else { "max->min" };
+            falhas.push(format!("{nome} ({dir}, {freq} Hz): razao_transiente={ratio:.3}"));
+        }
+    }
+
+    assert!(
+        falhas.is_empty(),
+        "AUD-11 zipper detectado (max={max_ratio:.3} > 2.0):\n{}",
+        falhas.join("\n")
+    );
+}
+
+#[test]
+fn aud_11_rampa_termina_em_25ms() {
+    let cases = collect_aud_11_ramp_cases();
+    let s_ini = EVENTO_AMOSTRA - 1_440; // 30 ms antes do degrau (480 amostras = 10 ms)
+    let s_25ms = EVENTO_AMOSTRA + (SR * 0.025) as usize; // 25 ms após degrau
+    let s_fim = 45_600; // 950 ms (regime final garantido)
+    let win = (SR * 0.010) as usize; // 10 ms = 480 amostras
+
+    let mut falhas = Vec::new();
+    for (nome, forward, freq, inp, out) in &cases {
+        let g_ini = ganho_db(&inp[s_ini..s_ini + win], &out[s_ini..s_ini + win], SR, *freq);
+        let g_25 = ganho_db(&inp[s_25ms..s_25ms + win], &out[s_25ms..s_25ms + win], SR, *freq);
+        let g_fim = ganho_db(&inp[s_fim..s_fim + win], &out[s_fim..s_fim + win], SR, *freq);
+
+        let dir = if *forward { "min->max" } else { "max->min" };
+        if (g_fim - g_ini).abs() < 0.25 {
+            falhas.push(format!(
+                "{nome} ({dir}, {freq} Hz): variacao insuficiente |g_fim-g_ini|={:.3} dB",
+                (g_fim - g_ini).abs()
+            ));
+        }
+        let delta = (g_25 - g_fim).abs();
+        if delta >= 0.1 {
+            falhas.push(format!(
+                "{nome} ({dir}, {freq} Hz): nao assentou em 25 ms (|g_25-g_fim|={delta:.3} dB)"
+            ));
+        }
+    }
+
+    assert!(
+        falhas.is_empty(),
+        "AUD-11 rampa excedeu 25 ms ou teste tautológico:\n{}",
+        falhas.join("\n")
+    );
+}
+
+#[test]
+fn aud_11_zero_alloc() {
+    verify_allocator_self_check();
+
+    let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+    amp.set_sample_rate(SR);
+    amp.set_standby(false);
+
+    let mut cab = VirtualCabProcessor::new();
+    cab.set_sample_rate(SR);
+
+    let mut eq_g = EqProcessor::new(EqMode::Graphic10BandPedal);
+    eq_g.set_sample_rate(SR);
+
+    let mut eq_p = EqProcessor::new(EqMode::Parametric8Band);
+    eq_p.set_sample_rate(SR);
+
+    let mut wah = WahProcessor::new();
+    wah.set_sample_rate(SR);
+    wah.set_mode(WahMode::CryBabyGcb95);
+    wah.set_bypassed(false);
+
+    let inp = [0.2_f32; 128];
+    let mut out = [0.0_f32; 128];
+
+    // Warm-up antes de medir
+    for _ in 0..8 {
+        amp.process(&inp, &mut out);
+        cab.process(&inp, &mut out);
+        eq_g.process(&inp, &mut out);
+        eq_p.process(&inp, &mut out);
+        wah.process(&inp, &mut out);
+    }
+
+    let (allocs, deallocs) = measure_allocs(|| {
+        amp.panel_mut().set_bass(1.0);
+        amp.panel_mut().set_middle(9.0);
+        amp.panel_mut().set_treble(8.0);
+        amp.panel_mut().set_presence(9.0);
+        amp.panel_mut().set_master_volume(8.0);
+        amp.panel_mut().set_volume_2(7.0);
+        amp.panel_mut().set_cut(6.0);
+        amp.set_speaker_resonance_hz(130.0);
+
+        cab.set_hicut_khz(4.0);
+        eq_g.set_graphic_band_db(6, 10.0);
+        eq_g.set_input_gain_db(6.0);
+        eq_g.set_output_level_db(-6.0);
+        eq_p.set_parametric_band(3, 1200.0, 8.0, 4.0);
+        wah.set_position(1.0);
+        wah.set_q(8.0);
+
+        for _ in 0..20 {
+            amp.process(&inp, &mut out);
+            cab.process(&inp, &mut out);
+            eq_g.process(&inp, &mut out);
+            eq_p.process(&inp, &mut out);
+            wah.process(&inp, &mut out);
+        }
+    });
+
+    assert_eq!(allocs, 0, "AUD-11: alocação durante rampa/process ({allocs})");
+    assert_eq!(
+        deallocs, 0,
+        "AUD-11: desalocação durante rampa/process ({deallocs})"
+    );
+}
+

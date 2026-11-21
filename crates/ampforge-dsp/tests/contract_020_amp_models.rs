@@ -101,6 +101,7 @@ fn test_ca_01_tone_stack_response_across_models_and_sample_rates() {
             // Ajuste com agudos no máximo: treble = 10.0
             amp.panel_mut().set_treble(10.0);
             let mut out_treb10 = vec![0.0f32; frames];
+            amp.process(&in_buf, &mut out_treb10); // conclui rampa de 20 ms do treble
             amp.process(&in_buf, &mut out_treb10);
 
             let treble_energy_5 = calculate_rms_band(&out_mid5, sr, 3000.0, 8000.0);

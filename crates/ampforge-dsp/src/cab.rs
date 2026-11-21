@@ -799,6 +799,9 @@ pub struct VirtualCabProcessor {
     mic1_model_f2: BiquadFilter,
     mic2_model_f1: BiquadFilter,
     mic2_model_f2: BiquadFilter,
+    hicut_smoother: crate::smoother::ParamSmoother,
+    resonance_smoother: crate::smoother::ParamSmoother,
+    has_processed: bool,
 }
 
 impl Default for VirtualCabProcessor {
@@ -814,12 +817,16 @@ impl VirtualCabProcessor {
         slot2.enabled = false;
 
         let spk = SpeakerCabModel::Greenback4x12Closed;
+        let impedance_curve = spk.default_impedance_curve();
+        let conditioning = CabAcousticConditioning::default();
+        let init_hicut_hz = conditioning.high_cut_hz as f64;
+        let init_res_hz = impedance_curve.low_resonance_hz as f64;
 
         let mut s = Self {
             speaker_model: spk,
             mics: [slot1, slot2],
-            impedance_curve: spk.default_impedance_curve(),
-            conditioning: CabAcousticConditioning::default(),
+            impedance_curve,
+            conditioning,
             coupled_amp_id: None,
             sample_rate: 48000.0,
             custom_ir: None,
@@ -848,6 +855,9 @@ impl VirtualCabProcessor {
             mic1_model_f2: BiquadFilter::default(),
             mic2_model_f1: BiquadFilter::default(),
             mic2_model_f2: BiquadFilter::default(),
+            hicut_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_hicut_hz),
+            resonance_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_res_hz),
+            has_processed: false,
         };
         s.update_filters();
         s
@@ -856,12 +866,20 @@ impl VirtualCabProcessor {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
         self.ir_crossfade_step = 1.0 / (self.sample_rate * 0.020).max(1.0);
+        self.hicut_smoother.set_sample_rate(self.sample_rate as f64);
+        self.resonance_smoother.set_sample_rate(self.sample_rate as f64);
         self.update_filters();
     }
 
     pub fn set_speaker_model(&mut self, model: SpeakerCabModel) {
         self.speaker_model = model;
         self.impedance_curve = model.default_impedance_curve();
+        let res_hz = self.impedance_curve.low_resonance_hz as f64;
+        if !self.has_processed {
+            self.resonance_smoother.reset(res_hz);
+        } else {
+            self.resonance_smoother.set_target(res_hz);
+        }
         self.update_filters();
     }
 
@@ -870,7 +888,13 @@ impl VirtualCabProcessor {
     }
 
     pub fn set_resonance_hz(&mut self, hz: f32) {
-        self.impedance_curve.low_resonance_hz = hz.clamp(65.0, 135.0);
+        let clamped = hz.clamp(65.0, 135.0);
+        self.impedance_curve.low_resonance_hz = clamped;
+        if !self.has_processed {
+            self.resonance_smoother.reset(clamped as f64);
+        } else {
+            self.resonance_smoother.set_target(clamped as f64);
+        }
     }
 
     pub fn resonance_hz(&self) -> f32 {
@@ -878,8 +902,14 @@ impl VirtualCabProcessor {
     }
 
     pub fn set_hicut_khz(&mut self, khz: f32) {
-        self.conditioning.high_cut_hz = (khz * 1000.0).clamp(3500.0, 18000.0);
-        self.update_filters();
+        let hz = (khz * 1000.0).clamp(3500.0, 18000.0);
+        self.conditioning.high_cut_hz = hz;
+        if !self.has_processed {
+            self.hicut_smoother.reset(hz as f64);
+            self.update_filters();
+        } else {
+            self.hicut_smoother.set_target(hz as f64);
+        }
     }
 
     pub fn hicut_khz(&self) -> f32 {
@@ -1010,15 +1040,20 @@ impl VirtualCabProcessor {
         Ok(())
     }
 
-    fn update_filters(&mut self) {
+    fn update_hicut_coeffs(&mut self, hicut_hz: f64) {
         let sr = self.sample_rate as f64;
-        let fc = self.conditioning.high_cut_hz.clamp(1000.0, self.sample_rate * 0.45) as f64;
-
+        let fc = hicut_hz.clamp(1000.0, (sr * 0.45).max(1001.0));
         // Butterworth 4ª ordem passa-baixas (2 estágios em cascata) para corte exato de -3 dB na fc (-24 dB/oct)
         let b1 = BiquadFilter::lowpass(fc, 0.5411961, sr);
         let b2 = BiquadFilter::lowpass(fc, 1.3065630, sr);
         self.hicut_filter1.update_coeffs(b1);
         self.hicut_filter2.update_coeffs(b2);
+    }
+
+    fn update_filters(&mut self) {
+        let sr = self.sample_rate as f64;
+        let fc = self.hicut_smoother.current();
+        self.update_hicut_coeffs(fc);
 
         // Open back dipole cancelamento em graves (< 120 Hz)
         if self.speaker_model.is_open_back() {
@@ -1046,9 +1081,12 @@ impl VirtualCabProcessor {
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), output.len());
+        self.has_processed = true;
         output.fill(0.0);
 
         if self.ir_enabled && (self.custom_ir.is_some() || self.target_ir.is_some()) {
+            self.hicut_smoother.advance(input.len());
+            self.resonance_smoother.advance(input.len());
             self.process_ir_convolution(input, output);
             return;
         }
@@ -1180,13 +1218,32 @@ impl VirtualCabProcessor {
         }
 
         // Condicionamento acústico do gabinete: voicing do falante, corte de agudos e open-back
-        for s in output.iter_mut() {
-            let mut v = *s as f64;
-            v = self.open_back_hp.process(v);
-            v = self.speaker_voicing_filter.process(v);
-            v = self.hicut_filter1.process(v);
-            v = self.hicut_filter2.process(v);
-            *s = v as f32;
+        if !self.hicut_smoother.is_ramping() && !self.resonance_smoother.is_ramping() {
+            for s in output.iter_mut() {
+                let mut v = *s as f64;
+                v = self.open_back_hp.process(v);
+                v = self.speaker_voicing_filter.process(v);
+                v = self.hicut_filter1.process(v);
+                v = self.hicut_filter2.process(v);
+                *s = v as f32;
+            }
+        } else {
+            let mut offset = 0usize;
+            while offset < output.len() {
+                let chunk = (output.len() - offset).min(4);
+                let fc = self.hicut_smoother.advance(chunk);
+                self.resonance_smoother.advance(chunk);
+                self.update_hicut_coeffs(fc);
+                for s in &mut output[offset..offset + chunk] {
+                    let mut v = *s as f64;
+                    v = self.open_back_hp.process(v);
+                    v = self.speaker_voicing_filter.process(v);
+                    v = self.hicut_filter1.process(v);
+                    v = self.hicut_filter2.process(v);
+                    *s = v as f32;
+                }
+                offset += chunk;
+            }
         }
     }
 

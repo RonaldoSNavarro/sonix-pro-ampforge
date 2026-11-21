@@ -125,6 +125,7 @@ fn test_ca_02_middle_tone_stack_band() {
 
     amp.panel_mut().middle = 10.0;
     let mut out_mid_10 = vec![0.0f32; n];
+    amp.process(&in_sig, &mut out_mid_10); // conclui rampa de 20 ms do middle
     amp.process(&in_sig, &mut out_mid_10);
     let p_m10 = calc_band_energy(&out_mid_10[512..], 48000.0, 400.0, 800.0);
 

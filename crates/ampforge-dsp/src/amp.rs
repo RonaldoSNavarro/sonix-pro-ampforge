@@ -492,6 +492,15 @@ struct AmpCore {
     standby_env: f64,
     smooth_tube_gain: f64,
     spring_reverb: SpringReverbTank,
+    sm_bass: crate::smoother::ParamSmoother,
+    sm_middle: crate::smoother::ParamSmoother,
+    sm_treble: crate::smoother::ParamSmoother,
+    sm_presence: crate::smoother::ParamSmoother,
+    sm_master: crate::smoother::ParamSmoother,
+    sm_volume_2: crate::smoother::ParamSmoother,
+    sm_cut: crate::smoother::ParamSmoother,
+    sm_speaker_res_hz: crate::smoother::ParamSmoother,
+    has_processed: bool,
 }
 
 pub struct WhiteBoxAmpProcessor {
@@ -918,9 +927,30 @@ impl AmpCore {
             standby_env: 1.0,
             smooth_tube_gain: 1.0,
             spring_reverb: SpringReverbTank::default(),
+            sm_bass: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
+            sm_middle: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
+            sm_treble: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
+            sm_presence: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
+            sm_master: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
+            sm_volume_2: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
+            sm_cut: crate::smoother::ParamSmoother::new(48000.0, 0.020, 0.0),
+            sm_speaker_res_hz: crate::smoother::ParamSmoother::new(48000.0, 0.020, 98.0),
+            has_processed: false,
         };
         s.update_aa_filters();
         s
+    }
+
+    fn set_smoother_sample_rate(&mut self, sample_rate: f32) {
+        let sr = sample_rate.max(1.0) as f64;
+        self.sm_bass.set_sample_rate(sr);
+        self.sm_middle.set_sample_rate(sr);
+        self.sm_treble.set_sample_rate(sr);
+        self.sm_presence.set_sample_rate(sr);
+        self.sm_master.set_sample_rate(sr);
+        self.sm_volume_2.set_sample_rate(sr);
+        self.sm_cut.set_sample_rate(sr);
+        self.sm_speaker_res_hz.set_sample_rate(sr);
     }
 
     fn reset(&mut self) {
@@ -952,6 +982,16 @@ impl AmpCore {
         self.smooth_tube_gain = 1.0;
         self.spring_reverb.reset();
         self.spring_reverb.set_sample_rate(self.sample_rate);
+        self.set_smoother_sample_rate(self.sample_rate);
+        self.sm_bass.reset(self.panel.bass as f64);
+        self.sm_middle.reset(self.panel.middle as f64);
+        self.sm_treble.reset(self.panel.treble as f64);
+        self.sm_presence.reset(self.panel.presence as f64);
+        self.sm_master.reset(self.panel.master_volume as f64);
+        self.sm_volume_2.reset(self.panel.volume_2 as f64);
+        self.sm_cut.reset(self.panel.cut as f64);
+        self.sm_speaker_res_hz.reset(self.speaker_resonance_hz as f64);
+        self.has_processed = false;
     }
 
     /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
@@ -1061,21 +1101,92 @@ impl AmpCore {
         }
     }
 
+    #[inline]
+    fn any_smoother_ramping(&self) -> bool {
+        self.sm_bass.is_ramping()
+            || self.sm_middle.is_ramping()
+            || self.sm_treble.is_ramping()
+            || self.sm_presence.is_ramping()
+            || self.sm_master.is_ramping()
+            || self.sm_volume_2.is_ramping()
+            || self.sm_cut.is_ramping()
+            || self.sm_speaker_res_hz.is_ramping()
+    }
+
     fn process_core(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), output.len());
+        if input.is_empty() {
+            return;
+        }
+        if !self.has_processed {
+            self.sm_bass.reset(self.panel.bass as f64);
+            self.sm_middle.reset(self.panel.middle as f64);
+            self.sm_treble.reset(self.panel.treble as f64);
+            self.sm_presence.reset(self.panel.presence as f64);
+            self.sm_master.reset(self.panel.master_volume as f64);
+            self.sm_volume_2.reset(self.panel.volume_2 as f64);
+            self.sm_cut.reset(self.panel.cut as f64);
+            self.sm_speaker_res_hz
+                .reset(self.speaker_resonance_hz as f64);
+            self.has_processed = true;
+        } else {
+            self.sm_bass.set_target(self.panel.bass as f64);
+            self.sm_middle.set_target(self.panel.middle as f64);
+            self.sm_treble.set_target(self.panel.treble as f64);
+            self.sm_presence.set_target(self.panel.presence as f64);
+            self.sm_master.set_target(self.panel.master_volume as f64);
+            self.sm_volume_2.set_target(self.panel.volume_2 as f64);
+            self.sm_cut.set_target(self.panel.cut as f64);
+            self.sm_speaker_res_hz
+                .set_target(self.speaker_resonance_hz as f64);
+        }
 
+        if !self.any_smoother_ramping() {
+            self.process_subblock(input, output);
+            return;
+        }
+
+        let mut offset = 0usize;
+        while offset < input.len() {
+            let chunk = (input.len() - offset).min(4);
+            self.sm_bass.advance(chunk);
+            self.sm_middle.advance(chunk);
+            self.sm_treble.advance(chunk);
+            self.sm_presence.advance(chunk);
+            self.sm_master.advance(chunk);
+            self.sm_volume_2.advance(chunk);
+            self.sm_cut.advance(chunk);
+            self.sm_speaker_res_hz.advance(chunk);
+            self.process_subblock(
+                &input[offset..offset + chunk],
+                &mut output[offset..offset + chunk],
+            );
+            offset += chunk;
+        }
+    }
+
+    fn process_subblock(&mut self, input: &[f32], output: &mut [f32]) {
         let os_factor = self.oversampling_factor.max(2);
         let step_stride = (8 / os_factor).max(1);
         let fs_base = self.sample_rate as f64;
         let sr = fs_base * (os_factor as f64);
 
+        let sm_bass = self.sm_bass.current() as f32;
+        let sm_middle = self.sm_middle.current() as f32;
+        let sm_treble = self.sm_treble.current() as f32;
+        let sm_presence = self.sm_presence.current() as f32;
+        let sm_master = self.sm_master.current() as f32;
+        let sm_volume_2 = self.sm_volume_2.current() as f32;
+        let sm_cut = self.sm_cut.current() as f32;
+        let sm_res_hz = (self.sm_speaker_res_hz.current() as f32).clamp(50.0, 200.0) as f64;
+
         let ts_topo = self.resolve_tonestack_topology(self.model_id);
         let ts_recovery = Self::tonestack_recovery_gain(ts_topo);
         self.passive_tonestack.update(
             ts_topo,
-            self.panel.bass,
-            self.panel.middle,
-            self.panel.treble,
+            sm_bass,
+            sm_middle,
+            sm_treble,
             sr,
         );
 
@@ -1091,7 +1202,7 @@ impl AmpCore {
 
         // Feedback loop filter: Presence (>2 kHz) modulated by NFB loop somente nos modelos com Presence real
         if self.model_id.has_presence() {
-            let pres_db = (self.panel.presence as f64 / 10.0) * 10.0 * nfb_scale;
+            let pres_db = (sm_presence as f64 / 10.0) * 10.0 * nfb_scale;
             self.presence_filter
                 .update_coeffs(BiquadFilter::peaking(4000.0, pres_db, 1.4, sr));
         }
@@ -1130,8 +1241,8 @@ impl AmpCore {
         let pre_gain_db = -44.0 + (self.panel.input_gain as f64 / 10.0) * 62.0;
         let pre_gain_lin = 10.0f64.powf(pre_gain_db / 20.0);
 
-        let vol2_gain_db = -44.0 + (self.panel.volume_2 as f64 / 10.0) * 62.0;
-        let vol2_lin = if self.panel.volume_2 <= 0.05 {
+        let vol2_gain_db = -44.0 + (sm_volume_2 as f64 / 10.0) * 62.0;
+        let vol2_lin = if sm_volume_2 <= 0.05 {
             0.0
         } else {
             10.0f64.powf(vol2_gain_db / 20.0)
@@ -1210,8 +1321,8 @@ impl AmpCore {
         let power_saturation_drive = calc_power_drive(
             self.model_id,
             self.panel.input_gain,
-            self.panel.volume_2,
-            self.panel.master_volume,
+            sm_volume_2,
+            sm_master,
             self.panel.channel_mode,
         );
 
@@ -1242,12 +1353,12 @@ impl AmpCore {
             _ => 1.24,
         };
         let res_boost_db = ((10.0 - eff_nfb) / 10.0) * 4.5 * imp_factor;
-        let res_hz = self.speaker_resonance_hz.clamp(50.0, 200.0) as f64;
+        let res_hz = sm_res_hz;
         self.speaker_res_filter
             .update_coeffs(BiquadFilter::peaking(res_hz, res_boost_db, 2.0, sr));
 
         // AC30 Tone Cut filter alpha (shunt LPF after LTP PI before EL84 power stage)
-        let fc_cut_hz = 18000.0 * (750.0f64 / 18000.0).powf((self.panel.cut as f64 / 10.0).clamp(0.0, 1.0));
+        let fc_cut_hz = 18000.0 * (750.0f64 / 18000.0).powf((sm_cut as f64 / 10.0).clamp(0.0, 1.0));
         let alpha_cut = (2.0 * std::f64::consts::PI * fc_cut_hz / sr).clamp(0.005, 0.99);
 
         // Interstage coupling alphas at OS sample rate
@@ -1777,9 +1888,11 @@ impl WhiteBoxAmpProcessor {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         let sr = sample_rate.max(1.0);
         self.amp.sample_rate = sr;
+        self.amp.set_smoother_sample_rate(sr);
         self.amp.spring_reverb.set_sample_rate(sr);
         self.amp.update_aa_filters();
         self.amp_transicao.sample_rate = sr;
+        self.amp_transicao.set_smoother_sample_rate(sr);
         self.amp_transicao.spring_reverb.set_sample_rate(sr);
         self.amp_transicao.update_aa_filters();
     }

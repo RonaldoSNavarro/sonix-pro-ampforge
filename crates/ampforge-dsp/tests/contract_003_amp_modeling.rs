@@ -131,6 +131,7 @@ fn test_ca_04_master_volume_increases_thd_vs_output_level_linear_scaling() {
     // B. masterVolume = 9.0 (power amp overdrive / saturation)
     amp.panel_mut().master_volume = 9.0;
     let mut out_high_master = vec![0.0f32; n];
+    amp.process(&test_sig, &mut out_high_master); // conclui rampa de 20 ms
     amp.process(&test_sig, &mut out_high_master);
     let thd_high = amp.compute_thd(&out_high_master[512..]);
 
@@ -144,6 +145,7 @@ fn test_ca_04_master_volume_increases_thd_vs_output_level_linear_scaling() {
     amp.panel_mut().master_volume = 5.0;
     amp.panel_mut().output_level_db = -12.0;
     let mut out_out1 = vec![0.0f32; n];
+    amp.process(&test_sig, &mut out_out1); // conclui rampa de 20 ms do master_volume
     amp.process(&test_sig, &mut out_out1);
     let thd_out1 = amp.compute_thd(&out_out1[512..]);
 

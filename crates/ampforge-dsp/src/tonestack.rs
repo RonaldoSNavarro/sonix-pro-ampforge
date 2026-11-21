@@ -300,12 +300,15 @@ pub fn analog_tonestack_magnitude_db(
     10.0 * (num_sq / den_sq).max(1e-18).log10()
 }
 
-/// 3rd-order Direct Form II Transposed passive Tone Stack filter (bilinear transform).
+/// 3rd-order Direct Form I passive Tone Stack filter (bilinear transform).
+/// Uses signal histories (`x_hist`, `y_hist`) so smooth coefficient ramps avoid
+/// Direct Form II state-jump transients at high oversampling rates.
 #[derive(Debug, Clone, Copy)]
 pub struct PassiveToneStack {
     b: [f64; 4],
     a: [f64; 4], // a[0] normalized to 1.0, stores a1..a3 in a[1..4]
-    z: [f64; 3],
+    x_hist: [f64; 3],
+    y_hist: [f64; 3],
     last_topo: ToneStackTopology,
     last_b: f32,
     last_m: f32,
@@ -324,7 +327,8 @@ impl PassiveToneStack {
         let mut s = Self {
             b: [1.0, 0.0, 0.0, 0.0],
             a: [1.0, 0.0, 0.0, 0.0],
-            z: [0.0; 3],
+            x_hist: [0.0; 3],
+            y_hist: [0.0; 3],
             last_topo: ToneStackTopology::MarshallCathodeFollower,
             last_b: -1.0,
             last_m: -1.0,
@@ -336,7 +340,8 @@ impl PassiveToneStack {
     }
 
     pub fn reset(&mut self) {
-        self.z = [0.0; 3];
+        self.x_hist = [0.0; 3];
+        self.y_hist = [0.0; 3];
     }
 
     pub fn update(
@@ -392,10 +397,21 @@ impl PassiveToneStack {
 
     #[inline(always)]
     pub fn process(&mut self, x: f64) -> f64 {
-        let y = self.b[0] * x + self.z[0];
-        self.z[0] = self.b[1] * x - self.a[1] * y + self.z[1];
-        self.z[1] = self.b[2] * x - self.a[2] * y + self.z[2];
-        self.z[2] = self.b[3] * x - self.a[3] * y;
+        let y = crate::denormal::flush_f64(
+            self.b[0] * x
+                + self.b[1] * self.x_hist[0]
+                + self.b[2] * self.x_hist[1]
+                + self.b[3] * self.x_hist[2]
+                - self.a[1] * self.y_hist[0]
+                - self.a[2] * self.y_hist[1]
+                - self.a[3] * self.y_hist[2],
+        );
+        self.x_hist[2] = self.x_hist[1];
+        self.x_hist[1] = self.x_hist[0];
+        self.x_hist[0] = crate::denormal::flush_f64(x);
+        self.y_hist[2] = self.y_hist[1];
+        self.y_hist[1] = self.y_hist[0];
+        self.y_hist[0] = y;
         y
     }
 }

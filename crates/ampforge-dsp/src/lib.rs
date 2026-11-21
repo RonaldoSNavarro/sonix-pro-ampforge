@@ -27,7 +27,7 @@ pub mod regua;
 pub use config::{AudioConfig, BufferSize, SampleRate};
 pub use errors::{DspEngineError, InvalidAudioConfigError};
 pub use queue::{DspCommand, SpscCommandQueue, SpscTelemetryQueue, TelemetrySnapshot};
-pub use smoother::OnePoleSmoother;
+pub use smoother::{OnePoleSmoother, ParamSmoother};
 pub use oversampling::{HalfBandOversampler, OversamplingFactor};
 pub use precision::{IirBiquad64, MixedPrecisionSolver};
 pub use cpu::CpuMonitor;
