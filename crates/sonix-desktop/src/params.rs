@@ -122,6 +122,9 @@ fn default_amp_channel_mode() -> String { "modern".to_string() }
 fn default_amp_impedance() -> String { "16".to_string() }
 fn default_curve_slope() -> f32 { 0.5 }
 fn default_footswitch_mode() -> String { "HYBRID_STOMP_SCENE".to_string() }
+fn default_split_dyn_thresh() -> f32 { -30.0 }
+fn default_split_dyn_attack() -> f32 { 5.0 }
+fn default_split_dyn_release() -> f32 { 80.0 }
 
 const EQ_DEFAULT_BAND_FREQS_HZ: [f32; 10] = [
     31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
@@ -317,8 +320,14 @@ pub struct AppState {
     pub split_mode: String,
     #[serde(default = "default_crossover_hz", rename = "split.crossover_hz")]
     pub split_crossover_hz: f32,
-    #[serde(skip, default = "default_half")]
-    pub split_ratio: f32,
+    #[serde(default = "default_half", rename = "split.balance")]
+    pub split_balance: f32,
+    #[serde(default = "default_split_dyn_thresh", rename = "split.dyn_threshold_db")]
+    pub split_dyn_threshold_db: f32,
+    #[serde(default = "default_split_dyn_attack", rename = "split.dyn_attack_ms")]
+    pub split_dyn_attack_ms: f32,
+    #[serde(default = "default_split_dyn_release", rename = "split.dyn_release_ms")]
+    pub split_dyn_release_ms: f32,
     #[serde(default = "default_merge_level", rename = "merge.row_1_level_db")]
     pub merge_row_1_level_db: f32,
     #[serde(default, rename = "merge.row_1_phase_invert")]
@@ -634,7 +643,10 @@ impl Default for AppState {
             split_enabled: false,
             split_mode: "ab".to_string(),
             split_crossover_hz: 650.0,
-            split_ratio: 0.5,
+            split_balance: 0.5,
+            split_dyn_threshold_db: -30.0,
+            split_dyn_attack_ms: 5.0,
+            split_dyn_release_ms: 80.0,
             merge_row_1_level_db: -6.0,
             merge_row_1_phase_invert: false,
             comp_2_enabled: false,
@@ -1782,7 +1794,50 @@ pub static PARAMS: &[ParamDesc] = &[
         DspParamUpdate::SplitCrossoverHz,
         split_crossover_hz
     ),
-    num_param!("split.ratio", &[], 0.0, 1.0, 0.01, 0.5, None, DspParamUpdate::SplitRatio, split_ratio),
+    num_param!(
+        "split.balance",
+        &["split.ratio"],
+        0.0,
+        1.0,
+        0.01,
+        0.5,
+        None,
+        DspParamUpdate::SplitRatio,
+        split_balance
+    ),
+    num_param!(
+        "split.dyn_threshold_db",
+        &[],
+        -60.0,
+        0.0,
+        0.5,
+        -30.0,
+        None,
+        DspParamUpdate::SplitDynThresholdDb,
+        split_dyn_threshold_db
+    ),
+    num_param!(
+        "split.dyn_attack_ms",
+        &[],
+        1.0,
+        50.0,
+        0.5,
+        5.0,
+        None,
+        DspParamUpdate::SplitDynAttackMs,
+        split_dyn_attack_ms
+    ),
+    num_param!(
+        "split.dyn_release_ms",
+        &[],
+        10.0,
+        500.0,
+        5.0,
+        80.0,
+        None,
+        DspParamUpdate::SplitDynReleaseMs,
+        split_dyn_release_ms
+    ),
     num_param!(
         "merge.row_1_level_db",
         &[],
@@ -2510,7 +2565,6 @@ fn legacy_preset_kv_to_dsp(key: &str, v: &Value) -> Option<DspParamUpdate> {
         "dly_1.time_ms" => val_f32(v).map(DspParamUpdate::Dly1TimeMs),
         "dly_1.feedback" => val_f32(v).map(DspParamUpdate::Dly1Feedback),
         "dly_1.mix_pct" => val_f32(v).map(DspParamUpdate::Dly1Mix),
-        "split.balance" => val_f32(v).map(DspParamUpdate::SplitRatio),
         _ => None,
     }
 }

@@ -62,7 +62,7 @@ fn test_ca_03_split_crossover_flat_sum_reconstruction() {
     let sample_rate = 48000.0;
     split.set_sample_rate(sample_rate);
 
-    let num_samples = 1024;
+    let num_samples = 4096;
     let mut in_buffer = vec![0.0f32; num_samples];
     // Generate test signal with combined low (200Hz) and high (5000Hz) frequencies
     for i in 0..num_samples {
@@ -75,18 +75,18 @@ fn test_ca_03_split_crossover_flat_sum_reconstruction() {
     let mut out_high = vec![0.0f32; num_samples];
 
     split.process(&in_buffer, &mut out_low, &mut out_high);
+    split.process(&in_buffer, &mut out_low, &mut out_high);
 
-    // After settling (skip first 128 samples of filter transient), Low + High should reconstruct Input
-    for i in 128..num_samples {
-        let reconstructed = out_low[i] + out_high[i];
-        let diff = (reconstructed - in_buffer[i]).abs();
-        let db_diff = 20.0 * (reconstructed / in_buffer[i]).abs().log10();
-        assert!(
-            diff < 0.05 || db_diff.abs() <= 0.2,
-            "Reconstruction error at sample {}: diff={}, db_diff={}",
-            i, diff, db_diff
-        );
-    }
+    // LR4 soma em filtro passa-tudo (magnitude plana 0 dB +- 0.1 dB; fase invertida em fc)
+    let sum: Vec<f32> = out_low.iter().zip(out_high.iter()).map(|(l, h)| l + h).collect();
+    let rms_in = (in_buffer[2048..].iter().map(|s| s * s).sum::<f32>() / 2048.0).sqrt();
+    let rms_sum = (sum[2048..].iter().map(|s| s * s).sum::<f32>() / 2048.0).sqrt();
+    let db_diff = 20.0 * (rms_sum / rms_in.max(1e-9)).log10();
+    assert!(
+        db_diff.abs() <= 0.1,
+        "LR4 reconstruction RMS error: db_diff={}",
+        db_diff
+    );
 }
 
 #[test]

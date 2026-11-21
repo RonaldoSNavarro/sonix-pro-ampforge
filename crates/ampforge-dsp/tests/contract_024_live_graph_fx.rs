@@ -35,7 +35,7 @@ fn generate_sine(freq: f32, sr: f32, num_samples: usize, amplitude: f32) -> Vec<
 #[test]
 fn test_ca_02_split_crossover_flat_sum_and_ab_mode() {
     let sr = 48000.0;
-    let n = 2048;
+    let n = 16000; // [3200..16000] = 12800 amostras (8 períodos exatos em 30 Hz após estabilização LR4)
 
     // 1. Crossover: soma plana +-0.1 dB de 20 Hz a 20 kHz
     let freqs = [30.0, 100.0, 300.0, 500.0, 1000.0, 3000.0, 8000.0, 15000.0];
@@ -55,8 +55,8 @@ fn test_ca_02_split_crossover_flat_sum_and_ab_mode() {
                 sum[i] = out_a[i] + out_b[i];
             }
 
-            let rms_in = calculate_rms(&sig[n / 2..]);
-            let rms_sum = calculate_rms(&sum[n / 2..]);
+            let rms_in = calculate_rms(&sig[3200..]);
+            let rms_sum = calculate_rms(&sum[3200..]);
             let diff_db = 20.0 * (rms_sum / rms_in).log10();
             assert!(
                 diff_db.abs() <= 0.1,
@@ -70,8 +70,8 @@ fn test_ca_02_split_crossover_flat_sum_and_ab_mode() {
         let mut out_a = vec![0.0f32; n];
         let mut out_b = vec![0.0f32; n];
         split.process(&sig_fc, &mut out_a, &mut out_b);
-        let rms_a = calculate_rms(&out_a[n / 2..]);
-        let rms_b = calculate_rms(&out_b[n / 2..]);
+        let rms_a = calculate_rms(&out_a[3200..]);
+        let rms_b = calculate_rms(&out_b[3200..]);
         let ratio_db = 20.0 * (rms_a / rms_b.max(1e-9)).log10();
         assert!(
             ratio_db.abs() <= 1.0,

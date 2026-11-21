@@ -403,8 +403,12 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
     }
     container.append(
       modeRow,
-      makeControlSlider(store, 'split.crossover_hz', 'split.crossover_hz', 'Crossover', 800, (v) => `${v.toFixed(0)} Hz`),
-      makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Balanço Linha B', 0, (v) => `${v.toFixed(1)} dB`)
+      makeControlSlider(store, 'split.balance', 'split.balance', 'Balanço A/B', 0.5, (v) => `${Math.round(v * 100)}%`),
+      makeControlSlider(store, 'split.crossover_hz', 'split.crossover_hz', 'Crossover LR4', 650, (v) => `${v.toFixed(0)} Hz`),
+      makeControlSlider(store, 'split.dyn_threshold_db', 'split.dyn_threshold_db', 'Threshold Dinâmico', -30, (v) => `${v.toFixed(1)} dB`),
+      makeControlSlider(store, 'split.dyn_attack_ms', 'split.dyn_attack_ms', 'Ataque Dinâmico', 5, (v) => `${v.toFixed(1)} ms`),
+      makeControlSlider(store, 'split.dyn_release_ms', 'split.dyn_release_ms', 'Release Dinâmico', 80, (v) => `${v.toFixed(0)} ms`),
+      makeControlSlider(store, 'merge.row_1_level_db', 'merge.row_1_level_db', 'Balanço Linha B', -6, (v) => `${v.toFixed(1)} dB`)
     );
     return;
   }

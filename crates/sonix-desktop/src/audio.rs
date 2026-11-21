@@ -2355,6 +2355,9 @@ pub enum DspParamUpdate {
     SplitMode(ChainSplitMode),
     SplitRatio(f32),
     SplitCrossoverHz(f32),
+    SplitDynThresholdDb(f32),
+    SplitDynAttackMs(f32),
+    SplitDynReleaseMs(f32),
     MergeRow1LevelDb(f32),
     MergeRow1PhaseInvert(bool),
     Comp2Enabled(bool),
@@ -2812,6 +2815,10 @@ pub struct RealtimeDspChain {
     split_enabled: bool,
     split_mode: ChainSplitMode,
     split_crossover_hz: f32,
+    split_balance: f32,
+    split_dyn_threshold_db: f32,
+    split_dyn_attack_ms: f32,
+    split_dyn_release_ms: f32,
     comp_2: CompressorProcessor,
     comp_2_enabled: bool,
     amp_2: WhiteBoxAmpProcessor,
@@ -2966,7 +2973,8 @@ impl RealtimeDspChain {
         let preset_fade_step = 1.0 / preset_fade_len_samples;
 
         // Spec 024: Inicialização dos nós e processadores do Grid ao Vivo
-        let split = SplitNode::new(SplitMode::BalanceAb { ratio: 0.5 });
+        let mut split = SplitNode::new(SplitMode::BalanceAb { ratio: 0.5 });
+        split.set_sample_rate(sample_rate);
         let comp_2 = CompressorProcessor::new(CompressorTopology::StudioFet1176);
 
         let mut amp_2 = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
@@ -3087,6 +3095,10 @@ impl RealtimeDspChain {
             split_enabled: false,
             split_mode: ChainSplitMode::Ab,
             split_crossover_hz: 500.0,
+            split_balance: 0.5,
+            split_dyn_threshold_db: -30.0,
+            split_dyn_attack_ms: 5.0,
+            split_dyn_release_ms: 80.0,
             comp_2,
             comp_2_enabled: false,
             amp_2,
@@ -3660,10 +3672,47 @@ impl RealtimeDspChain {
                 self.split_mode = m;
                 self.apply_split_config();
             }
-            DspParamUpdate::SplitRatio(r) => self.split = SplitNode::new(SplitMode::BalanceAb { ratio: r }),
+            DspParamUpdate::SplitRatio(r) => {
+                self.split_balance = r.clamp(0.0, 1.0);
+                if matches!(self.split_mode, ChainSplitMode::Ab) {
+                    self.split.set_ratio(self.split_balance);
+                }
+            }
             DspParamUpdate::SplitCrossoverHz(hz) => {
                 self.split_crossover_hz = hz.clamp(100.0, 2000.0);
-                self.apply_split_config();
+                if matches!(self.split_mode, ChainSplitMode::Crossover) {
+                    self.split.set_crossover_hz(self.split_crossover_hz);
+                }
+            }
+            DspParamUpdate::SplitDynThresholdDb(db) => {
+                self.split_dyn_threshold_db = db.clamp(-60.0, 0.0);
+                if matches!(self.split_mode, ChainSplitMode::DynamicSplit) {
+                    self.split.set_dynamic_params(
+                        self.split_dyn_threshold_db,
+                        self.split_dyn_attack_ms,
+                        self.split_dyn_release_ms,
+                    );
+                }
+            }
+            DspParamUpdate::SplitDynAttackMs(ms) => {
+                self.split_dyn_attack_ms = ms.clamp(1.0, 50.0);
+                if matches!(self.split_mode, ChainSplitMode::DynamicSplit) {
+                    self.split.set_dynamic_params(
+                        self.split_dyn_threshold_db,
+                        self.split_dyn_attack_ms,
+                        self.split_dyn_release_ms,
+                    );
+                }
+            }
+            DspParamUpdate::SplitDynReleaseMs(ms) => {
+                self.split_dyn_release_ms = ms.clamp(10.0, 500.0);
+                if matches!(self.split_mode, ChainSplitMode::DynamicSplit) {
+                    self.split.set_dynamic_params(
+                        self.split_dyn_threshold_db,
+                        self.split_dyn_attack_ms,
+                        self.split_dyn_release_ms,
+                    );
+                }
             }
             DspParamUpdate::MergeRow1LevelDb(db) => {
                 let inv = self.merge_row_1_phase_invert;
@@ -4578,17 +4627,17 @@ impl RealtimeDspChain {
     fn apply_split_config(&mut self) {
         match self.split_mode {
             ChainSplitMode::Crossover => {
-                self.split.set_mode(SplitMode::Crossover { freq_hz: self.split_crossover_hz });
+                self.split.set_crossover_hz(self.split_crossover_hz);
             }
             ChainSplitMode::DynamicSplit => {
-                self.split.set_mode(SplitMode::DynamicSplit {
-                    threshold_db: -30.0,
-                    attack_ms: 5.0,
-                    release_ms: 80.0,
-                });
+                self.split.set_dynamic_params(
+                    self.split_dyn_threshold_db,
+                    self.split_dyn_attack_ms,
+                    self.split_dyn_release_ms,
+                );
             }
             ChainSplitMode::Ab => {
-                self.split.set_mode(SplitMode::BalanceAb { ratio: 0.5 });
+                self.split.set_ratio(self.split_balance);
             }
         }
     }

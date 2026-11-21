@@ -148,12 +148,31 @@ pub enum SplitMode {
     },
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct BiquadState {
+    z1: f64,
+    z2: f64,
+}
+
+impl BiquadState {
+    #[inline]
+    fn process(&mut self, x: f64, b0: f64, b1: f64, b2: f64, a1: f64, a2: f64) -> f64 {
+        let y = b0 * x + self.z1;
+        self.z1 = b1 * x - a1 * y + self.z2;
+        self.z2 = b2 * x - a2 * y;
+        y
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SplitNode {
     mode: SplitMode,
     sample_rate: f32,
-    // State for crossover filters (2nd order Linkwitz-Riley / cascaded 1st order)
-    lp_y1: f32,
+    // Estado dos filtros Linkwitz-Riley 4ª ordem (dois biquads Butterworth 2ª ordem Q=0.7071 em cascata)
+    lp1: BiquadState,
+    lp2: BiquadState,
+    hp1: BiquadState,
+    hp2: BiquadState,
     // State for dynamic split envelope
     envelope: f32,
 }
@@ -163,7 +182,10 @@ impl SplitNode {
         Self {
             mode,
             sample_rate: 48000.0,
-            lp_y1: 0.0,
+            lp1: BiquadState::default(),
+            lp2: BiquadState::default(),
+            hp1: BiquadState::default(),
+            hp2: BiquadState::default(),
             envelope: 0.0,
         }
     }
@@ -174,6 +196,54 @@ impl SplitNode {
 
     pub fn set_mode(&mut self, mode: SplitMode) {
         self.mode = mode;
+    }
+
+    pub fn set_ratio(&mut self, ratio: f32) {
+        let r = ratio.clamp(0.0, 1.0);
+        match &mut self.mode {
+            SplitMode::BalanceAb { ratio: cur } => {
+                *cur = r;
+            }
+            _ => {
+                self.mode = SplitMode::BalanceAb { ratio: r };
+            }
+        }
+    }
+
+    pub fn set_crossover_hz(&mut self, freq_hz: f32) {
+        let fc = freq_hz.clamp(20.0, self.sample_rate * 0.45);
+        match &mut self.mode {
+            SplitMode::Crossover { freq_hz: cur } => {
+                *cur = fc;
+            }
+            _ => {
+                self.mode = SplitMode::Crossover { freq_hz: fc };
+            }
+        }
+    }
+
+    pub fn set_dynamic_params(&mut self, threshold_db: f32, attack_ms: f32, release_ms: f32) {
+        let th = threshold_db.clamp(-60.0, 0.0);
+        let att = attack_ms.clamp(1.0, 50.0);
+        let rel = release_ms.clamp(10.0, 500.0);
+        match &mut self.mode {
+            SplitMode::DynamicSplit {
+                threshold_db: t,
+                attack_ms: a,
+                release_ms: r,
+            } => {
+                *t = th;
+                *a = att;
+                *r = rel;
+            }
+            _ => {
+                self.mode = SplitMode::DynamicSplit {
+                    threshold_db: th,
+                    attack_ms: att,
+                    release_ms: rel,
+                };
+            }
+        }
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -200,21 +270,34 @@ impl SplitNode {
                 }
             }
             SplitMode::Crossover { freq_hz } => {
-                // Complementary filter pair (All-pass sum reconstruction)
-                // H_lp(z) = (1 - a) / (1 - a*z^-1)
-                // H_hp(z) = 1 - H_lp(z)
-                // Sum: H_lp(z) + H_hp(z) = 1.0 (flat magnitude reconstruction within 0.0 dB)
-                let fc = freq_hz.clamp(20.0, self.sample_rate * 0.45);
-                let omega = 2.0 * std::f32::consts::PI * fc / self.sample_rate;
-                let a = (-omega).exp();
+                // Crossover Linkwitz-Riley 4ª ordem (LR4): dois Butterworth de 2ª ordem (Q = 1/sqrt(2)) em cascata por banda.
+                // H_LP4(z) + H_HP4(z) forma filtro all-pass com |LP + HP| == 0 dB e inclinação -24 dB/oitava.
+                let sr = self.sample_rate.max(1.0) as f64;
+                let fc = (*freq_hz as f64).clamp(20.0, sr * 0.45);
+                let k = (std::f64::consts::PI * fc / sr).tan();
+                let k2 = k * k;
+                let q = std::f64::consts::FRAC_1_SQRT_2;
+                let inv_d = 1.0 / (1.0 + k / q + k2);
+
+                let a1 = 2.0 * (k2 - 1.0) * inv_d;
+                let a2 = (1.0 - k / q + k2) * inv_d;
+
+                let lp_b0 = k2 * inv_d;
+                let lp_b1 = 2.0 * lp_b0;
+                let lp_b2 = lp_b0;
+
+                let hp_b0 = inv_d;
+                let hp_b1 = -2.0 * inv_d;
+                let hp_b2 = hp_b0;
 
                 for i in 0..input.len() {
-                    let x = input[i];
-                    let lp = (1.0 - a) * x + a * self.lp_y1;
-                    self.lp_y1 = lp;
-                    let hp = x - lp;
-                    out_a[i] = lp;
-                    out_b[i] = hp;
+                    let x = input[i] as f64;
+                    let lp_s1 = self.lp1.process(x, lp_b0, lp_b1, lp_b2, a1, a2);
+                    let lp = self.lp2.process(lp_s1, lp_b0, lp_b1, lp_b2, a1, a2);
+                    let hp_s1 = self.hp1.process(x, hp_b0, hp_b1, hp_b2, a1, a2);
+                    let hp = self.hp2.process(hp_s1, hp_b0, hp_b1, hp_b2, a1, a2);
+                    out_a[i] = lp as f32;
+                    out_b[i] = hp as f32;
                 }
             }
             SplitMode::DynamicSplit {
