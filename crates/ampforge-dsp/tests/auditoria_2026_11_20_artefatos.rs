@@ -729,3 +729,130 @@ fn aud_11_zero_alloc() {
     );
 }
 
+use ampforge_dsp::fx::pitch::{PitchModel, PitchProcessor};
+
+#[test]
+fn aud_12_seco_sem_atraso() {
+    let mut p = PitchProcessor::new(PitchModel::PedalWhammy);
+    p.prepare(SR);
+    p.set_mix_pct(50.0);
+    p.set_semitones(0.0);
+
+    let mut inp = vec![0.0_f32; 2048];
+    inp[0] = 1.0;
+    let mut out = vec![0.0_f32; 2048];
+    p.process(&inp, &mut out);
+
+    assert_eq!(
+        p.algorithmic_latency_samples(),
+        0,
+        "AUD-12: PitchProcessor algorithmic_latency_samples deve ser 0 (caminho seco sem atraso)"
+    );
+    assert!(
+        out[0].abs() >= 0.45,
+        "AUD-12: com mix=50% e impulso unitário em idx 0, primeiro pico seco deve sair em out[0] (obteve out[0]={:.5}, pico_idx={})",
+        out[0],
+        out.iter()
+            .enumerate()
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    );
+}
+
+#[test]
+fn aud_12_latencia_wet() {
+    for sr in [44_100.0_f32, 48_000.0, 96_000.0] {
+        let mut p = PitchProcessor::new(PitchModel::PedalWhammy);
+        p.prepare(sr);
+        p.set_mix_pct(100.0);
+        p.set_semitones(0.0);
+
+        let n = 4096usize;
+        let mut inp = vec![0.0_f32; n];
+        inp[0] = 1.0;
+        let mut out = vec![0.0_f32; n];
+        p.process(&inp, &mut out);
+
+        let peak_idx = out
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let expected_samples = (512.0 * (sr / 48_000.0)).round() as isize;
+        let diff = (peak_idx as isize - expected_samples).abs();
+        assert!(
+            diff <= 2,
+            "AUD-12 (sr={sr}): pico wet deve ficar em {expected_samples} +/- 2 amostras (obteve {peak_idx})"
+        );
+
+        let expected_ms = (512.0 * (sr / 48_000.0)) / sr * 1000.0;
+        assert!(
+            (p.wet_latency_ms() - expected_ms).abs() < 0.1,
+            "AUD-12 (sr={sr}): wet_latency_ms={:.3} ms divergiu do esperado {expected_ms:.3} ms",
+            p.wet_latency_ms()
+        );
+    }
+}
+
+#[test]
+fn aud_12_custo_distribuido() {
+    let mut p = PitchProcessor::new(PitchModel::IntelligentDualHarmonizer);
+    p.prepare(SR);
+    p.set_mix_pct(50.0);
+
+    let total = (SR * 5.0) as usize;
+    let bloco = 64usize;
+    let mut inp = vec![0.0_f32; bloco];
+    let mut out = vec![0.0_f32; bloco];
+
+    let mut ops_por_bloco = Vec::with_capacity(total / bloco + 1);
+    let mut pos = 0usize;
+    while pos < total {
+        let len = bloco.min(total - pos);
+        for i in 0..len {
+            let t = (pos + i) as f32 / SR;
+            inp[i] = 0.25 * (2.0 * PI * 220.0 * t).sin();
+        }
+        p.process(&inp[..len], &mut out[..len]);
+        ops_por_bloco.push(p.ops_ultima_chamada as f64);
+        pos += len;
+    }
+
+    let soma: f64 = ops_por_bloco.iter().sum();
+    let media = soma / (ops_por_bloco.len() as f64);
+    let max_ops = ops_por_bloco.iter().copied().fold(0.0_f64, f64::max);
+    let razao = if media > 0.0 { max_ops / media } else { f64::INFINITY };
+    assert!(
+        media > 0.0 && razao <= 1.25,
+        "AUD-12: pico de autocorrelação por bloco alto demais: max={max_ops:.1}, media={media:.2}, max/media={razao:.3} (> 1.25)"
+    );
+}
+
+#[test]
+fn aud_12_zero_alloc() {
+    verify_allocator_self_check();
+
+    let mut p = PitchProcessor::new(PitchModel::IntelligentDualHarmonizer);
+    p.prepare(SR);
+    p.set_mix_pct(50.0);
+
+    let inp: Vec<f32> = (0..64)
+        .map(|i| 0.25 * (2.0 * PI * 220.0 * (i as f32) / SR).sin())
+        .collect();
+    let mut out = [0.0_f32; 64];
+    for _ in 0..8 {
+        p.process(&inp, &mut out);
+    }
+
+    let (allocs, deallocs) = measure_allocs(|| {
+        for _ in 0..40 {
+            p.process(&inp, &mut out);
+        }
+    });
+
+    assert_eq!(allocs, 0, "AUD-12: Pitch alocou {allocs} vez(es)");
+    assert_eq!(deallocs, 0, "AUD-12: Pitch desalocou {deallocs} vez(es)");
+}
+

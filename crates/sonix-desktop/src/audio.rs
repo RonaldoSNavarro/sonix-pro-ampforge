@@ -179,6 +179,8 @@ pub struct AudioStatusTelemetry {
     pub estimated_roundtrip_ms: f32,
     #[serde(default)]
     pub algorithmic_latency_samples: u32,
+    #[serde(default)]
+    pub pitch_wet_latency_ms: f32,
 }
 
 /// Buffer SPSC Lock-Free Seguro em Rust (Zero Locks, Zero Allocations) (Spec 018, CA-3)
@@ -427,6 +429,7 @@ impl SimulatedAudioHost {
             measured_roundtrip_ms: None,
             estimated_roundtrip_ms: lat_ms + lat_ms + algo_ms,
             algorithmic_latency_samples: algo_lat,
+            pitch_wet_latency_ms: self.dsp_chain.pitch_wet_latency_ms(),
         }
     }
 
@@ -1480,9 +1483,11 @@ impl DesktopAudioHost {
         let effective_out_sr = out_stream_config.sample_rate;
         let out_sample_rate_f = effective_out_sr as f32;
         let mut algo_lat_samples = 4u32;
+        let mut pitch_wet_ms = 0.0f32;
         if let Ok(mut dsp) = dsp_chain.lock() {
             dsp.prepare(out_sample_rate_f, (target_period as usize).max(4096));
             algo_lat_samples = dsp.algorithmic_latency_samples();
+            pitch_wet_ms = dsp.pitch_wet_latency_ms();
         }
 
         let obs_out_c = observed_out_period.clone();
@@ -1684,6 +1689,7 @@ impl DesktopAudioHost {
             measured_roundtrip_ms: None,
             estimated_roundtrip_ms: in_lat_ms + out_lat_ms + duplex_queue_ms + algo_lat_ms,
             algorithmic_latency_samples: algo_lat_samples,
+            pitch_wet_latency_ms: pitch_wet_ms,
         };
 
         Ok(RealtimeDuplexAudioStreams {
@@ -2717,6 +2723,7 @@ pub struct RealtimeDspChain {
     max_block: usize,
     shared_sample_rate_bits: Arc<AtomicU32>,
     shared_algo_latency_samples: Arc<AtomicU32>,
+    shared_pitch_wet_latency_ms_bits: Arc<AtomicU32>,
     shared_b_plus_v_bits: Arc<AtomicU32>,
     gate: NoiseGateProcessor,
     gate_enabled: bool,
@@ -2981,6 +2988,7 @@ impl RealtimeDspChain {
             max_block: 2048,
             shared_sample_rate_bits: Arc::new(AtomicU32::new(sample_rate.max(1.0).to_bits())),
             shared_algo_latency_samples: Arc::new(AtomicU32::new(initial_latency)),
+            shared_pitch_wet_latency_ms_bits: Arc::new(AtomicU32::new(0.0_f32.to_bits())),
             shared_b_plus_v_bits: Arc::new(AtomicU32::new(initial_b_plus_v.to_bits())),
             gate,
             gate_enabled: true,
@@ -3331,6 +3339,10 @@ impl RealtimeDspChain {
 
     pub fn shared_algo_latency_samples(&self) -> Arc<AtomicU32> {
         self.shared_algo_latency_samples.clone()
+    }
+
+    pub fn shared_pitch_wet_latency_ms_bits(&self) -> Arc<AtomicU32> {
+        self.shared_pitch_wet_latency_ms_bits.clone()
     }
 
     pub fn shared_b_plus_v_bits(&self) -> Arc<AtomicU32> {
@@ -3721,6 +3733,8 @@ impl RealtimeDspChain {
                 self.pitch_1.set_bypassed(!b);
                 self.shared_algo_latency_samples
                     .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
+                self.shared_pitch_wet_latency_ms_bits
+                    .store(self.pitch_wet_latency_ms().to_bits(), Ordering::Relaxed);
             }
             DspParamUpdate::Pitch1Model(m) => self.pitch_1.set_model(m),
             DspParamUpdate::Pitch1Semitones(st) => self.pitch_1.set_semitones(st),
@@ -3730,6 +3744,8 @@ impl RealtimeDspChain {
                 self.pitch_1.set_mix_pct(mix);
                 self.shared_algo_latency_samples
                     .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
+                self.shared_pitch_wet_latency_ms_bits
+                    .store(self.pitch_wet_latency_ms().to_bits(), Ordering::Relaxed);
             }
             DspParamUpdate::MasterLevelDb(db) => {
                 if db.is_finite() {
@@ -3955,6 +3971,8 @@ impl RealtimeDspChain {
         self.preset_fade_step = 1.0 / preset_fade_len_samples;
         self.shared_algo_latency_samples
             .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
+        self.shared_pitch_wet_latency_ms_bits
+            .store(self.pitch_wet_latency_ms().to_bits(), Ordering::Relaxed);
 
         let target_block = max_block.max(2048);
         if self.temp_boost_buf.len() < target_block {
@@ -4288,6 +4306,14 @@ impl RealtimeDspChain {
 
     pub fn algorithmic_latency_samples(&self) -> u32 {
         self.amp.algorithmic_latency_samples() + self.pitch_1.algorithmic_latency_samples() as u32
+    }
+
+    pub fn pitch_wet_latency_ms(&self) -> f32 {
+        if !self.pitch_1_enabled {
+            0.0
+        } else {
+            self.pitch_1.wet_latency_ms()
+        }
     }
 
     pub fn set_amp_enabled(&mut self, enabled: bool) {
@@ -5182,6 +5208,7 @@ impl RealtimeDspChain {
             max_block: self.max_block,
             shared_sample_rate_bits: self.shared_sample_rate_bits.clone(),
             shared_algo_latency_samples: self.shared_algo_latency_samples.clone(),
+            shared_pitch_wet_latency_ms_bits: self.shared_pitch_wet_latency_ms_bits.clone(),
             shared_b_plus_v_bits: self.shared_b_plus_v_bits.clone(),
             adc_clips: self.adc_clips.clone(),
             clean_input_ring: self.clean_input_ring.clone(),
@@ -5204,6 +5231,7 @@ impl RealtimeDspChain {
 
         chain.shared_sample_rate_bits = handles.shared_sample_rate_bits.clone();
         chain.shared_algo_latency_samples = handles.shared_algo_latency_samples.clone();
+        chain.shared_pitch_wet_latency_ms_bits = handles.shared_pitch_wet_latency_ms_bits.clone();
         chain.shared_b_plus_v_bits = handles.shared_b_plus_v_bits.clone();
         chain.adc_clips = handles.adc_clips.clone();
         chain.clean_input_ring = handles.clean_input_ring.clone();
@@ -5223,6 +5251,7 @@ impl RealtimeDspChain {
 
         shadow.shared_sample_rate_bits = handles.shared_sample_rate_bits;
         shadow.shared_algo_latency_samples = handles.shared_algo_latency_samples;
+        shadow.shared_pitch_wet_latency_ms_bits = handles.shared_pitch_wet_latency_ms_bits;
         shadow.shared_b_plus_v_bits = handles.shared_b_plus_v_bits;
         shadow.adc_clips = handles.adc_clips;
         shadow.clean_input_ring = handles.clean_input_ring;
@@ -5250,6 +5279,7 @@ pub struct RealtimeDspChainHandles {
     pub max_block: usize,
     pub shared_sample_rate_bits: Arc<AtomicU32>,
     pub shared_algo_latency_samples: Arc<AtomicU32>,
+    pub shared_pitch_wet_latency_ms_bits: Arc<AtomicU32>,
     pub shared_b_plus_v_bits: Arc<AtomicU32>,
     pub adc_clips: Arc<AtomicU64>,
     pub clean_input_ring: Arc<CleanInputRing>,

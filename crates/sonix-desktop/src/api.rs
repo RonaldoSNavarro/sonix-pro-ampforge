@@ -59,6 +59,7 @@ pub struct ApiContext {
     pub shared_adc_clips: Option<Arc<AtomicU64>>,
     pub shared_sample_rate_bits: Option<Arc<AtomicU32>>,
     pub shared_algo_latency_samples: Option<Arc<AtomicU32>>,
+    pub shared_pitch_wet_latency_ms_bits: Option<Arc<AtomicU32>>,
     pub shared_b_plus_v_bits: Option<Arc<AtomicU32>>,
     pub clean_input_ring: Option<Arc<CleanInputRing>>,
     pub scope_output_ring: Option<Arc<CleanInputRing>>,
@@ -138,6 +139,7 @@ impl ApiContext {
         let mut shared_adc_clips = None;
         let mut shared_sample_rate_bits = None;
         let mut shared_algo_latency_samples = None;
+        let mut shared_pitch_wet_latency_ms_bits = None;
         let mut shared_b_plus_v_bits = None;
         let mut clean_input_ring = None;
         let mut scope_output_ring = None;
@@ -154,6 +156,7 @@ impl ApiContext {
                 shared_adc_clips = Some(chain.adc_clips_handle());
                 shared_sample_rate_bits = Some(chain.shared_sample_rate_bits());
                 shared_algo_latency_samples = Some(chain.shared_algo_latency_samples());
+                shared_pitch_wet_latency_ms_bits = Some(chain.shared_pitch_wet_latency_ms_bits());
                 shared_b_plus_v_bits = Some(chain.shared_b_plus_v_bits());
                 clean_input_ring = Some(chain.clean_input_ring());
                 scope_output_ring = Some(chain.scope_output_ring());
@@ -170,6 +173,7 @@ impl ApiContext {
             shared_adc_clips,
             shared_sample_rate_bits,
             shared_algo_latency_samples,
+            shared_pitch_wet_latency_ms_bits,
             shared_b_plus_v_bits,
             clean_input_ring,
             scope_output_ring,
@@ -295,6 +299,11 @@ pub fn dispatch(
                         })
                         .unwrap_or(4)
                 });
+            let pitch_wet_ms = ctx
+                .shared_pitch_wet_latency_ms_bits
+                .as_ref()
+                .map(|p| f32::from_bits(p.load(Ordering::Relaxed)))
+                .unwrap_or(0.0);
             let contention_silences = ctx.telemetry.dsp_contention_silence_blocks();
             let live_underruns = ctx.duplex_engine.as_ref().map(|d| d.underruns());
             let live_overruns = ctx.duplex_engine.as_ref().map(|d| d.overruns());
@@ -311,6 +320,7 @@ pub fn dispatch(
                     let prev_algo = t.algorithmic_latency_samples;
                     t.adc_clips = clips;
                     t.algorithmic_latency_samples = algo_lat;
+                    t.pitch_wet_latency_ms = pitch_wet_ms;
                     if let Some(u) = live_underruns {
                         t.underruns = u;
                     }
@@ -389,6 +399,7 @@ pub fn dispatch(
                         "measured_roundtrip_ms": serde_json::Value::Null,
                         "estimated_roundtrip_ms": driver_ms * 3.0 + algo_ms,
                         "algorithmic_latency_samples": algo_lat,
+                        "pitch_wet_latency_ms": (pitch_wet_ms * 1000.0).round() / 1000.0,
                     })
                 }
             } else {
@@ -397,6 +408,7 @@ pub fn dispatch(
                     "underruns": live_underruns.unwrap_or(0),
                     "overruns": live_overruns.unwrap_or(0),
                     "algorithmic_latency_samples": algo_lat,
+                    "pitch_wet_latency_ms": (pitch_wet_ms * 1000.0).round() / 1000.0,
                     "measured_roundtrip_ms": serde_json::Value::Null,
                 })
             };
@@ -410,6 +422,10 @@ pub fn dispatch(
                 obj.insert(
                     "oversampling".to_string(),
                     serde_json::json!(ov_mode),
+                );
+                obj.insert(
+                    "pitch_wet_latency_ms".to_string(),
+                    serde_json::json!((pitch_wet_ms * 1000.0).round() / 1000.0),
                 );
                 obj.insert(
                     "dsp_contention_silence_blocks".to_string(),

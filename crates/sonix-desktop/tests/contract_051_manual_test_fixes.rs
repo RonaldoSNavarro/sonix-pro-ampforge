@@ -720,6 +720,7 @@ fn test_ca_17_oversampling_2x_4x_8x_updates_algorithmic_latency_and_audio() {
         measured_roundtrip_ms: None,
         estimated_roundtrip_ms: 2.667 + 2.667 + 2.667 + (4.0 / 48.0),
         algorithmic_latency_samples: 4,
+        pitch_wet_latency_ms: 0.0,
     });
     let (_, _, b_2x) = dispatch(&ctx, "/api/audio/status", "GET", b"");
     let v_2x: Value = serde_json::from_slice(&b_2x).unwrap();

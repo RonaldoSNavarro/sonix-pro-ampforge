@@ -210,6 +210,7 @@ fn test_ca_07_api_audio_status_telemetry_schema() {
         measured_roundtrip_ms: Some(10.5),
         estimated_roundtrip_ms: 5.34,
         algorithmic_latency_samples: 0,
+        pitch_wet_latency_ms: 0.0,
     };
     
     let server = LocalAppServer::bind_ephemeral().expect("Falha ao ligar server");

@@ -58,8 +58,13 @@ pub struct PitchProcessor {
     grains_initialized: bool,
     analysis_buf: Vec<f32>,
     analysis_pos: usize,
-    samples_since_detect: usize,
+    detect_snapshot: Vec<f32>,
+    detect_lag_idx: usize,
+    detect_best_lag: usize,
+    detect_best_corr: f32,
+    detect_energy: f32,
     detected_freq_hz: f32,
+    pub ops_ultima_chamada: u32,
 }
 
 impl PitchProcessor {
@@ -75,13 +80,18 @@ impl PitchProcessor {
             buf: vec![0.0; PITCH_BUF_LEN],
             write_pos: 0,
             phase: 0.0,
-            d0: 1024.0,
-            d1: 1536.0,
+            d0: 512.0,
+            d1: 512.0,
             grains_initialized: false,
             analysis_buf: vec![0.0; ANALYSIS_BUF_LEN],
             analysis_pos: 0,
-            samples_since_detect: 0,
+            detect_snapshot: vec![0.0; ANALYSIS_BUF_LEN],
+            detect_lag_idx: 0,
+            detect_best_lag: 0,
+            detect_best_corr: 0.0,
+            detect_energy: 0.0,
             detected_freq_hz: 261.63,
+            ops_ultima_chamada: 0,
         }
     }
 
@@ -107,21 +117,34 @@ impl PitchProcessor {
         self.write_pos = 0;
         self.phase = 0.0;
         let sr_scale = (self.sample_rate / 48000.0).clamp(0.25, 4.0);
-        self.d0 = 1024.0 * sr_scale;
-        self.d1 = 1536.0 * sr_scale;
+        self.d0 = 512.0 * sr_scale;
+        self.d1 = 512.0 * sr_scale;
         self.grains_initialized = false;
         self.analysis_buf.fill(0.0);
         self.analysis_pos = 0;
-        self.samples_since_detect = 0;
+        self.detect_snapshot.fill(0.0);
+        self.detect_lag_idx = 0;
+        self.detect_best_lag = 0;
+        self.detect_best_corr = 0.0;
+        self.detect_energy = 0.0;
         self.detected_freq_hz = 261.63;
+        self.ops_ultima_chamada = 0;
     }
 
     pub fn algorithmic_latency_samples(&self) -> usize {
+        0
+    }
+
+    pub fn wet_latency_samples(&self) -> usize {
         if self.bypassed || self.mix_pct <= 0.0 {
             0
         } else {
-            (1024.0 * (self.sample_rate / 48000.0).clamp(0.25, 4.0)).round() as usize
+            (512.0 * (self.sample_rate / 48000.0).clamp(0.25, 4.0)).round() as usize
         }
+    }
+
+    pub fn wet_latency_ms(&self) -> f32 {
+        (self.wet_latency_samples() as f32 / self.sample_rate.max(1.0)) * 1000.0
     }
 
     pub fn set_mix_pct(&mut self, mix: f32) {
@@ -229,53 +252,73 @@ impl PitchProcessor {
         self.buf[p0] * (1.0 - frac) + self.buf[p1] * frac
     }
 
-    fn detect_fundamental_hz(&self) -> Option<f32> {
+    fn snapshot_analysis_window(&mut self) {
+        let head = &self.analysis_buf[self.analysis_pos..];
+        let tail = &self.analysis_buf[..self.analysis_pos];
+        let split = head.len();
+        self.detect_snapshot[..split].copy_from_slice(head);
+        self.detect_snapshot[split..].copy_from_slice(tail);
+
+        let mut energy = 0.0f32;
+        for &s in &self.detect_snapshot {
+            energy += s * s;
+        }
+        self.detect_energy = energy;
+        self.detect_best_lag = 0;
+        self.detect_best_corr = 0.0;
+    }
+
+    fn step_amortized_detect(&mut self, frames: usize) {
         let n = ANALYSIS_BUF_LEN;
         let min_lag = ((self.sample_rate / 1200.0).floor() as usize).max(8);
         let max_lag = ((self.sample_rate / 70.0).ceil() as usize).min(n / 2 - 2);
         if min_lag >= max_lag {
-            return None;
+            return;
         }
-
-        let mut energy = 0.0f32;
-        for &s in &self.analysis_buf {
-            energy += s * s;
-        }
-        if energy < 1e-5 {
-            return None;
-        }
-
-        let mut best_lag = 0usize;
-        let mut best_corr = 0.0f32;
+        let total_lags = max_lag - min_lag + 1;
+        let budget = (total_lags * frames.max(1)).div_ceil(512).max(1);
         let window = n / 2;
 
-        for lag in min_lag..=max_lag {
-            let mut sum = 0.0f32;
-            let mut e0 = 0.0f32;
-            let mut e1 = 0.0f32;
-            for i in 0..window {
-                let idx0 = (self.analysis_pos + i) & (n - 1);
-                let idx1 = (self.analysis_pos + i + lag) & (n - 1);
-                let a = self.analysis_buf[idx0];
-                let b = self.analysis_buf[idx1];
-                sum += a * b;
-                e0 += a * a;
-                e1 += b * b;
+        for _ in 0..budget {
+            if self.detect_lag_idx == 0 {
+                self.snapshot_analysis_window();
             }
-            let denom = (e0 * e1).sqrt();
-            if denom > 1e-9 {
-                let corr = sum / denom;
-                if corr > best_corr {
-                    best_corr = corr;
-                    best_lag = lag;
+            let lag = min_lag + self.detect_lag_idx;
+            self.ops_ultima_chamada = self.ops_ultima_chamada.saturating_add(1);
+
+            if self.detect_energy >= 1e-5 {
+                let s0 = &self.detect_snapshot[..window];
+                let s1 = &self.detect_snapshot[lag..lag + window];
+                let mut sum = 0.0f32;
+                let mut e0 = 0.0f32;
+                let mut e1 = 0.0f32;
+                for i in 0..window {
+                    let a = s0[i];
+                    let b = s1[i];
+                    sum += a * b;
+                    e0 += a * a;
+                    e1 += b * b;
+                }
+                let denom = (e0 * e1).sqrt();
+                if denom > 1e-9 {
+                    let corr = sum / denom;
+                    if corr > self.detect_best_corr {
+                        self.detect_best_corr = corr;
+                        self.detect_best_lag = lag;
+                    }
                 }
             }
-        }
 
-        if best_lag > 0 && best_corr > 0.55 {
-            Some(self.sample_rate / best_lag as f32)
-        } else {
-            None
+            self.detect_lag_idx += 1;
+            if self.detect_lag_idx >= total_lags {
+                if self.detect_energy >= 1e-5
+                    && self.detect_best_lag > 0
+                    && self.detect_best_corr > 0.55
+                {
+                    self.detected_freq_hz = self.sample_rate / (self.detect_best_lag as f32);
+                }
+                self.detect_lag_idx = 0;
+            }
         }
     }
 
@@ -315,6 +358,7 @@ impl PitchProcessor {
     }
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        self.ops_ultima_chamada = 0;
         let len = input.len().min(output.len());
         if self.bypassed || self.mix_pct <= 0.0 {
             output[..len].copy_from_slice(&input[..len]);
@@ -322,9 +366,9 @@ impl PitchProcessor {
         }
 
         let sr_scale = (self.sample_rate / 48000.0).clamp(0.25, 4.0);
-        let center_delay = 1024.0 * sr_scale;
         let grain_len = 1024.0 * sr_scale;
-        let search_len = (700.0 * sr_scale) as usize;
+        let wet_delay = 512.0 * sr_scale;
+        let search_len = (512.0 * sr_scale) as usize;
         let mix = (self.mix_pct / 100.0).clamp(0.0, 1.0);
 
         let base_ratio = match self.model {
@@ -349,13 +393,6 @@ impl PitchProcessor {
             if self.model == PitchModel::IntelligentDualHarmonizer {
                 self.analysis_buf[self.analysis_pos] = crate::denormal::flush_f32(x);
                 self.analysis_pos = (self.analysis_pos + 1) & (ANALYSIS_BUF_LEN - 1);
-                self.samples_since_detect += 1;
-                if self.samples_since_detect >= 512 {
-                    self.samples_since_detect = 0;
-                    if let Some(f0) = self.detect_fundamental_hz() {
-                        self.detected_freq_hz = f0;
-                    }
-                }
             }
 
             let ratio = if self.model == PitchModel::IntelligentDualHarmonizer {
@@ -366,16 +403,12 @@ impl PitchProcessor {
             };
 
             let wet = if (ratio - 1.0).abs() < 1e-5 {
-                self.read_linear(center_delay)
+                self.read_linear(wet_delay)
             } else {
-                let reset_base = if ratio > 1.0 {
-                    1600.0 * sr_scale
-                } else {
-                    512.0 * sr_scale
-                };
+                let reset_base = if ratio > 1.0 { grain_len } else { 0.0 };
                 if !self.grains_initialized {
-                    self.d0 = reset_base;
-                    self.d1 = reset_base;
+                    self.d0 = wet_delay;
+                    self.d1 = wet_delay;
                     self.grains_initialized = true;
                 }
 
@@ -409,8 +442,12 @@ impl PitchProcessor {
                 y0 * w0 + y1 * w1
             };
 
-            let dry = self.read_linear(center_delay);
+            let dry = x;
             output[i] = dry * (1.0 - mix) + wet * mix;
+        }
+
+        if self.model == PitchModel::IntelligentDualHarmonizer {
+            self.step_amortized_detect(len);
         }
     }
 }

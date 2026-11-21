@@ -248,6 +248,7 @@ fn test_ca_03_algorithmic_and_buffering_latency_under_10ms() {
         measured_roundtrip_ms: Some(total_digital_latency_ms),
         estimated_roundtrip_ms: total_digital_latency_ms,
         algorithmic_latency_samples: algo_lat_samples,
+        pitch_wet_latency_ms: 0.0,
     };
 
     let server = LocalAppServer::bind_ephemeral().expect("Falha ao ligar server");
@@ -325,6 +326,7 @@ fn test_ca_04_realtime_cpu_load_measurement() {
         measured_roundtrip_ms: Some(8.33),
         estimated_roundtrip_ms: 5.67,
         algorithmic_latency_samples: 16,
+        pitch_wet_latency_ms: 0.0,
     };
     server.set_audio_telemetry(audio_status);
 

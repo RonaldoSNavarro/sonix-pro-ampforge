@@ -142,6 +142,7 @@ fn test_ca_02_ca_03_ca_04_honest_audio_status_raw_processing_and_roundtrip_telem
         measured_roundtrip_ms: None,
         estimated_roundtrip_ms: 21.76,
         algorithmic_latency_samples: 0,
+        pitch_wet_latency_ms: 0.0,
     };
     *ctx.audio_telemetry.lock().unwrap() = Some(tele);
 

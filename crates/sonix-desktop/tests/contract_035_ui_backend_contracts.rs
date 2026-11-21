@@ -53,6 +53,7 @@ fn build_ctx() -> ApiContext {
             measured_roundtrip_ms: None,
             estimated_roundtrip_ms: 5.34,
             algorithmic_latency_samples: 0,
+            pitch_wet_latency_ms: 0.0,
         }))),
         Arc::new(Mutex::new(AppState::default())),
         Arc::new(TelemetryBuffer::new(256)),

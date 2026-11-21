@@ -97,10 +97,15 @@ fn test_ca_04_pitch_declared_latency_matches_measured_impulse() {
     p.set_semitones(0.0);
     p.set_mix_pct(100.0);
 
-    let declared = p.algorithmic_latency_samples();
-    assert!(declared > 0, "CA-4: Latência algorítmica ativa deve ser > 0");
+    assert_eq!(
+        p.algorithmic_latency_samples(),
+        0,
+        "CA-4: Caminho seco do Pitch tem latência algorítmica 0"
+    );
+    let wet_lat = p.wet_latency_samples();
+    assert!(wet_lat > 0, "CA-4: Latência wet ativa deve ser > 0");
 
-    let n = declared + 512;
+    let n = wet_lat + 512;
     let mut imp = vec![0.0f32; n];
     imp[0] = 1.0;
     let mut out = vec![0.0f32; n];
@@ -113,8 +118,8 @@ fn test_ca_04_pitch_declared_latency_matches_measured_impulse() {
         .unwrap()
         .0;
     assert!(
-        (peak_idx as isize - declared as isize).abs() <= 1,
-        "CA-4: Latência medida ({peak_idx}) diverge da declarada ({declared})"
+        (peak_idx as isize - wet_lat as isize).abs() <= 1,
+        "CA-4: Latência wet medida ({peak_idx}) diverge da declarada ({wet_lat})"
     );
 }
 

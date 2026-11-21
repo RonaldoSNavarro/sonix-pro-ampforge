@@ -99,8 +99,13 @@ fn test_ca_06_realtime_chain_pitch_1_shifts_and_bypasses() {
 
     assert_eq!(
         chain.algorithmic_latency_samples(),
-        base_lat + 1024,
-        "CA-6: pitch_1 ativo deve somar latência algorítmica declarada"
+        base_lat,
+        "CA-6: pitch_1 tem caminho seco sem atraso (algorithmic_latency_samples inalterado)"
+    );
+    assert!(
+        chain.pitch_wet_latency_ms() > 10.0,
+        "CA-6: pitch_1 ativo deve expor pitch_wet_latency_ms > 10 ms (obteve {})",
+        chain.pitch_wet_latency_ms()
     );
 
     let n = 16384;
@@ -123,7 +128,8 @@ fn test_ca_06_realtime_chain_pitch_1_shifts_and_bypasses() {
         "CA-6: RealtimeDspChain com pitch_1=+12 deve produzir 440 Hz +/- 5 cents (obteve {f_out:.2} Hz)"
     );
 
-    // Bypass deve zerar latência do pitch e passar o sinal 220 Hz sem transposição
+    // Bypass deve zerar latência wet do pitch e manter latência algorítmica base
     chain.apply_param_update(DspParamUpdate::Pitch1Enabled(false));
     assert_eq!(chain.algorithmic_latency_samples(), base_lat);
+    assert_eq!(chain.pitch_wet_latency_ms(), 0.0);
 }
