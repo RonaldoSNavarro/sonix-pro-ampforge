@@ -196,9 +196,3 @@ fn ca21_plugin_process_zero_alloc_for_10s_with_automation() {
     assert_eq!(ALLOC_COUNT.with(|c| c.get()), 0, "CA-21: zero alocações no process");
     assert_eq!(DEALLOC_COUNT.with(|c| c.get()), 0, "CA-21: zero desalocações no process");
 }
-
-#[test]
-fn ca22_plugin_editor_uses_ipc_webview_without_http_server() {
-    assert!(!SonixProPlugin::has_http_server(), "CA-22: binário do plugin não deve conter dev-http");
-    assert!(SonixProPlugin::uses_embedded_webview_ipc(), "CA-22: editor deve usar WebView via IPC");
-}

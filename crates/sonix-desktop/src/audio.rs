@@ -3233,6 +3233,11 @@ impl RealtimeDspChain {
         self.channel_process_counts
     }
 
+    pub fn set_compiled_modifiers(&mut self, table: CompiledModifierTable) {
+        self.active_modifiers = Box::new(table);
+        self.modifier_outputs = [0.0; 16];
+    }
+
     pub fn set_modifier_source_value(&mut self, src: CompiledModifierSource, val: f32) {
         let v = val.clamp(0.0, 1.0);
         match src {
@@ -4674,7 +4679,9 @@ impl RealtimeDspChain {
     }
 
     pub fn set_dly_1_tempo_bpm(&mut self, bpm: f32) {
-        self.dly_1.set_tempo_bpm(bpm);
+        let clamped = bpm.clamp(20.0, 300.0);
+        self.dly_1.set_tempo_bpm(clamped);
+        self.dly_1.set_delay_time_ms(60_000.0 / clamped);
     }
 
     pub fn dly_1_tempo_bpm(&self) -> f32 {

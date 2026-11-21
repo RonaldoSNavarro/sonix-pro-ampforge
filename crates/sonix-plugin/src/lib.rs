@@ -43,6 +43,7 @@ pub struct SonixPluginProcessor {
     descriptor: PluginDescriptor,
     chain: RealtimeDspChain,
     sample_rate: f32,
+    stereo_input: bool,
     preset_name: String,
     tempo_bpm: f32,
     host_tempo_sync: bool,
@@ -50,6 +51,8 @@ pub struct SonixPluginProcessor {
     amp_1_gain: f32,
     dly_1_enabled: bool,
     doc: SonixPresetDoc,
+    in_scratch: Vec<f32>,
+    out_scratch: Vec<f32>,
 }
 
 impl SonixPluginProcessor {
@@ -100,6 +103,7 @@ impl SonixPluginProcessor {
             },
             chain,
             sample_rate: 48000.0,
+            stereo_input: true,
             preset_name: "Default Stadium Rig".to_string(),
             tempo_bpm: 120.0,
             host_tempo_sync: false,
@@ -107,12 +111,37 @@ impl SonixPluginProcessor {
             amp_1_gain: 5.0,
             dly_1_enabled: false,
             doc,
+            in_scratch: vec![0.0; 4096],
+            out_scratch: vec![0.0; 4096],
         }
     }
 
     pub fn prepare(&mut self, sample_rate: f32, block_size: usize) {
         self.sample_rate = sample_rate.max(8000.0);
+        let scratch_len = block_size.max(512);
+        if self.in_scratch.len() < scratch_len {
+            self.in_scratch.resize(scratch_len, 0.0);
+            self.out_scratch.resize(scratch_len, 0.0);
+        }
         self.chain.prepare(self.sample_rate, block_size);
+    }
+
+    pub fn compile_default_modifiers(&mut self) {
+        let raw = DesktopMidiHost::default_midi_modifiers();
+        let dtos: Vec<sonix_desktop::params::ModifierBindingDto> = raw
+            .into_iter()
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect();
+        let table = sonix_desktop::api::compile_modifiers_table(&dtos);
+        self.chain.set_compiled_modifiers(table);
+    }
+
+    pub fn set_stereo_input(&mut self, stereo: bool) {
+        self.stereo_input = stereo;
+    }
+
+    pub fn latency_samples(&self) -> u32 {
+        self.chain.algorithmic_latency_samples()
     }
 
     pub fn format(&self) -> PluginFormat {
@@ -305,6 +334,182 @@ impl SonixPluginProcessor {
         self.chain.process(in_l, out_l);
         out_r.copy_from_slice(out_l);
     }
+
+    #[inline]
+    fn apply_plugin_params(
+        &mut self,
+        params: &PluginParamValues,
+        midi_ccs: &[(u8, f32)],
+        transport_bpm: Option<f64>,
+    ) {
+        if params.host_tempo_sync {
+            if let Some(bpm) = transport_bpm {
+                if bpm.is_finite() && bpm > 0.0 {
+                    self.chain.set_dly_1_tempo_bpm(bpm as f32);
+                }
+            }
+        }
+        for &(cc, value) in midi_ccs {
+            self.chain
+                .set_modifier_source_value(CompiledModifierSource::MidiCc(cc), value);
+        }
+
+        self.chain.set_amp_gain(params.amp_gain);
+        self.chain.set_amp_bass(params.amp_bass);
+        self.chain.set_amp_middle(params.amp_middle);
+        self.chain.set_amp_treble(params.amp_treble);
+        self.chain.set_amp_master(params.amp_master);
+        self.chain.set_amp_presence(params.amp_presence);
+        self.chain.set_gate_threshold_db(params.gate_threshold_db);
+        self.chain.set_dly_1_enabled(params.dly_intensity > 0.001);
+        self.chain.set_dly_1_intensity(params.dly_intensity);
+        self.chain.set_rev_1_enabled(params.rev_mix > 0.001);
+        self.chain.set_rev_1_mix(params.rev_mix * 100.0);
+        self.chain.set_cab_enabled(params.cab_enabled);
+    }
+
+    pub fn process_block(
+        &mut self,
+        in_l: &[f32],
+        in_r: Option<&[f32]>,
+        out_l: &mut [f32],
+        out_r: &mut [f32],
+        params: &PluginParamValues,
+        midi_ccs: &[(u8, f32)],
+        transport_bpm: Option<f64>,
+    ) {
+        let n = in_l
+            .len()
+            .min(out_l.len())
+            .min(out_r.len())
+            .min(self.in_scratch.len());
+        if n == 0 {
+            return;
+        }
+        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.apply_plugin_params(params, midi_ccs, transport_bpm);
+            if self.stereo_input {
+                if let Some(r) = in_r {
+                    let rn = r.len().min(n);
+                    for i in 0..rn {
+                        self.in_scratch[i] = 0.5 * (in_l[i] + r[i]);
+                    }
+                    if rn < n {
+                        self.in_scratch[rn..n].copy_from_slice(&in_l[rn..n]);
+                    }
+                } else {
+                    self.in_scratch[..n].copy_from_slice(&in_l[..n]);
+                }
+            } else {
+                self.in_scratch[..n].copy_from_slice(&in_l[..n]);
+            }
+            self.chain
+                .process(&self.in_scratch[..n], &mut self.out_scratch[..n]);
+            out_l[..n].copy_from_slice(&self.out_scratch[..n]);
+            out_r[..n].copy_from_slice(&self.out_scratch[..n]);
+        }));
+        if ok.is_err() {
+            out_l[..n].fill(0.0);
+            out_r[..n].fill(0.0);
+        }
+    }
+
+    pub fn process_block_in_place(
+        &mut self,
+        ch0: &mut [f32],
+        mut ch1: Option<&mut [f32]>,
+        params: &PluginParamValues,
+        midi_ccs: &[(u8, f32)],
+        transport_bpm: Option<f64>,
+    ) {
+        let n = ch0.len().min(self.in_scratch.len());
+        if n == 0 {
+            return;
+        }
+        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.apply_plugin_params(params, midi_ccs, transport_bpm);
+            if self.stereo_input {
+                if let Some(r) = ch1.as_deref() {
+                    let rn = r.len().min(n);
+                    for i in 0..rn {
+                        self.in_scratch[i] = 0.5 * (ch0[i] + r[i]);
+                    }
+                    if rn < n {
+                        self.in_scratch[rn..n].copy_from_slice(&ch0[rn..n]);
+                    }
+                } else {
+                    self.in_scratch[..n].copy_from_slice(&ch0[..n]);
+                }
+            } else {
+                self.in_scratch[..n].copy_from_slice(&ch0[..n]);
+            }
+            self.chain
+                .process(&self.in_scratch[..n], &mut self.out_scratch[..n]);
+            ch0[..n].copy_from_slice(&self.out_scratch[..n]);
+            if let Some(r) = ch1.as_deref_mut() {
+                let rn = r.len().min(n);
+                r[..rn].copy_from_slice(&self.out_scratch[..rn]);
+            }
+        }));
+        if ok.is_err() {
+            ch0[..n].fill(0.0);
+            if let Some(r) = ch1 {
+                let rn = r.len().min(n);
+                r[..rn].fill(0.0);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PluginParamValues {
+    pub amp_gain: f32,
+    pub amp_bass: f32,
+    pub amp_middle: f32,
+    pub amp_treble: f32,
+    pub amp_master: f32,
+    pub amp_presence: f32,
+    pub gate_threshold_db: f32,
+    pub dly_intensity: f32,
+    pub rev_mix: f32,
+    pub cab_enabled: bool,
+    pub host_tempo_sync: bool,
+}
+
+impl Default for PluginParamValues {
+    fn default() -> Self {
+        Self {
+            amp_gain: 5.0,
+            amp_bass: 5.0,
+            amp_middle: 5.0,
+            amp_treble: 5.0,
+            amp_master: 5.0,
+            amp_presence: 5.0,
+            gate_threshold_db: -50.0,
+            dly_intensity: 3.5,
+            rev_mix: 0.25,
+            cab_enabled: true,
+            host_tempo_sync: false,
+        }
+    }
+}
+
+impl From<&SonixPluginParams> for PluginParamValues {
+    fn from(p: &SonixPluginParams) -> Self {
+        Self {
+            amp_gain: p.amp_gain.value(),
+            amp_bass: p.amp_bass.value(),
+            amp_middle: p.amp_middle.value(),
+            amp_treble: p.amp_treble.value(),
+            amp_master: p.amp_master.value(),
+            amp_presence: p.amp_presence.value(),
+            gate_threshold_db: p.gate_threshold_db.value(),
+            dly_intensity: p.dly_intensity.value(),
+            rev_mix: p.rev_mix.value(),
+            cab_enabled: p.cab_enabled.value(),
+            host_tempo_sync: p.host_tempo_sync.value(),
+        }
+    }
 }
 
 /// Parâmetros automatizáveis do plugin (nih-plug) alinhados com a tabela única da Spec 014.
@@ -359,20 +564,16 @@ impl Default for SonixPluginParams {
 
 pub struct SonixProPlugin {
     params: Arc<SonixPluginParams>,
-    chain: RealtimeDspChain,
-    in_scratch: Vec<f32>,
-    out_scratch: Vec<f32>,
+    processor: SonixPluginProcessor,
 }
 
 impl Default for SonixProPlugin {
     fn default() -> Self {
-        let mut chain = RealtimeDspChain::new(48000.0);
-        chain.prepare(48000.0, 512);
+        let mut processor = SonixPluginProcessor::new(PluginFormat::Vst3);
+        processor.prepare(48000.0, 512);
         Self {
             params: Arc::new(SonixPluginParams::default()),
-            chain,
-            in_scratch: vec![0.0; 4096],
-            out_scratch: vec![0.0; 4096],
+            processor,
         }
     }
 }
@@ -392,10 +593,6 @@ impl SonixProPlugin {
 
     pub fn has_http_server() -> bool {
         false
-    }
-
-    pub fn uses_embedded_webview_ipc() -> bool {
-        true
     }
 
     pub fn registered_param_ids() -> Vec<String> {
@@ -437,13 +634,22 @@ impl Plugin for SonixProPlugin {
     const EMAIL: &'static str = "support@sonixpro.local";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
-        main_input_channels: NonZeroU32::new(2),
-        main_output_channels: NonZeroU32::new(2),
-        aux_input_ports: &[],
-        aux_output_ports: &[],
-        names: PortNames::const_default(),
-    }];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
+        AudioIOLayout {
+            main_input_channels: NonZeroU32::new(2),
+            main_output_channels: NonZeroU32::new(2),
+            aux_input_ports: &[],
+            aux_output_ports: &[],
+            names: PortNames::const_default(),
+        },
+        AudioIOLayout {
+            main_input_channels: NonZeroU32::new(1),
+            main_output_channels: NonZeroU32::new(2),
+            aux_input_ports: &[],
+            aux_output_ports: &[],
+            names: PortNames::const_default(),
+        },
+    ];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
@@ -457,16 +663,19 @@ impl Plugin for SonixProPlugin {
 
     fn initialize(
         &mut self,
-        _audio_io_layout: &AudioIOLayout,
+        audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        context: &mut impl InitContext<Self>,
     ) -> bool {
         let max_buf = (buffer_config.max_buffer_size as usize).max(512);
-        if self.in_scratch.len() < max_buf {
-            self.in_scratch.resize(max_buf, 0.0);
-            self.out_scratch.resize(max_buf, 0.0);
-        }
-        self.chain.prepare(buffer_config.sample_rate, max_buf);
+        self.processor.prepare(buffer_config.sample_rate, max_buf);
+        self.processor.compile_default_modifiers();
+        let stereo_in = audio_io_layout
+            .main_input_channels
+            .map(|c| c.get() >= 2)
+            .unwrap_or(false);
+        self.processor.set_stereo_input(stereo_in);
+        context.set_latency_samples(self.processor.latency_samples());
         true
     }
 
@@ -476,39 +685,37 @@ impl Plugin for SonixProPlugin {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        if self.params.host_tempo_sync.value() {
-            if let Some(bpm) = context.transport().tempo {
-                self.chain.set_dly_1_tempo_bpm(bpm as f32);
-            }
-        }
+        let mut midi_ccs = [(0u8, 0.0_f32); 256];
+        let mut midi_count = 0usize;
         while let Some(event) = context.next_event() {
             if let NoteEvent::MidiCC { cc, value, .. } = event {
-                self.chain
-                    .set_modifier_source_value(CompiledModifierSource::MidiCc(cc), value);
-                let _ = DesktopMidiHost::default_midi_modifiers();
+                if midi_count < midi_ccs.len() {
+                    midi_ccs[midi_count] = (cc, value);
+                    midi_count += 1;
+                }
             }
         }
 
-        self.chain.set_amp_gain(self.params.amp_gain.smoothed.next());
-        self.chain.set_amp_bass(self.params.amp_bass.smoothed.next());
-        self.chain.set_amp_middle(self.params.amp_middle.smoothed.next());
-        self.chain.set_amp_treble(self.params.amp_treble.smoothed.next());
-        self.chain.set_amp_master(self.params.amp_master.smoothed.next());
-        self.chain.set_amp_presence(self.params.amp_presence.smoothed.next());
-        self.chain
-            .set_gate_threshold_db(self.params.gate_threshold_db.smoothed.next());
-        self.chain
-            .set_dly_1_intensity(self.params.dly_intensity.smoothed.next());
-        self.chain.set_cab_enabled(self.params.cab_enabled.value());
-
-        let samples = buffer.samples().min(self.in_scratch.len());
+        let param_vals = PluginParamValues::from(self.params.as_ref());
+        let transport_bpm = context.transport().tempo;
         let slices = buffer.as_slice();
         if slices.len() >= 2 {
-            self.in_scratch[..samples].copy_from_slice(&slices[0][..samples]);
-            self.chain
-                .process(&self.in_scratch[..samples], &mut self.out_scratch[..samples]);
-            slices[0][..samples].copy_from_slice(&self.out_scratch[..samples]);
-            slices[1][..samples].copy_from_slice(&self.out_scratch[..samples]);
+            let (head, tail) = slices.split_at_mut(1);
+            self.processor.process_block_in_place(
+                head[0],
+                Some(tail[0]),
+                &param_vals,
+                &midi_ccs[..midi_count],
+                transport_bpm,
+            );
+        } else if slices.len() == 1 {
+            self.processor.process_block_in_place(
+                slices[0],
+                None,
+                &param_vals,
+                &midi_ccs[..midi_count],
+                transport_bpm,
+            );
         }
         ProcessStatus::Normal
     }

@@ -81,7 +81,7 @@ Modelagem rigorosa dos esquemas elétricos originais:
 │   ├── ampforge-dsp/               # Motor DSP de tempo real (White-Box, solvers, FX, IR)
 │   ├── sonix-core/                 # Estruturas fundamentais, schemas JSON e persistência offline
 │   ├── sonix-desktop/              # Host desktop, drivers de áudio (WASAPI/ASIO) e MIDI
-│   └── sonix-plugin/               # Plugins de áudio DAW VST3 e CLAP (via nih-plug)
+│   └── sonix-plugin/               # Plugins de áudio DAW VST3 e CLAP (via nih-plug; sem editor próprio; usa a interface genérica de parâmetros do host)
 ├── docs/                           # Documentação arquitetural, levantamento de requisitos e referências visuais
 ├── specs/                          # Especificações formais SDD (Specs 001 a 050)
 └── tests/                          # Testes de contrato automatizados de ponta a ponta (E2E / JS)
