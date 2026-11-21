@@ -113,3 +113,53 @@ test('AUD-08: todo controle de amp declara models; a tela Main só renderiza os 
     screen.remove();
   }
 });
+
+test('AUD-09: toda backendKey do registro existe em params.generated.ts', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const genPath = path.join(root, 'apps', 'sonix-app', 'ui', 'src', 'params.generated.ts');
+  assert.ok(
+    fs.existsSync(genPath),
+    `AUD-09: ${genPath} não existe ainda`,
+  );
+
+  const regSrc = fs.readFileSync(
+    path.join(root, 'apps', 'sonix-app', 'ui', 'src', 'controls.registry.ts'),
+    'utf8',
+  );
+  assert.ok(
+    regSrc.includes('./params.generated.ts'),
+    'AUD-09: controls.registry.ts deve importar de ./params.generated.ts',
+  );
+
+  const { PARAMS_SCHEMA } = await import('../../apps/sonix-app/ui/src/params.generated.ts');
+  assert.ok(PARAMS_SCHEMA && typeof PARAMS_SCHEMA === 'object');
+
+  const withBackend = CONTROLS_REGISTRY.filter((c) => c.backendKey !== null);
+  assert.ok(withBackend.length > 0);
+  for (const desc of withBackend) {
+    const schema = PARAMS_SCHEMA[desc.backendKey];
+    assert.ok(
+      schema,
+      `AUD-09: controle '${desc.id}' referencia backendKey '${desc.backendKey}' ausente de params.generated.ts`,
+    );
+    assert.equal(
+      desc.type,
+      schema.type,
+      `AUD-09: '${desc.id}' type=${desc.type} diverge de params.generated.ts (${schema.type})`,
+    );
+    assert.deepEqual(
+      desc.defaultValue,
+      schema.defaultValue,
+      `AUD-09: '${desc.id}' defaultValue diverge de params.generated.ts`,
+    );
+    if (schema.type === 'number') {
+      assert.deepEqual(desc.range, schema.range, `AUD-09: '${desc.id}' range diverge`);
+      assert.equal(desc.step, schema.step, `AUD-09: '${desc.id}' step diverge`);
+    }
+    if (schema.type === 'enum') {
+      assert.deepEqual(desc.options, schema.options, `AUD-09: '${desc.id}' options diverge`);
+    }
+  }
+});

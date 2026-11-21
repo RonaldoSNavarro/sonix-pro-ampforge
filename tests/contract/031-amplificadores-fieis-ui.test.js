@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { CONTROLS_REGISTRY } from '../../apps/sonix-app/ui/src/controls.registry.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
 
@@ -29,7 +30,10 @@ describe('Spec 031 — CA-8: Painel frontal fiel por modelo na UI e registro ún
       'amp_1.impedance_ohms',
     ];
     for (const k of requiredKeys) {
-      assert.match(src, new RegExp(`backendKey:\\s*'${k.replace('.', '\\.')}'`), `Falta ${k} no registro`);
+      assert.ok(
+        CONTROLS_REGISTRY.some((c) => c.backendKey === k),
+        `Falta ${k} no registro`,
+      );
     }
 
     // Depois da implementação da Spec 031, nenhum item pode permanecer marcado com pendingSpec: '031'

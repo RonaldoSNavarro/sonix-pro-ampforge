@@ -2353,7 +2353,7 @@ pub enum DspParamUpdate {
     MergeRow1PhaseInvert(bool),
     Comp2Enabled(bool),
     Comp2ThresholdDb(f32),
-    Comp2Ratio(f32),
+    Comp2Ratio { ratio: f32, all_buttons: bool },
     Comp2AttackMs(f32),
     Comp2ReleaseMs(f32),
     Comp2MakeupGainDb(f32),
@@ -2381,8 +2381,9 @@ pub enum DspParamUpdate {
     TunerOutputMode(TunerOutputMode),
     // Spec 032 / 033: Controles adicionais em fila SPSC lock-free
     DriveBias(f32),
-    Comp2Output(f32),
-    Comp2AllButtons(bool),
+    ActiveScene(u8),
+    FootswitchMode(u8),
+    Dly1Heads(u8),
     Eq1Mode(EqMode),
     Eq1BandFreq(usize, f32),
     Eq1BandGain(usize, f32),
@@ -2850,6 +2851,9 @@ pub struct RealtimeDspChain {
     lfo1_phase: f32,
     lfo2_phase: f32,
     env_follower: f32,
+    active_scene: u8,
+    footswitch_mode: u8,
+    dly_1_heads: u8,
 }
 
 impl RealtimeDspChain {
@@ -3118,6 +3122,9 @@ impl RealtimeDspChain {
             lfo1_phase: 0.0,
             lfo2_phase: 0.0,
             env_follower: 0.0,
+            active_scene: 0,
+            footswitch_mode: 3,
+            dly_1_heads: 1,
         }
     }
 
@@ -3568,10 +3575,13 @@ impl RealtimeDspChain {
             }
             DspParamUpdate::Comp2Enabled(b) => self.set_comp_2_enabled(b),
             DspParamUpdate::Comp2ThresholdDb(th) => self.comp_2.set_threshold_db(th),
-            DspParamUpdate::Comp2Ratio(r) => self.comp_2.set_ratio(r),
+            DspParamUpdate::Comp2Ratio { ratio, all_buttons } => {
+                self.comp_2.set_ratio(ratio);
+                self.comp_2.set_all_buttons_in(all_buttons);
+            }
             DspParamUpdate::Comp2AttackMs(att) => self.comp_2.set_attack_ms(att),
             DspParamUpdate::Comp2ReleaseMs(rel) => self.comp_2.set_release_ms(rel),
-            DspParamUpdate::Comp2MakeupGainDb(gain) => self.set_comp_2_output(gain),
+            DspParamUpdate::Comp2MakeupGainDb(gain_db) => self.comp_2.set_makeup_gain_db(gain_db),
             DspParamUpdate::Eq1Enabled(b) => self.set_eq_1_enabled(b),
             DspParamUpdate::Mod2Enabled(b) => self.set_mod_2_enabled(b),
             DspParamUpdate::Mod2Model(m) => self.set_mod_2_model(m),
@@ -3660,8 +3670,9 @@ impl RealtimeDspChain {
             DspParamUpdate::TunerEnabled(b) => self.set_tuner_enabled(b),
             DspParamUpdate::TunerOutputMode(m) => self.set_tuner_output_mode(m),
             DspParamUpdate::DriveBias(b) => self.set_drive_bias(b),
-            DspParamUpdate::Comp2Output(out) => self.set_comp_2_output(out),
-            DspParamUpdate::Comp2AllButtons(all) => self.comp_2.set_all_buttons_in(all),
+            DspParamUpdate::ActiveScene(idx) => self.active_scene = idx,
+            DspParamUpdate::FootswitchMode(m) => self.footswitch_mode = m,
+            DspParamUpdate::Dly1Heads(h) => self.dly_1_heads = h,
             DspParamUpdate::Eq1Mode(m) => self.eq_1.set_mode(m),
             DspParamUpdate::Eq1BandFreq(idx, freq_hz) => {
                 if idx < 10 {
@@ -3791,6 +3802,9 @@ impl RealtimeDspChain {
         std::mem::swap(&mut self.wah_1, &mut other.wah_1);
         std::mem::swap(&mut self.wah_1_enabled, &mut other.wah_1_enabled);
         std::mem::swap(&mut self.modifier_base_values, &mut other.modifier_base_values);
+        std::mem::swap(&mut self.active_scene, &mut other.active_scene);
+        std::mem::swap(&mut self.footswitch_mode, &mut other.footswitch_mode);
+        std::mem::swap(&mut self.dly_1_heads, &mut other.dly_1_heads);
     }
 
     pub fn begin_preset_crossfade(&mut self) {
@@ -4465,42 +4479,6 @@ impl RealtimeDspChain {
 
     pub fn set_comp_2_enabled(&mut self, enabled: bool) {
         self.comp_2_enabled = enabled;
-    }
-
-    pub fn set_comp_2_input(&mut self, input: f32) {
-        let pre_gain_db = (input.clamp(0.0, 10.0) - 5.0) * 4.0;
-        self.comp_2.set_threshold_db(-20.0 - pre_gain_db);
-    }
-
-    pub fn set_comp_2_output(&mut self, output: f32) {
-        if !output.is_finite() { return; }
-        let gain_db = (output.clamp(0.0, 10.0) - 5.0) * 4.8;
-        self.comp_2.set_makeup_gain_db(gain_db);
-    }
-
-    pub fn set_comp_2_attack(&mut self, att: f32) {
-        let att_clamped = att.clamp(1.0, 7.0);
-        let attack_ms = 0.8f32 * (0.02f32 / 0.8f32).powf((att_clamped - 1.0) / 6.0);
-        self.comp_2.set_attack_ms(attack_ms);
-    }
-
-    pub fn set_comp_2_release(&mut self, rel: f32) {
-        let rel_clamped = rel.clamp(1.0, 7.0);
-        let release_ms = 1100.0f32 * (50.0f32 / 1100.0f32).powf((rel_clamped - 1.0) / 6.0);
-        self.comp_2.set_release_ms(release_ms);
-    }
-
-    pub fn set_comp_2_ratio(&mut self, ratio_str: &str) {
-        let (r, all_in) = match ratio_str {
-            "4" => (4.0, false),
-            "8" => (8.0, false),
-            "12" => (12.0, false),
-            "20" => (20.0, false),
-            "all" => (20.0, true),
-            _ => (4.0, false),
-        };
-        self.comp_2.set_ratio(r);
-        self.comp_2.set_all_buttons_in(all_in);
     }
 
     pub fn set_eq_1_enabled(&mut self, enabled: bool) {

@@ -314,3 +314,208 @@ fn aud_08_preset_descarta_chave_inexistente() {
         );
     }
 }
+
+#[test]
+fn aud_09_toda_chave_ida_e_volta() {
+    use sonix_desktop::params::{ParamDefault, ParamKind, PARAMS};
+    use std::collections::HashSet;
+
+    assert!(
+        !PARAMS.is_empty(),
+        "AUD-09: tabela única sonix_desktop::params::PARAMS não pode estar vazia"
+    );
+
+    let mut seen_keys = HashSet::new();
+    for desc in PARAMS {
+        assert!(
+            seen_keys.insert(desc.key),
+            "AUD-09: chave duplicada em PARAMS: {}",
+            desc.key
+        );
+        for &alias in desc.aliases {
+            assert!(
+                seen_keys.insert(alias),
+                "AUD-09: alias duplicado em PARAMS: {} -> {}",
+                alias,
+                desc.key
+            );
+        }
+
+        let dir = TempDirGuard::new("sonix_aud09_roundtrip");
+        let (ctx, _) = make_ctx_with_data_dir(dir.path.clone());
+        let pq = ctx.param_queue.as_ref().expect("param_queue deve existir");
+        while pq.pop().is_some() {}
+
+        if let Some(allowed) = desc.models {
+            assert!(!allowed.is_empty());
+            let (m_code, m_body) = post_params(
+                &ctx,
+                &serde_json::json!({ "amp_1.model": allowed[0].as_str() }).to_string(),
+            );
+            assert_eq!(
+                m_code, 200,
+                "AUD-09: falha ao selecionar modelo {:?} para {}: {}",
+                allowed[0], desc.key, m_body
+            );
+            while pq.pop().is_some() {}
+        }
+
+        let test_val: serde_json::Value = match (desc.kind, desc.default) {
+            (ParamKind::Bool, ParamDefault::Bool(def)) => serde_json::json!(!def),
+            (ParamKind::Number { min, max, step }, ParamDefault::Number(def)) => {
+                let candidate = if (def - min).abs() > step.max(1e-3) {
+                    min
+                } else {
+                    max
+                };
+                serde_json::json!(candidate)
+            }
+            (ParamKind::Enum(opts), ParamDefault::Enum(def)) => {
+                let chosen = opts
+                    .iter()
+                    .copied()
+                    .find(|&o| o != def)
+                    .unwrap_or(opts[0]);
+                serde_json::json!(chosen)
+            }
+            _ => panic!("AUD-09: kind/default inconsistentes para {}", desc.key),
+        };
+
+        let payload = serde_json::json!({ (desc.key): test_val });
+        let (code, body) = post_params(&ctx, &payload.to_string());
+        assert_eq!(
+            code, 200,
+            "AUD-09: POST /api/params falhou para {}={}: {}",
+            desc.key, test_val, body
+        );
+        let resp_json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let applied = resp_json["applied"]
+            .as_array()
+            .expect("resposta deve conter array applied");
+        assert!(
+            applied.iter().any(|v| v == desc.key),
+            "AUD-09: chave '{}' deveria constar em applied ({:?})",
+            desc.key,
+            resp_json
+        );
+
+        let mut drained = Vec::new();
+        while let Some(u) = pq.pop() {
+            drained.push(u);
+        }
+        assert_eq!(
+            drained.len(),
+            1,
+            "AUD-09: chave '{}' deve emitir exatamente 1 DspParamUpdate (emitiu {}: {:?})",
+            desc.key,
+            drained.len(),
+            drained
+        );
+
+        let (st_code, _, st_bytes) = dispatch(&ctx, "/api/state", "GET", b"");
+        assert_eq!(st_code, 200);
+        let st_json: serde_json::Value = serde_json::from_slice(&st_bytes).unwrap();
+        let actual = st_json
+            .get(desc.key)
+            .unwrap_or_else(|| panic!("AUD-09: chave '{}' ausente em GET /api/state", desc.key));
+
+        match (&test_val, actual) {
+            (serde_json::Value::Number(e), serde_json::Value::Number(a)) => {
+                let ef = e.as_f64().unwrap();
+                let af = a.as_f64().unwrap();
+                assert!(
+                    (ef - af).abs() < 1e-4,
+                    "AUD-09: round-trip {} esperado {}, obtido {}",
+                    desc.key,
+                    ef,
+                    af
+                );
+            }
+            _ => {
+                assert_eq!(
+                    actual, &test_val,
+                    "AUD-09: round-trip {} esperado {}, obtido {}",
+                    desc.key, test_val, actual
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn aud_09_ts_gerado_em_dia() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ts_path = manifest_dir
+        .join("..")
+        .join("..")
+        .join("apps")
+        .join("sonix-app")
+        .join("ui")
+        .join("src")
+        .join("params.generated.ts");
+
+    assert!(
+        ts_path.exists(),
+        "AUD-09: arquivo gerado '{}' não existe; rode `cargo run -p sonix-desktop --example gerar_params_ts`",
+        ts_path.display()
+    );
+
+    let disk = std::fs::read_to_string(&ts_path)
+        .expect("falha ao ler params.generated.ts")
+        .replace("\r\n", "\n");
+    let generated = sonix_desktop::params::render_params_ts().replace("\r\n", "\n");
+    assert!(
+        !generated.trim().is_empty(),
+        "AUD-09: render_params_ts() não pode retornar vazio"
+    );
+    assert_eq!(
+        disk, generated,
+        "AUD-09: params.generated.ts está desatualizado em relação a PARAMS"
+    );
+}
+
+#[test]
+fn aud_09_lint_sem_literais_de_params_em_api_rs() {
+    use sonix_desktop::params::PARAMS;
+
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let api_src = std::fs::read_to_string(manifest_dir.join("src").join("api.rs"))
+        .expect("falha ao ler api.rs");
+    let audio_src = std::fs::read_to_string(manifest_dir.join("src").join("audio.rs"))
+        .expect("falha ao ler audio.rs");
+
+    assert!(
+        !PARAMS.is_empty(),
+        "AUD-09 lint: PARAMS vazia"
+    );
+    assert!(
+        !api_src.contains("json_kv_to_dsp_updates") && !api_src.contains("validate_preset_param_kv"),
+        "AUD-09 lint: matches paralelos antigos ainda existem em api.rs"
+    );
+    assert!(
+        !audio_src.contains("set_comp_2_input") && !audio_src.contains("0.8f32 * (0.02f32 / 0.8f32)"),
+        "AUD-09 lint: conversão duplicada do 1176 ainda existe em audio.rs"
+    );
+    assert!(
+        !api_src.contains("\"eq_1.band\""),
+        "AUD-09 lint: prefixo literal \"eq_1.band\" proibido em api.rs"
+    );
+
+    for desc in PARAMS {
+        let needle = format!("\"{}\"", desc.key);
+        assert!(
+            !api_src.contains(&needle),
+            "AUD-09 lint: literal {} encontrado em api.rs",
+            needle
+        );
+        for &alias in desc.aliases {
+            let alias_needle = format!("\"{}\"", alias);
+            assert!(
+                !api_src.contains(&alias_needle),
+                "AUD-09 lint: alias literal {} encontrado em api.rs",
+                alias_needle
+            );
+        }
+    }
+}
+

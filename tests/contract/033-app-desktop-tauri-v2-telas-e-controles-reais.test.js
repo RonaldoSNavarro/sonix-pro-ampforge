@@ -58,18 +58,21 @@ test('CA-4: controls.registry.ts e inventario existem sem controles pendentes e 
   }
   assert.ok(CONTROLS_REGISTRY.length >= 100, 'Registro deve cobrir todos os parâmetros reais da UI');
 
-  // Todo backendKey não-ação do registro precisa estar implementado no roteador único api.rs
-  const apiText = fs.readFileSync(path.join(ROOT, 'crates', 'sonix-desktop', 'src', 'api.rs'), 'utf8');
+  // Todo backendKey não-ação do registro precisa estar implementado na tabela única params.rs / api.rs
+  const apiText = [
+    fs.readFileSync(path.join(ROOT, 'crates', 'sonix-desktop', 'src', 'api.rs'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'crates', 'sonix-desktop', 'src', 'params.rs'), 'utf8'),
+  ].join('\n');
   const unmappedKeys = CONTROLS_REGISTRY
     .filter((c) => c.backendKey && !c.backendKey.startsWith('tauri:') && c.backendKey !== 'preset.active')
     .filter((c) => {
       if (/^eq_1\.band([1-9]|10)\.gain_db$/.test(c.backendKey)) {
-        return !apiText.includes('starts_with("eq_1.band")');
+        return !apiText.includes('concat!("eq_1.band"') && !apiText.includes(`"${c.backendKey}"`);
       }
       return !apiText.includes(`"${c.backendKey}"`);
     })
     .map((c) => `${c.id} (${c.backendKey})`);
-  assert.deepEqual(unmappedKeys, [], `Chaves do registro ausentes no api.rs: ${unmappedKeys.join(', ')}`);
+  assert.deepEqual(unmappedKeys, [], `Chaves do registro ausentes em params.rs/api.rs: ${unmappedKeys.join(', ')}`);
 });
 
 test('CA-6 e CA-7: Telas Tauri, painel Marshall fiel e jumper Plexi implementados', () => {

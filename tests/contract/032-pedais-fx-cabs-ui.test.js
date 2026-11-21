@@ -4,9 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const registryPath = path.resolve('apps/sonix-app/ui/src/controls.registry.ts');
+const generatedParamsPath = path.resolve('apps/sonix-app/ui/src/params.generated.ts');
 
 test('Spec 032 — CA-1/CA-7: controls.registry.ts cobre controles originais de Drive, EQ 10-band, 1176LN, RE-201 e Cab sem pendência 032', () => {
-  const src = fs.readFileSync(registryPath, 'utf8');
+  const regSrc = fs.readFileSync(registryPath, 'utf8');
+  const genSrc = fs.existsSync(generatedParamsPath) ? fs.readFileSync(generatedParamsPath, 'utf8') : '';
+  const src = `${regSrc}\n${genSrc}`;
 
   const requiredKeys = [
     'drive.model',
@@ -32,7 +35,7 @@ test('Spec 032 — CA-1/CA-7: controls.registry.ts cobre controles originais de 
   for (const key of requiredKeys) {
     assert.ok(
       src.includes(key),
-      `controls.registry.ts deve registrar a chave Spec 032 "${key}"`,
+      `controls.registry.ts / params.generated.ts deve registrar a chave Spec 032 "${key}"`,
     );
   }
 
@@ -40,7 +43,7 @@ test('Spec 032 — CA-1/CA-7: controls.registry.ts cobre controles originais de 
     assert.ok(src.includes(`'${option}'`), `Opção obrigatória '${option}' ausente`);
   }
 
-  const pending032 = src.match(/pendingSpec:\s*'032'/g) || [];
+  const pending032 = regSrc.match(/pendingSpec:\s*'032'/g) || [];
   assert.equal(
     pending032.length,
     0,

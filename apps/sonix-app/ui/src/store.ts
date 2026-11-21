@@ -244,6 +244,7 @@ export class AppStore {
   private listeners = new Set<StoreListener>();
 
   constructor(transport?: SonixTransport) {
+    this.params['preset.active'] = 'brit800';
     for (const desc of CONTROLS_REGISTRY) {
       if (desc.backendKey && !(desc.backendKey in this.params)) {
         this.params[desc.backendKey] = desc.defaultValue;
