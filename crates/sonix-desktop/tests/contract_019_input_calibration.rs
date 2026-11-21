@@ -329,10 +329,15 @@ fn test_ca_07_post_api_input_di_validation_and_resampling() {
 
 #[test]
 fn test_ca_08_persisted_calibration_per_device_id_loaded_on_boot() {
-    let store = CalibrationStore::default();
-    store.save("device_realtek_p2", 5.5, -48.0);
+    let dir = std::env::temp_dir().join(format!("sonix_019_ca8_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let store = CalibrationStore::open(&dir);
+        store.save("device_realtek_p2", 5.5, -48.0);
+    }
 
-    let server_custom = LocalAppServer::bind_port_with_device(0, Some("device_realtek_p2"), Some(store))
+    let reopened = CalibrationStore::open(&dir);
+    let server_custom = LocalAppServer::bind_port_with_device(0, Some("device_realtek_p2"), Some(reopened))
         .unwrap();
     let port_custom = server_custom.port();
 
@@ -342,12 +347,14 @@ fn test_ca_08_persisted_calibration_per_device_id_loaded_on_boot() {
     assert_eq!(state_custom["gate.threshold_db"], -48.0);
 
     // Dispositivo desconhecido carrega defaults da Spec 014 (boost 2.5, gate -65.0)
-    let server_unknown = LocalAppServer::bind_port_with_device(0, Some("device_unknown"), None).unwrap();
+    let reopened_unknown = CalibrationStore::open(&dir);
+    let server_unknown = LocalAppServer::bind_port_with_device(0, Some("device_unknown"), Some(reopened_unknown)).unwrap();
     let port_unknown = server_unknown.port();
     let (_, _, body_unknown) = http_request(port_unknown, "GET", "/api/state", &[], None);
     let state_unknown: serde_json::Value = serde_json::from_slice(&body_unknown).unwrap();
     assert_eq!(state_unknown["input.boost"], 2.5);
     assert_eq!(state_unknown["gate.threshold_db"], -65.0);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

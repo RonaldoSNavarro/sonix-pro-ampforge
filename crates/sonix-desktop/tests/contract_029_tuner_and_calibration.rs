@@ -146,7 +146,9 @@ fn test_ca_02_low_level_e2_at_96khz_and_white_noise_rejection() {
 #[test]
 fn test_ca_04_and_ca_05_post_api_input_calibrate_live_capture_and_state() {
     let dsp_chain = Arc::new(Mutex::new(RealtimeDspChain::new(48000.0)));
-    let store = CalibrationStore::new();
+    let cal_dir = std::env::temp_dir().join(format!("sonix_029_cal_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cal_dir);
+    let store = CalibrationStore::open(&cal_dir);
     let server = LocalAppServer::bind_port_with_all(
         0,
         Arc::new(TelemetryBuffer::new(512)),

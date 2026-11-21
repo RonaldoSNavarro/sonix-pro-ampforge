@@ -3,7 +3,6 @@
 
 use sonix_desktop::api::{dispatch, ApiContext, AppState};
 use sonix_desktop::audio::{LockFreeParamQueue, RealtimeDspChain, TelemetryBuffer};
-use sonix_desktop::calibration::CalibrationStore;
 use std::sync::{Arc, Mutex};
 
 fn make_ctx() -> ApiContext {
@@ -14,7 +13,7 @@ fn make_ctx() -> ApiContext {
         Some(Arc::new(Mutex::new(RealtimeDspChain::new(48000.0)))),
         Some(Arc::new(LockFreeParamQueue::new())),
         None,
-        Some(CalibrationStore::new()),
+        None,
     )
 }
 

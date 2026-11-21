@@ -8,7 +8,6 @@ use sonix_desktop::audio::{
     AudioStatusTelemetry, DesktopAudioHost, LockFreeParamQueue, RealtimeDspChain,
     RealtimeDuplexEngine, TelemetryBuffer,
 };
-use sonix_desktop::calibration::CalibrationStore;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -21,7 +20,7 @@ fn make_ctx() -> ApiContext {
         Some(dsp),
         Some(Arc::new(LockFreeParamQueue::new())),
         None,
-        Some(CalibrationStore::new()),
+        None,
     )
 }
 

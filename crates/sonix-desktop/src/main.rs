@@ -72,12 +72,18 @@ fn main() {
     let _server = {
         let no_browser = std::env::var("SONIX_NO_BROWSER").map(|v| v == "1").unwrap_or(false);
 
-        let calib_store = sonix_desktop::calibration::CalibrationStore::new();
+        let data_dir = sonix_desktop::calibration::default_sonix_data_dir();
+        let calib_store = sonix_desktop::calibration::CalibrationStore::open(&data_dir);
+        let dev_id = active_streams
+            .as_ref()
+            .map(|s| s.telemetry.input_device.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("default");
         let server = match LocalAppServer::bind_port_with_all(
             7890,
             telemetry.clone(),
             Some(dsp_chain.clone()),
-            Some("default"),
+            Some(dev_id),
             Some(calib_store),
         ) {
             Ok(s) => s,

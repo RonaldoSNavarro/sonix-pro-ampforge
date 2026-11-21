@@ -42,7 +42,7 @@ fn make_ctx_with_data_dir(data_dir: PathBuf) -> (ApiContext, Arc<Mutex<RealtimeD
         Some(dsp.clone()),
         Some(Arc::new(LockFreeParamQueue::new())),
         None,
-        Some(CalibrationStore::new()),
+        Some(CalibrationStore::open(&data_dir)),
     );
     ctx.set_data_dir(data_dir);
     (ctx, dsp)

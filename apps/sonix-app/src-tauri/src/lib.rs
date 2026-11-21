@@ -4,8 +4,9 @@
 pub mod commands;
 pub mod streams;
 
+pub use commands::AppRuntime;
 use commands::{
-    AppRuntime, AudioDeviceConfig, AudioDeviceSupervisor, AudioRuntimeControl, FallbackWorkerControl,
+    AudioDeviceConfig, AudioDeviceSupervisor, AudioRuntimeControl, FallbackWorkerControl,
 };
 use sonix_desktop::api::{ApiContext, AppState};
 use sonix_desktop::audio::{
@@ -60,21 +61,28 @@ impl Drop for RuntimeKeepAlive {
 }
 
 fn build_runtime() -> (AppRuntime, Arc<Mutex<Option<tauri::AppHandle>>>) {
-    let calib_store = CalibrationStore::new();
-    let calib = calib_store.get("default");
-    build_runtime_with_calibration(calib_store, calib, true)
+    build_runtime_with_data_dir(
+        sonix_desktop::calibration::default_sonix_data_dir(),
+        None,
+        true,
+    )
 }
 
-/// Constrói runtime para testes de contrato de inicialização sem abrir hardware WASAPI real (Spec 050, CA-2/CA-4).
-pub fn build_runtime_for_startup_test(calib: Option<(f32, f32)>) -> AppRuntime {
-    build_runtime_with_calibration(CalibrationStore::new(), calib, false).0
+/// Constrói runtime de teste em pasta temporária sem abrir hardware WASAPI real (Spec 050 + AUD-18).
+pub fn build_runtime_for_startup_test_in_dir(
+    data_dir: std::path::PathBuf,
+    device_id: Option<&str>,
+) -> AppRuntime {
+    build_runtime_with_data_dir(data_dir, device_id, false).0
 }
 
-fn build_runtime_with_calibration(
-    calib_store: CalibrationStore,
-    calib: Option<(f32, f32)>,
+/// Constrói runtime persistente em pasta configurável (Spec 050 + AUD-18).
+pub fn build_runtime_with_data_dir(
+    data_dir: std::path::PathBuf,
+    device_id: Option<&str>,
     start_audio_host: bool,
 ) -> (AppRuntime, Arc<Mutex<Option<tauri::AppHandle>>>) {
+    let calib_store = CalibrationStore::open(&data_dir);
     let app_handle_slot: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
     let device_config = Arc::new(Mutex::new(AudioDeviceConfig::default()));
     let audio_telemetry = Arc::new(Mutex::new(None));
@@ -86,27 +94,16 @@ fn build_runtime_with_calibration(
     chain.set_compiled_modifiers(sonix_desktop::api::compile_modifiers_table(
         &initial_state.modifiers,
     ));
+    // Inicia em standby seguro antes de abrir stream de hardware; desativa se calibração persistida existir
+    initial_state.amp_standby = true;
+    chain.set_amp_standby(true);
+    telemetry.set_output_muted(true);
+
     let dsp_chain = Arc::new(Mutex::new(chain));
     let param_queue = dsp_chain
         .lock()
         .ok()
         .map(|chain| chain.param_queue());
-    if let Some((boost, gate)) = calib {
-        initial_state.input_boost = boost;
-        initial_state.gate_threshold_db = gate;
-        if let Ok(mut dsp) = dsp_chain.lock() {
-            dsp.set_input_boost(boost);
-            dsp.set_gate_threshold_db(gate);
-        }
-    } else {
-        // Spec 050 CA-2: sem calibração prévia, inicia em Standby seguro para evitar chiado/microfonia imediata
-        initial_state.amp_standby = true;
-        if let Ok(mut dsp) = dsp_chain.lock() {
-            dsp.set_amp_standby(true);
-        }
-        telemetry.set_output_muted(true);
-    }
-
     let shared_app_state = Arc::new(Mutex::new(initial_state));
 
     let started_counter = AtomicUsize::new(0);
@@ -204,6 +201,33 @@ fn build_runtime_with_calibration(
         (Arc::new(Mutex::new(None)), Arc::new(AtomicBool::new(false)), None)
     };
 
+    let resolved_device_id = device_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            audio_telemetry
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|t| t.input_device.clone()))
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| "default".to_string());
+
+    if let Some((boost, gate)) = calib_store.get(&resolved_device_id) {
+        if let Ok(mut st) = shared_app_state.lock() {
+            st.input_boost = boost;
+            st.gate_threshold_db = gate;
+            st.amp_standby = false;
+        }
+        if let Ok(mut dsp) = dsp_chain.lock() {
+            dsp.set_input_boost(boost);
+            dsp.set_gate_threshold_db(gate);
+            dsp.set_amp_standby(false);
+        }
+        telemetry.set_output_muted(false);
+    }
+
     let fallback_ctrl = Arc::new(FallbackWorkerControl {
         running,
         worker: Mutex::new(fallback_worker),
@@ -223,17 +247,11 @@ fn build_runtime_with_calibration(
         telemetry,
         Some(dsp_chain),
         param_queue,
-        Some("default"),
+        Some(resolved_device_id.as_str()),
         Some(calib_store),
     );
     api_ctx.duplex_engine = Some(audio_ctrl.duplex.clone());
-    let default_data_dir = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("APPDATA"))
-        .or_else(|| std::env::var_os("HOME"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("SonixPro");
-    api_ctx.set_data_dir(default_data_dir);
+    api_ctx.set_data_dir(data_dir);
 
     let streams_opened = active_streams
         .lock()

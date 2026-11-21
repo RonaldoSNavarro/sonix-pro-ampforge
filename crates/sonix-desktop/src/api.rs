@@ -1663,7 +1663,7 @@ fn handle_get_presets_export(preset_id: &str) -> (u16, &'static str, Vec<u8>) {
     (200, "application/json", bytes)
 }
 
-fn format_utc_iso8601_now() -> String {
+pub fn format_utc_iso8601_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -1872,8 +1872,20 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
                 let _ = pq.push(DspParamUpdate::AmpStandby(false));
             }
             if let Some(ref store) = ctx.calibration_store {
-                let dev_id = ctx.active_device_id.as_deref().unwrap_or("default");
-                store.save(dev_id, result.proposed_boost, result.proposed_gate_threshold_db);
+                let telemetry_dev = ctx
+                    .audio_telemetry
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.as_ref().map(|t| t.input_device.clone()))
+                    .filter(|s| !s.trim().is_empty());
+                let dev_id = ctx
+                    .active_device_id
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.to_string())
+                    .or(telemetry_dev)
+                    .unwrap_or_else(|| "default".to_string());
+                store.save(&dev_id, result.proposed_boost, result.proposed_gate_threshold_db);
             }
 
             json_response(200, &result)

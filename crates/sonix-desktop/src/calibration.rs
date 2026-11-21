@@ -3,6 +3,7 @@
 //! Spec 019: Entrada de Guitarra na Placa Onboard: Calibração, Clipping e Sinal de Teste
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
@@ -163,28 +164,95 @@ pub fn generate_karplus_strong_riff(sample_rate: f32, seed: u64) -> Vec<f32> {
     output
 }
 
-/// Armazenamento em memória de perfis calibrados por dispositivo de áudio
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CalibrationEntryDisk {
+    boost: f32,
+    gate_threshold_db: f32,
+    salvo_em: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CalibrationFileDisk {
+    versao: u32,
+    dispositivos: HashMap<String, CalibrationEntryDisk>,
+}
+
+/// Diretório padrão de dados persistentes do SONIX PRO (`%APPDATA%\SonixPro`).
+pub fn default_sonix_data_dir() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .or_else(|| std::env::var_os("LOCALAPPDATA"))
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("SonixPro")
+}
+
+/// Armazenamento persistente em disco de perfis calibrados por dispositivo de áudio (`<dir>/calibration.json`).
+#[derive(Debug, Clone)]
 pub struct CalibrationStore {
-    profiles: Arc<Mutex<HashMap<String, (f32, f32)>>>,
+    dir: PathBuf,
+    file_path: PathBuf,
+    profiles: Arc<Mutex<HashMap<String, CalibrationEntryDisk>>>,
 }
 
 impl CalibrationStore {
-    pub fn new() -> Self {
+    pub fn open(dir: impl AsRef<Path>) -> Self {
+        let dir_path = dir.as_ref().to_path_buf();
+        let file_path = dir_path.join("calibration.json");
+        let mut profiles = HashMap::new();
+
+        if file_path.exists() {
+            let parsed_ok = std::fs::read_to_string(&file_path)
+                .ok()
+                .and_then(|txt| serde_json::from_str::<CalibrationFileDisk>(&txt).ok())
+                .filter(|doc| doc.versao == 1);
+
+            if let Some(doc) = parsed_ok {
+                profiles = doc.dispositivos;
+            } else {
+                let corrupt_path = dir_path.join("calibration.json.corrompido");
+                let _ = std::fs::remove_file(&corrupt_path);
+                let _ = std::fs::rename(&file_path, &corrupt_path);
+            }
+        }
+
         Self {
-            profiles: Arc::new(Mutex::new(HashMap::new())),
+            dir: dir_path,
+            file_path,
+            profiles: Arc::new(Mutex::new(profiles)),
         }
     }
 
     pub fn save(&self, device_id: &str, boost: f32, gate_threshold_db: f32) {
         if let Ok(mut map) = self.profiles.lock() {
-            map.insert(device_id.to_string(), (boost, gate_threshold_db));
+            map.insert(
+                device_id.to_string(),
+                CalibrationEntryDisk {
+                    boost,
+                    gate_threshold_db,
+                    salvo_em: crate::api::format_utc_iso8601_now(),
+                },
+            );
+            let doc = CalibrationFileDisk {
+                versao: 1,
+                dispositivos: map.clone(),
+            };
+            if let Ok(json) = serde_json::to_string_pretty(&doc) {
+                let _ = std::fs::create_dir_all(&self.dir);
+                let tmp_path = self.dir.join(format!("calibration.json.{}.tmp", std::process::id()));
+                if std::fs::write(&tmp_path, json.as_bytes()).is_ok() {
+                    if std::fs::rename(&tmp_path, &self.file_path).is_err() {
+                        let _ = std::fs::remove_file(&tmp_path);
+                    }
+                }
+            }
         }
     }
 
     pub fn get(&self, device_id: &str) -> Option<(f32, f32)> {
         if let Ok(map) = self.profiles.lock() {
-            map.get(device_id).copied()
+            map.get(device_id)
+                .map(|entry| (entry.boost, entry.gate_threshold_db))
         } else {
             None
         }

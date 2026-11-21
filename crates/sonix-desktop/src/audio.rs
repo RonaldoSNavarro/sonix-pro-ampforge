@@ -2904,6 +2904,7 @@ pub struct RealtimeDspChain {
     modifier_exp2: f32,
     modifier_scene: f32,
     modifier_midi_cc: [f32; 128],
+    modifier_midi_cc_seen: [bool; 128],
     lfo1_phase: f32,
     lfo2_phase: f32,
     env_follower: f32,
@@ -3184,6 +3185,7 @@ impl RealtimeDspChain {
             modifier_exp2: 0.0,
             modifier_scene: 0.0,
             modifier_midi_cc: [0.0; 128],
+            modifier_midi_cc_seen: [false; 128],
             lfo1_phase: 0.0,
             lfo2_phase: 0.0,
             env_follower: 0.0,
@@ -3248,6 +3250,7 @@ impl RealtimeDspChain {
             CompiledModifierSource::MidiCc(cc) => {
                 if (cc as usize) < 128 {
                     self.modifier_midi_cc[cc as usize] = v;
+                    self.modifier_midi_cc_seen[cc as usize] = true;
                 }
             }
             _ => {}
@@ -3283,6 +3286,11 @@ impl RealtimeDspChain {
             let b = self.active_modifiers.bindings[i];
             if !b.active {
                 continue;
+            }
+            if let CompiledModifierSource::MidiCc(cc) = b.source {
+                if !self.modifier_midi_cc_seen[cc.min(127) as usize] {
+                    continue;
+                }
             }
             let raw_u = match b.source {
                 CompiledModifierSource::ExpPedal1 => self.modifier_exp1,
@@ -3340,11 +3348,21 @@ impl RealtimeDspChain {
         }
     }
 
-    fn sync_modifiers_from(&mut self, table: &CompiledModifierTable, outputs: &[f32; 16]) {
+    fn sync_modifiers_from(
+        &mut self,
+        table: &CompiledModifierTable,
+        outputs: &[f32; 16],
+        midi_cc_seen: &[bool; 128],
+    ) {
         let n = table.len.min(16);
         for i in 0..n {
             let b = table.bindings[i];
             if b.active {
+                if let CompiledModifierSource::MidiCc(cc) = b.source {
+                    if !midi_cc_seen[cc.min(127) as usize] {
+                        continue;
+                    }
+                }
                 self.apply_modifier_target(b.target, outputs[i]);
             }
         }
@@ -4893,7 +4911,11 @@ impl RealtimeDspChain {
 
         if self.preset_crossfading {
             if let Some(mut shadow) = self.shadow.take() {
-                shadow.sync_modifiers_from(&self.active_modifiers, &self.modifier_outputs);
+                shadow.sync_modifiers_from(
+                    &self.active_modifiers,
+                    &self.modifier_outputs,
+                    &self.modifier_midi_cc_seen,
+                );
                 let clean = &self.temp_source_buf[..len];
                 let shadow_out = &mut self.shadow_out_buf[..len];
                 shadow.process_tonal_core(clean, shadow_out);

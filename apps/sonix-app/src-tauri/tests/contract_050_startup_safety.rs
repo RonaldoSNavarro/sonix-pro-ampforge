@@ -1,4 +1,29 @@
-use sonix_app_lib::build_runtime_for_startup_test;
+use sonix_app_lib::build_runtime_for_startup_test_in_dir;
+use sonix_desktop::calibration::CalibrationStore;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+struct TempDirGuard {
+    path: PathBuf,
+}
+
+impl TempDirGuard {
+    fn new(prefix: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), nanos));
+        std::fs::create_dir_all(&path).unwrap();
+        Self { path }
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
 
 fn rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
@@ -10,7 +35,8 @@ fn rms(samples: &[f32]) -> f32 {
 
 #[test]
 fn test_ca_02_uncalibrated_startup_enters_safe_standby_silence() {
-    let runtime = build_runtime_for_startup_test(None);
+    let dir = TempDirGuard::new("sonix_050_ca2");
+    let runtime = build_runtime_for_startup_test_in_dir(dir.path.clone(), Some("default"));
 
     let st = runtime.api_ctx.app_state.lock().expect("state lock");
     assert!(
@@ -51,7 +77,12 @@ fn test_ca_02_uncalibrated_startup_enters_safe_standby_silence() {
 
 #[test]
 fn test_ca_04_calibrated_startup_keeps_amp_active() {
-    let runtime = build_runtime_for_startup_test(Some((1.5, -55.0)));
+    let dir = TempDirGuard::new("sonix_050_ca4");
+    {
+        let store = CalibrationStore::open(&dir.path);
+        store.save("default", 1.5, -55.0);
+    }
+    let runtime = build_runtime_for_startup_test_in_dir(dir.path.clone(), Some("default"));
     {
         let st = runtime.api_ctx.app_state.lock().expect("state lock");
         assert!(
@@ -94,7 +125,8 @@ fn test_ca_04_calibrated_startup_keeps_amp_active() {
 
 #[test]
 fn test_ca_05_calibration_disables_initial_standby_in_state_and_dsp() {
-    let runtime = build_runtime_for_startup_test(None);
+    let dir = TempDirGuard::new("sonix_050_ca5");
+    let runtime = build_runtime_for_startup_test_in_dir(dir.path.clone(), Some("default"));
     assert!(
         runtime.api_ctx.app_state.lock().expect("state lock").amp_standby,
         "pré-condição: sem calibração, inicia em standby"
