@@ -1836,10 +1836,11 @@ impl CompiledDagTopology {
         let mut slots = [None; 48];
         // Row 0 (0..12)
         slots[0] = Some(DagBlockKind::Gate);
-        slots[1] = Some(DagBlockKind::Drive);
-        slots[2] = Some(DagBlockKind::Pitch1);
+        slots[1] = Some(DagBlockKind::Wah1);
+        slots[2] = Some(DagBlockKind::Drive);
         slots[3] = Some(DagBlockKind::Amp1);
         slots[4] = Some(DagBlockKind::Cab1);
+        slots[5] = Some(DagBlockKind::Pitch1);
         slots[6] = Some(DagBlockKind::Eq1);
         slots[9] = Some(DagBlockKind::Dly1);
         slots[10] = Some(DagBlockKind::Rev1);
@@ -5281,18 +5282,8 @@ impl RealtimeDspChain {
 
         let mut split_active = false;
         let mut ran_amp1 = false;
-        let mut ran_comp2 = false;
-        let mut ran_mod2 = false;
-        let has_wah_slot = topo.slots.iter().any(|s| matches!(s, Some(DagBlockKind::Wah1)));
-        let mut ran_wah1 = false;
 
         for col in 0..12usize {
-            if !has_wah_slot && !ran_wah1 && col == 1 && self.wah_1_enabled {
-                self.wah_1
-                    .process(&self.temp_merge_l_buf[..len], &mut self.temp_dag_scratch_buf[..len]);
-                self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
-                ran_wah1 = true;
-            }
             if self.split_enabled && col == effective_split_col {
                 self.split.process(
                     &self.temp_merge_l_buf[..len],
@@ -5304,13 +5295,6 @@ impl RealtimeDspChain {
             }
 
             if let Some(kind) = topo.slots[col] {
-                if kind == DagBlockKind::Comp2 {
-                    ran_comp2 = true;
-                } else if kind == DagBlockKind::Mod2 {
-                    ran_mod2 = true;
-                } else if kind == DagBlockKind::Wah1 {
-                    ran_wah1 = true;
-                }
                 if self.execute_dag_block(kind, false, len) {
                     ran_amp1 = true;
                 }
@@ -5331,28 +5315,7 @@ impl RealtimeDspChain {
                     );
                     split_active = false;
                 }
-            } else if let Some(kind1) = topo.slots[12 + col] {
-                if matches!(kind1, DagBlockKind::Comp2 | DagBlockKind::Mod2) {
-                    if kind1 == DagBlockKind::Comp2 {
-                        ran_comp2 = true;
-                    } else if kind1 == DagBlockKind::Mod2 {
-                        ran_mod2 = true;
-                    }
-                    let _ = self.execute_dag_block(kind1, false, len);
-                }
             }
-        }
-
-        if !self.split_enabled && !ran_comp2 && self.comp_2_enabled {
-            self.comp_2
-                .process(&self.temp_merge_l_buf[..len], &mut self.temp_dag_scratch_buf[..len]);
-            self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
-        }
-
-        if !self.split_enabled && !ran_mod2 && self.mod_2_enabled {
-            self.mod_2
-                .process(&self.temp_merge_l_buf[..len], &mut self.temp_dag_scratch_buf[..len]);
-            self.temp_merge_l_buf[..len].copy_from_slice(&self.temp_dag_scratch_buf[..len]);
         }
 
         if !ran_amp1 {

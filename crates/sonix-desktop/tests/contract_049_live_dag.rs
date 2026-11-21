@@ -189,8 +189,8 @@ fn ca24_topology_swap_has_no_silence_hole_and_zero_audio_allocs() {
 
     // Compila nova topologia FORA da thread de áudio e envia pela fila lock-free
     let mut topo = CompiledDagTopology::default_layout(99);
-    topo.slots[1] = None;
-    topo.slots[5] = Some(DagBlockKind::Drive);
+    topo.slots[2] = None;
+    topo.slots[7] = Some(DagBlockKind::Drive);
     let _ = rq.push_topology(Box::new(topo));
 
     let (allocs, deallocs) = measure_allocs(|| {
@@ -393,15 +393,18 @@ fn ca40_mod2_active_with_split_disabled_modulates_output() {
         .map(|i| 0.3 * (2.0 * PI * 440.0 * i as f32 / sr).sin())
         .collect();
 
-    let run_chain = |mod2_on: bool| -> Vec<f32> {
+    let run_chain = |split_on: bool, mod2_on: bool| -> Vec<f32> {
         let mut chain = RealtimeDspChain::new(sr);
         chain.prepare(sr, 256);
         chain.set_gate_enabled(false);
         chain.set_amp_enabled(false);
         chain.set_cab_enabled(false);
+        chain.set_amp_2_enabled(false);
+        chain.set_cab_2_enabled(false);
         chain.set_dly_1_enabled(false);
         chain.set_rev_1_enabled(false);
-        chain.set_split_enabled(false);
+        chain.set_merge_config(0.0, false);
+        chain.set_split_enabled(split_on);
         chain.set_mod_2_enabled(mod2_on);
         chain.set_mod_2_depth(80.0);
         chain.set_mod_2_rate_hz(2.0);
@@ -413,18 +416,35 @@ fn ca40_mod2_active_with_split_disabled_modulates_output() {
         out
     };
 
-    let out_off = run_chain(false);
-    let out_on = run_chain(true);
-    let diff_rms = (out_off
+    // AUD-21: com split desligado, Linha 2 (comp_2/mod_2) NÃO processa.
+    let off_no_split = run_chain(false, false);
+    let on_no_split = run_chain(false, true);
+    let diff_no_split = (off_no_split
         .iter()
-        .zip(out_on.iter())
+        .zip(on_no_split.iter())
         .map(|(a, b)| (a - b) * (a - b))
         .sum::<f32>()
         / 256.0)
         .sqrt();
     assert!(
-        diff_rms > 0.01,
-        "CA-40 (R1): mod_2 ligado com split desligado não alterou a saída (diff_rms={:.6})",
-        diff_rms
+        diff_no_split < 1e-6,
+        "AUD-21: com split desligado mod_2 não pode alterar saída (diff_rms={:.6})",
+        diff_no_split
+    );
+
+    // Com split ligado, mod_2 atua normalmente na Linha 2.
+    let off_with_split = run_chain(true, false);
+    let on_with_split = run_chain(true, true);
+    let diff_with_split = (off_with_split
+        .iter()
+        .zip(on_with_split.iter())
+        .map(|(a, b)| (a - b) * (a - b))
+        .sum::<f32>()
+        / 256.0)
+        .sqrt();
+    assert!(
+        diff_with_split > 0.01,
+        "CA-40 / AUD-21: mod_2 ligado com split ativo deve modular saída (diff_rms={:.6})",
+        diff_with_split
     );
 }

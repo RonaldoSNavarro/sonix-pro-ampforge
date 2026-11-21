@@ -293,7 +293,7 @@ test('Spec 048 CA-2..CA-10 & CA-12: fidelidade visual E2E em 1440x900 e estrutur
       assert.ok(mainMetrics.toolbarText.includes(lbl), `CA-3: toolbar deve conter "${lbl}"`);
     }
     assert.ok(mainMetrics.gridText.includes('Matriz de sinal'), 'CA-4: cabeçalho deve conter "Matriz de sinal"');
-    assert.equal(mainMetrics.gridCellsCount, 15, 'CA-4: matriz 11x2 sempre exibe linha A + linha B (15 células)');
+    assert.equal(mainMetrics.gridCellsCount, 16, 'CA-4: matriz 11x2 exibe linha A + wah + linha B (16 células)');
     assert.ok(mainMetrics.ampRect, 'CA-5: AmpHead deve ficar em [data-region="amp-slot"]');
     assert.equal(Math.round(mainMetrics.ampRect.width), 788, 'CA-5: AmpHead no palco deve ter largura 788 px');
     assert.equal(Math.round(mainMetrics.ampRect.height), 226, 'CA-5: AmpHead no palco deve ter altura 226 px');

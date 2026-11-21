@@ -67,7 +67,7 @@ fn test_ca_04_05_06_07_fx_api_dispatch_and_real_audio_effects() {
         &ctx,
         "/api/params",
         "POST",
-        br#"{"drive.enabled": false, "comp_2.enabled": true, "comp_2.ratio": "all", "comp_2.output": 2.0, "eq_1.enabled": true, "eq_1.mode": "mxr_10band", "eq_1.band10.gain_db": 0.0, "eq_1.volume_db": 0.0}"#,
+        br#"{"drive.enabled": false, "split.enabled": true, "split.mode": "ab", "split.balance": 1.0, "amp_2.enabled": false, "cab_2.enabled": false, "merge.row_1_level_db": 0.0, "comp_2.enabled": true, "comp_2.ratio": "all", "comp_2.output": 2.0, "eq_1.enabled": true, "eq_1.mode": "mxr_10band", "eq_1.band10.gain_db": 0.0, "eq_1.volume_db": 0.0}"#,
     );
     assert_eq!(st, 200);
     let out_comp_low = render(&ctx, 1000.0, 0.08, 2048);
@@ -93,7 +93,7 @@ fn test_ca_04_05_06_07_fx_api_dispatch_and_real_audio_effects() {
         &ctx,
         "/api/params",
         "POST",
-        br#"{"comp_2.enabled": false, "eq_1.band9.gain_db": 10.0, "eq_1.gain_db": 3.0}"#,
+        br#"{"split.enabled": false, "split.balance": 0.5, "comp_2.enabled": false, "eq_1.band9.gain_db": 10.0, "eq_1.gain_db": 3.0}"#,
     );
     let out_eq_boost = render(&ctx, 8000.0, 0.05, 2048);
     dispatch(

@@ -77,6 +77,7 @@ const DRIVE_LABELS: Record<string, string> = {
 const GRID_BLOCKS: GridBlockDef[] = [
   { id: 'in', row: 1, col: 1, tag: 'IN', title: 'ENTRADA · HI-Z', dotColor: '#3dd8ff', chTag: '-', subText: () => 'Guitarra Hi-Z' },
   { id: 'gate', row: 1, col: 2, tag: 'GATE', title: 'NOISE GATE · NS-2', dotColor: '#4ee680', chTag: 'A', enableKey: 'gate.enabled', bypassControlId: 'gate.enabled', subText: () => 'Noise Gate' },
+  { id: 'wah', row: 2, col: 2, tag: 'WAH', title: 'CRY WAH · 500mH', dotColor: '#3dd8ff', chTag: 'A', enableKey: 'wah_1.enabled', bypassControlId: 'wah_1.enabled', subText: () => 'Cry Wah' },
   { id: 'drive', row: 1, col: 3, tag: 'DRIVE', title: 'PEDAL DRIVE', dotColor: '#ff8a3d', chTag: 'B', enableKey: 'drive.enabled', bypassControlId: 'drive.enabled', subText: (s) => DRIVE_LABELS[str(s, 'drive.model', 'ts808')] ?? 'Screamer 808' },
   { id: 'split', row: 1, col: 4, tag: 'SPLIT', title: 'SPLIT A / B', dotColor: '#3dd8ff', chTag: '-', enableKey: 'split.enabled', bypassControlId: 'split.enabled', subText: () => 'Split A/B' },
   { id: 'amp', row: 1, col: 5, tag: 'AMP 1', title: 'AMPLIFICADOR 1', dotColor: '#ff8a3d', chTag: 'D', enableKey: 'amp_1.enabled', bypassControlId: 'amp.enabled', subText: (s) => (AMP_LABELS[str(s, 'amp_1.model', 'dual_rect')]?.full.split(' · ')[0] ?? 'CALI RECTO') },
@@ -692,6 +693,7 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
     grid-template-rows:52px 44px;gap:6px 6px;align-items:stretch;
   `;
 
+  const splitEnabled = bool(store, 'split.enabled', false);
   for (const blk of GRID_BLOCKS) {
     const cell = document.createElement('button');
     cell.type = 'button';
@@ -700,12 +702,21 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
     cell.dataset.blockId = blk.id;
     const isSel = store.selectedBlock === blk.id;
     const enabled = blk.enableKey ? bool(store, blk.enableKey, true) : true;
+    const isLine2Parallel = blk.row === 2 && blk.col >= 4;
+    const line2Inactive = isLine2Parallel && !splitEnabled;
+    if (line2Inactive) {
+      cell.title = 'Linha 2 inativa (split desligado)';
+      cell.dataset.line2Inactive = 'true';
+    } else {
+      cell.title = blk.title;
+    }
+    const effectiveOpacity = line2Inactive ? '0.35' : !enabled ? '0.46' : '1';
     cell.setAttribute('aria-pressed', isSel ? 'true' : 'false');
     cell.style.cssText = `
       grid-column:${blk.col};grid-row:${blk.row};
       height:${blk.row === 1 ? 52 : 44}px;
       padding:5px 8px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:4px;
-      opacity:${!enabled ? '0.46' : '1'};color:#dbe1e8;text-align:left;cursor:pointer;
+      opacity:${effectiveOpacity};color:#dbe1e8;text-align:left;cursor:pointer;
     `;
 
     const topRow = document.createElement('div');

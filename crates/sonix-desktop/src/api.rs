@@ -707,6 +707,7 @@ pub fn dispatch(
                             "index": 0,
                             "blocks": [
                                 {"id": "gate", "col": 0, "name": "Natural Gate", "enabled": gate_en},
+                                {"id": "wah_1", "col": 1, "name": "Cry Wah 500mH", "enabled": wah_en},
                                 {"id": "drive", "col": 1, "name": drive_display_name(&drive_model), "enabled": drive_en},
                                 {"id": "split", "col": 2, "name": "A/B Crossover", "enabled": split_en},
                                 {"id": "amp_1", "col": 3, "name": amp_display_name(&amp_model), "enabled": amp_en},

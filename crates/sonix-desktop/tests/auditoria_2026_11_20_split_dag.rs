@@ -284,3 +284,78 @@ fn aud_20_crossover_lr4() {
         4.0 * fc
     );
 }
+
+#[test]
+fn aud_21_linha2_inativa_sem_split() {
+    let measure_comp2 = |input_gain: f32, output_gain: f32| -> Vec<f32> {
+        let (ctx, dsp) = make_ctx();
+        let (st, resp) = post_params(
+            &ctx,
+            &serde_json::json!({
+                "gate.enabled": false,
+                "amp_1.enabled": false,
+                "cab_1.enabled": false,
+                "dly_1.enabled": false,
+                "rev_1.enabled": false,
+                "eq_1.enabled": false,
+                "split.enabled": false,
+                "comp_2.enabled": true,
+                "comp_2.input": input_gain,
+                "comp_2.output": output_gain,
+                "mod_2.enabled": true,
+                "mod_2.mix": 100.0
+            }),
+        );
+        assert_eq!(st, 200, "AUD-21: params falhou: {resp}");
+        let inp = sine_wave(440.0, 0.25, 48_000.0, 0, 2048);
+        let mut out = vec![0.0f32; 2048];
+        let mut ch = dsp.lock().unwrap();
+        ch.drain_param_queue();
+        ch.process(&inp, &mut out);
+        out
+    };
+
+    let out_min = measure_comp2(0.0, 0.0);
+    let out_max = measure_comp2(10.0, 10.0);
+    let diff_sq: f64 = out_min[512..]
+        .iter()
+        .zip(out_max[512..].iter())
+        .map(|(a, b)| {
+            let d = (*a - *b) as f64;
+            d * d
+        })
+        .sum::<f64>()
+        / (out_min.len() - 512) as f64;
+    let ref_sq: f64 = out_min[512..].iter().map(|&a| (a as f64) * (a as f64)).sum::<f64>()
+        / (out_min.len() - 512) as f64;
+    let diff_db = if diff_sq == 0.0 {
+        -240.0
+    } else {
+        10.0 * (diff_sq / ref_sq.max(1e-18)).log10()
+    };
+    assert!(
+        diff_db <= -120.0,
+        "AUD-21: com split desligado, comp_2 em valores extremos mudou saída em {diff_db:.2} dB (> -120 dB)"
+    );
+}
+
+#[test]
+fn aud_21_grafo_inclui_wah() {
+    let (ctx, _) = make_ctx();
+    let (st, _, body) = dispatch(&ctx, "/api/graph", "GET", b"");
+    assert_eq!(st, 200);
+    let vg: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let slots = vg["slots"].as_array().expect("/api/graph slots");
+    let wah_slot = slots
+        .iter()
+        .find(|s| s["block"].as_str() == Some("wah_1"))
+        .expect("AUD-21: /api/graph slots deve incluir bloco explícito 'wah_1'");
+    assert_eq!(wah_slot["row"].as_u64(), Some(0));
+    assert_eq!(wah_slot["col"].as_u64(), Some(1));
+
+    let row0_blocks = vg["rows"][0]["blocks"].as_array().expect("rows[0].blocks");
+    assert!(
+        row0_blocks.iter().any(|b| b["id"].as_str() == Some("wah_1")),
+        "AUD-21: rows[0].blocks deve incluir 'wah_1': {row0_blocks:?}"
+    );
+}

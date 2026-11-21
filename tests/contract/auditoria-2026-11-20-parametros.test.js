@@ -213,3 +213,29 @@ test('AUD-19: botões Exportar pacote e Importar pacote na tela de presets chama
 
   screen.remove();
 });
+
+test('AUD-21: grid renderiza bloco de wah explícito e esmaece Linha 2 com dica quando split desligado', async () => {
+  setupDom();
+  const { renderEstudioScreen } = await import('../../apps/sonix-app/ui/src/screens/Estudio.ts');
+  const store = new AppStore(makeStubTransport());
+  store.setControl('split.enabled', false);
+
+  const screen = renderEstudioScreen(store);
+  document.body.appendChild(screen);
+
+  const wahCell = screen.querySelector('.m-cell[data-block-id="wah"]');
+  assert.ok(wahCell, 'AUD-21: matriz de sinal deve renderizar célula [data-block-id="wah"]');
+
+  const line2Ids = ['comp', 'amp2', 'cab2', 'chorus'];
+  for (const bid of line2Ids) {
+    const cell = screen.querySelector(`.m-cell[data-block-id="${bid}"]`);
+    assert.ok(cell, `AUD-21: bloco paralelo '${bid}' deve existir na Linha 2`);
+    assert.equal(
+      cell.getAttribute('title'),
+      'Linha 2 inativa (split desligado)',
+      `AUD-21: '${bid}' deve trazer dica 'Linha 2 inativa (split desligado)' com split desligado`,
+    );
+  }
+
+  screen.remove();
+});
