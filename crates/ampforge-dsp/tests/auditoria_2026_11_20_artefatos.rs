@@ -856,3 +856,53 @@ fn aud_12_zero_alloc() {
     assert_eq!(deallocs, 0, "AUD-12: Pitch desalocou {deallocs} vez(es)");
 }
 
+
+#[test]
+fn aud_14_banda_passante() {
+    for &sr in &[44100.0_f32, 48000.0, 88200.0, 96000.0] {
+        for &os in &[2usize, 4, 8] {
+            let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+            amp.set_sample_rate(sr);
+            amp.set_oversampling_factor(os);
+
+            let pair_16k =
+                amp.measure_ai_filter_magnitude_db(16_000.0) + amp.measure_aa_filter_magnitude_db(16_000.0);
+            let pair_18k =
+                amp.measure_ai_filter_magnitude_db(18_000.0) + amp.measure_aa_filter_magnitude_db(18_000.0);
+
+            assert!(
+                pair_16k >= -0.5 && pair_16k <= 0.5,
+                "AUD-14 passband 16kHz fora de [-0.5, +0.5] dB em sr={sr} os={os}x: {pair_16k:.3} dB"
+            );
+            assert!(
+                pair_18k >= -1.5 && pair_18k <= 1.5,
+                "AUD-14 passband 18kHz fora de [-1.5, +1.5] dB em sr={sr} os={os}x: {pair_18k:.3} dB"
+            );
+        }
+    }
+}
+
+#[test]
+fn aud_14_banda_de_rejeicao() {
+    for &sr in &[44100.0_f32, 48000.0, 88200.0, 96000.0] {
+        for &os in &[2usize, 4, 8] {
+            let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+            amp.set_sample_rate(sr);
+            amp.set_oversampling_factor(os);
+
+            for &frac in &[0.60_f64, 0.75, 0.90] {
+                let f = (sr as f64) * frac;
+                let aa_db = amp.measure_aa_filter_magnitude_db(f);
+                let ai_db = amp.measure_ai_filter_magnitude_db(f);
+                assert!(
+                    aa_db <= -60.0,
+                    "AUD-14 stopband AA em sr={sr} os={os}x f={f:.1}Hz ({frac}*fs): {aa_db:.2} dB (> -60 dB)"
+                );
+                assert!(
+                    ai_db <= -60.0,
+                    "AUD-14 stopband AI em sr={sr} os={os}x f={f:.1}Hz ({frac}*fs): {ai_db:.2} dB (> -60 dB)"
+                );
+            }
+        }
+    }
+}

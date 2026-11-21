@@ -1002,86 +1002,65 @@ impl AmpCore {
     }
 
     fn update_aa_filters(&mut self) {
+        let identity = BiquadFilter {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        };
         if self.oversampling_factor <= 1 {
-            let identity = BiquadFilter {
-                b0: 1.0,
-                b1: 0.0,
-                b2: 0.0,
-                a1: 0.0,
-                a2: 0.0,
-                x1: 0.0,
-                x2: 0.0,
-                y1: 0.0,
-                y2: 0.0,
-            };
             self.aa_filters = [identity; 14];
             self.ai_filters = [identity; 4];
             return;
         }
-        let os = self.oversampling_factor.max(2) as f64;
-        let fs_base = self.sample_rate as f64;
-        let fs_os = fs_base * os;
-
-        // 14th-order Chebyshev Type I (7 cascaded biquads, 0.2 dB passband ripple)
-        // Flat 20 Hz..18 kHz (ripple <= 0.25 dB) and >= 70 dB attenuation at fs_base / 2.
-        let n_order = 14.0f64;
-        let fp = 18300.0f64.min(fs_base * 0.385);
-        let eps = (10.0f64.powf(0.20 / 10.0) - 1.0).sqrt();
-        let gamma = ((1.0 / eps) + (1.0 / (eps * eps) + 1.0).sqrt()).ln() / n_order;
-        let sinh_g = gamma.sinh();
-        let cosh_g = gamma.cosh();
-        let k_warp = (std::f64::consts::PI * fp / fs_os).tan();
-        let k2 = k_warp * k_warp;
-
-        for k in 0..7 {
-            let theta = std::f64::consts::PI * (2.0 * (k as f64) + 1.0) / (2.0 * n_order);
-            let sigma = -sinh_g * theta.sin();
-            let omega = cosh_g * theta.cos();
-            let r2 = sigma * sigma + omega * omega;
-            let b_ana = -2.0 * sigma;
-            let a0 = 1.0 + b_ana * k_warp + r2 * k2;
-            let b0 = (r2 * k2) / a0;
-            self.aa_filters[k] = BiquadFilter {
-                b0,
-                b1: 2.0 * b0,
-                b2: b0,
-                a1: (2.0 * (r2 * k2 - 1.0)) / a0,
-                a2: (1.0 - b_ana * k_warp + r2 * k2) / a0,
+        let sos = crate::os_filters::elliptic8_sos(self.sample_rate, self.oversampling_factor);
+        for k in 0..4 {
+            let b = BiquadFilter {
+                b0: sos[k][0],
+                b1: sos[k][1],
+                b2: sos[k][2],
+                a1: sos[k][3],
+                a2: sos[k][4],
                 x1: 0.0,
                 x2: 0.0,
                 y1: 0.0,
                 y2: 0.0,
             };
+            self.aa_filters[k] = b;
+            self.ai_filters[k] = b;
         }
-        for k in 7..14 {
-            self.aa_filters[k] = BiquadFilter {
-                b0: 1.0,
-                b1: 0.0,
-                b2: 0.0,
-                a1: 0.0,
-                a2: 0.0,
-                x1: 0.0,
-                x2: 0.0,
-                y1: 0.0,
-                y2: 0.0,
-            };
-        }
-
-        let fc_ai = 20000.0f64.min(fs_base * 0.42);
-        for i in 0..4 {
-            self.ai_filters[i] = BiquadFilter::lowpass(fc_ai, 0.707, fs_os);
+        for k in 4..14 {
+            self.aa_filters[k] = identity;
         }
     }
 
     pub fn measure_aa_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
-        let fs_os = (self.sample_rate as f64) * (self.oversampling_factor.max(1) as f64);
+        Self::measure_biquad_chain_db(&self.aa_filters, self.sample_rate, self.oversampling_factor, freq_hz)
+    }
+
+    pub fn measure_ai_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
+        Self::measure_biquad_chain_db(&self.ai_filters, self.sample_rate, self.oversampling_factor, freq_hz)
+    }
+
+    fn measure_biquad_chain_db(
+        chain: &[BiquadFilter],
+        sample_rate: f32,
+        oversampling_factor: usize,
+        freq_hz: f64,
+    ) -> f64 {
+        let fs_os = (sample_rate as f64) * (oversampling_factor.max(1) as f64);
         let w = 2.0 * std::f64::consts::PI * freq_hz / fs_os;
         let cos_w = w.cos();
         let sin_w = w.sin();
         let cos_2w = (2.0 * w).cos();
         let sin_2w = (2.0 * w).sin();
         let mut mag_sq = 1.0f64;
-        for f in &self.aa_filters {
+        for f in chain {
             let num_re = f.b0 + f.b1 * cos_w + f.b2 * cos_2w;
             let num_im = -f.b1 * sin_w - f.b2 * sin_2w;
             let den_re = 1.0 + f.a1 * cos_w + f.a2 * cos_2w;
@@ -1729,7 +1708,7 @@ impl AmpCore {
 
                 // Anti-Aliasing Decimation Filter (apenas quando os_factor > 1)
                 if os_factor > 1 {
-                    for f in &mut self.aa_filters {
+                    for f in &mut self.aa_filters[..4] {
                         lim_out = f.process(lim_out);
                     }
                 }
@@ -1947,6 +1926,10 @@ impl WhiteBoxAmpProcessor {
 
     pub fn measure_aa_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
         self.amp.measure_aa_filter_magnitude_db(freq_hz)
+    }
+
+    pub fn measure_ai_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
+        self.amp.measure_ai_filter_magnitude_db(freq_hz)
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {

@@ -9,6 +9,7 @@ pub mod errors;
 pub mod queue;
 pub mod smoother;
 pub mod oversampling;
+pub mod os_filters;
 pub mod precision;
 pub mod cpu;
 pub mod engine;
