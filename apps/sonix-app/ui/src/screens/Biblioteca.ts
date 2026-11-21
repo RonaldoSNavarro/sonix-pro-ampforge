@@ -236,6 +236,10 @@ export function renderBibliotecaScreen(store: AppStore): HTMLElement {
     makeChipButton('ui.subtab', `Pedais & Racks (${PEDAL_CATALOG.length})`, store.libraryTab === 'pedals', () => {
       store.libraryTab = 'pedals';
       store.emit();
+    }),
+    makeChipButton('ui.subtab', `Presets & Pacotes (${store.presets.length})`, store.libraryTab === 'presets', () => {
+      store.libraryTab = 'presets';
+      store.emit();
     })
   );
   hdr.appendChild(tabs);
@@ -245,7 +249,68 @@ export function renderBibliotecaScreen(store: AppStore): HTMLElement {
   list.style.cssText =
     'flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px;';
 
-  if (store.libraryTab === 'amps') {
+  if (store.libraryTab === 'presets') {
+    const pkgCard = makePanelCard('Pacotes .sforgepkg (Presets + IRs)', 'Formato v2 Base64 · SHA-256 · Offline-First');
+    pkgCard.root.style.flex = 'none';
+    const selectedIds = new Set<string>();
+    const active = store.presets[store.presetIdx];
+    if (active) selectedIds.add(active.id);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+
+    const exportBtn = document.createElement('button');
+    exportBtn.type = 'button';
+    exportBtn.className = 'm-btn m-pri';
+    exportBtn.dataset.controlId = 'preset.export_package';
+    exportBtn.style.cssText = 'height:32px;padding:0 14px;font-size:11.5px;font-weight:700;';
+    exportBtn.textContent = 'Exportar pacote';
+    exportBtn.addEventListener('click', () => {
+      const ids = selectedIds.size > 0 ? [...selectedIds] : active ? [active.id] : [];
+      void store.exportPackageDialog(ids);
+    });
+
+    const importBtn = document.createElement('button');
+    importBtn.type = 'button';
+    importBtn.className = 'm-btn';
+    importBtn.dataset.controlId = 'preset.import_package';
+    importBtn.style.cssText = 'height:32px;padding:0 14px;font-size:11.5px;font-weight:700;';
+    importBtn.textContent = 'Importar pacote';
+    importBtn.addEventListener('click', () => void store.importPackageDialog());
+
+    const hint = document.createElement('span');
+    hint.className = 'm-mono';
+    hint.style.cssText = 'font-size:10.5px;color:#8e96a0;';
+    hint.textContent = store.lastSavedStatus || 'Limites: arquivo <= 64 MiB · recurso <= 20 MiB · até 256 recursos';
+    actions.append(exportBtn, importBtn, hint);
+
+    const presetRows = document.createElement('div');
+    presetRows.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;';
+    store.presets.forEach((p, idx) => {
+      const row = document.createElement('div');
+      row.style.cssText =
+        'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:6px;background:#12151a;border:1px solid #252b34;';
+      const chkWrap = document.createElement('label');
+      chkWrap.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#dbe1e9;';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = selectedIds.has(p.id);
+      chk.addEventListener('change', () => {
+        if (chk.checked) selectedIds.add(p.id);
+        else selectedIds.delete(p.id);
+      });
+      const lbl = document.createElement('span');
+      lbl.textContent = `${p.name} (${p.id})`;
+      chkWrap.append(chk, lbl);
+      const loadBtn = makeChipButton('topbar.preset_load', idx === store.presetIdx ? 'Ativo' : 'Carregar', idx === store.presetIdx, () => {
+        void store.loadPresetAt(idx);
+      });
+      row.append(chkWrap, loadBtn);
+      presetRows.appendChild(row);
+    });
+    pkgCard.body.append(actions, presetRows);
+    list.appendChild(pkgCard.root);
+  } else if (store.libraryTab === 'amps') {
     for (const entry of AMP_CATALOG) {
       const card = makePanelCard(entry.name, `${entry.specRef} · ${entry.sourceStatus}`);
       card.root.style.flex = 'none';

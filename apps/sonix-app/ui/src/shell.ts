@@ -207,6 +207,8 @@ export function buildShell(appRoot: HTMLElement, store: AppStore): {
       label: 'Arquivo',
       items: [
         { label: 'Salvar preset atual', action: () => void store.saveActivePreset() },
+        { label: 'Exportar pacote (.sforgepkg)…', action: () => void store.exportPackageDialog() },
+        { label: 'Importar pacote (.sforgepkg)…', action: () => void store.importPackageDialog() },
         { label: 'Biblioteca & IRs (Ctrl+5)', screen: 'biblioteca' },
       ],
     },

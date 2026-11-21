@@ -132,6 +132,18 @@ function showPresetMenuPopover(anchor: HTMLElement, store: AppStore): void {
     });
     pop.appendChild(btn);
   });
+  const manageBtn = document.createElement('button');
+  manageBtn.type = 'button';
+  manageBtn.dataset.controlId = 'ui.nav_screen';
+  manageBtn.style.cssText =
+    'height:26px;padding:0 10px;border:0;border-top:1px solid #2b313c;margin-top:4px;border-radius:4px;text-align:left;font-size:11px;cursor:pointer;background:transparent;color:#93c5fd;';
+  manageBtn.textContent = 'Gerenciar pacotes (.sforgepkg)…';
+  manageBtn.addEventListener('click', () => {
+    pop.remove();
+    store.libraryTab = 'presets';
+    store.setScreen('biblioteca');
+  });
+  pop.appendChild(manageBtn);
   document.body.appendChild(pop);
   const closeFn = (ev: MouseEvent) => {
     if (!pop.contains(ev.target as Node) && !anchor.contains(ev.target as Node)) {

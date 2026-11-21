@@ -163,3 +163,53 @@ test('AUD-09: toda backendKey do registro existe em params.generated.ts', async 
     }
   }
 });
+
+test('AUD-19: botões Exportar pacote e Importar pacote na tela de presets chamam comandos IPC', async () => {
+  setupDom();
+  const { SonixTransport } = await import('../../apps/sonix-app/ui/src/transport.ts');
+  const { renderBibliotecaScreen } = await import('../../apps/sonix-app/ui/src/screens/Biblioteca.ts');
+
+  const calls = [];
+  const transport = new SonixTransport({
+    invokeFn: async (cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'plugin:dialog|save') return 'C:\\Temp\\rig_aud19.sforgepkg';
+      if (cmd === 'plugin:dialog|open') return 'C:\\Temp\\rig_aud19.sforgepkg';
+      if (cmd === 'export_package') return { ok: true, path: args?.path, presets_exported: 1, irs_exported: 0 };
+      if (cmd === 'import_package') return { ok: true, path: args?.path, imported_presets: ['brit800'], imported_irs: [] };
+      if (cmd === 'list_presets') return { presets: [{ id: 'brit800', name: 'Brit 800 Crunch', type: 'factory' }] };
+      return { ok: true };
+    },
+  });
+
+  const store = new AppStore(transport);
+  store.presets = [{ id: 'brit800', name: 'Brit 800 Crunch', type: 'factory' }];
+  store.presetIdx = 0;
+  store.libraryTab = 'presets';
+
+  const screen = renderBibliotecaScreen(store);
+  document.body.appendChild(screen);
+
+  const exportBtn = screen.querySelector('[data-control-id="preset.export_package"]');
+  const importBtn = screen.querySelector('[data-control-id="preset.import_package"]');
+  assert.ok(exportBtn, 'AUD-19: tela de presets deve renderizar botão Exportar pacote');
+  assert.ok(importBtn, 'AUD-19: tela de presets deve renderizar botão Importar pacote');
+  assert.ok(CONTROLS_REGISTRY.find((c) => c.id === 'preset.export_package'), 'AUD-19: preset.export_package deve estar no registro');
+  assert.ok(CONTROLS_REGISTRY.find((c) => c.id === 'preset.import_package'), 'AUD-19: preset.import_package deve estar no registro');
+
+  exportBtn.click();
+  await new Promise((r) => setTimeout(r, 20));
+  importBtn.click();
+  await new Promise((r) => setTimeout(r, 20));
+
+  const cmds = calls.map((c) => c.cmd);
+  assert.ok(cmds.includes('export_package'), `AUD-19: Exportar pacote deve invocar export_package, recebeu ${JSON.stringify(calls)}`);
+  assert.ok(cmds.includes('import_package'), `AUD-19: Importar pacote deve invocar import_package, recebeu ${JSON.stringify(calls)}`);
+  const expCall = calls.find((c) => c.cmd === 'export_package');
+  assert.deepEqual(expCall.args.presetIds, ['brit800']);
+  assert.equal(expCall.args.path, 'C:\\Temp\\rig_aud19.sforgepkg');
+  const impCall = calls.find((c) => c.cmd === 'import_package');
+  assert.equal(impCall.args.path, 'C:\\Temp\\rig_aud19.sforgepkg');
+
+  screen.remove();
+});

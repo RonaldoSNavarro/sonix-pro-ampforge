@@ -139,7 +139,7 @@ export class AppStore {
   palcoMode: 'stage' | 'tuner' = 'stage';
   engineStatusModalOpen = false;
   audioTab: 'dev' | 'in' | 'perf' = 'dev';
-  libraryTab: 'amps' | 'pedals' = 'amps';
+  libraryTab: 'amps' | 'pedals' | 'presets' = 'amps';
   vuMode: 'GR' | '+8' | '+4' | 'OFF' = 'GR';
   fullscreen = false;
   modifierOn = false;
@@ -849,5 +849,57 @@ export class AppStore {
       this.midiError = err instanceof Error ? err.message : String(err);
     }
     this.emit('status');
+  }
+
+  async exportPackageDialog(presetIds?: string[]): Promise<boolean> {
+    const cur = this.presets[this.presetIdx];
+    const ids = presetIds && presetIds.length > 0 ? presetIds : cur ? [cur.id] : [];
+    if (ids.length === 0) {
+      this.pushNotice('Selecione ao menos um preset para exportar o pacote.', 'validation');
+      return false;
+    }
+    try {
+      const targetPath = await this.transport.saveFileDialog(
+        [{ name: 'Pacote SONIX PRO (.sforgepkg)', extensions: ['sforgepkg'] }],
+        `${ids[0]}.sforgepkg`,
+      );
+      if (!targetPath) return false;
+      const res = await this.transport.exportPackage(ids, targetPath);
+      this.lastSavedStatus = `Pacote exportado (${Number(res?.presets_exported ?? ids.length)} preset(s))`;
+      this.emit('full');
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.pushNotice(this.friendlyMessage(classifyBridgeError(msg).message), 'validation');
+      return false;
+    }
+  }
+
+  async importPackageDialog(): Promise<boolean> {
+    try {
+      const srcPath = await this.transport.openFileDialog([
+        { name: 'Pacote SONIX PRO (.sforgepkg)', extensions: ['sforgepkg'] },
+      ]);
+      if (!srcPath) return false;
+      const res = await this.transport.importPackage(srcPath);
+      const list = await this.transport.listPresets();
+      if (Array.isArray(list?.presets)) {
+        this.presets = list.presets as PresetItem[];
+      }
+      const importedIds = Array.isArray(res?.imported_presets)
+        ? res.imported_presets.map((x) => String(x))
+        : [];
+      if (importedIds.length > 0) {
+        const idx = this.presets.findIndex((p) => p.id === importedIds[0]);
+        if (idx >= 0) this.presetIdx = idx;
+      }
+      this.lastSavedStatus = `Pacote importado (${importedIds.length} preset(s))`;
+      this.emit('full');
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.pushNotice(this.friendlyMessage(classifyBridgeError(msg).message), 'validation');
+      return false;
+    }
   }
 }

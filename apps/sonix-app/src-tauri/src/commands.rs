@@ -722,3 +722,17 @@ pub fn disconnect_midi_port(state: State<'_, AppRuntime>) -> Result<Value, Strin
         "connected_port": Value::Null,
     }))
 }
+
+#[tauri::command]
+pub fn export_package(
+    preset_ids: Vec<String>,
+    path: String,
+    state: State<'_, AppRuntime>,
+) -> Result<Value, String> {
+    sonix_desktop::api::export_sforge_package(&state.api_ctx, &preset_ids, std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub fn import_package(path: String, state: State<'_, AppRuntime>) -> Result<Value, String> {
+    sonix_desktop::api::import_sforge_package(&state.api_ctx, std::path::Path::new(&path))
+}

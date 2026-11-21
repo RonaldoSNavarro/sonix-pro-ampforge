@@ -380,6 +380,8 @@ pub fn run() {
             commands::list_midi_ports,
             commands::connect_midi_port,
             commands::disconnect_midi_port,
+            commands::export_package,
+            commands::import_package,
         ])
         .run(tauri::generate_context!())
         .expect("Erro ao executar aplicação Tauri SONIX PRO // AMPFORGE");

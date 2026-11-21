@@ -2409,3 +2409,171 @@ pub fn dispatch_midi_cc(ctx: &ApiContext, controller: u8, value: u8) -> Result<(
     }
     Ok(())
 }
+
+fn package_data_dirs(ctx: &ApiContext) -> (std::path::PathBuf, std::path::PathBuf) {
+    let presets_dir = ctx
+        .custom_presets_dir
+        .clone()
+        .unwrap_or_else(|| crate::calibration::default_sonix_data_dir().join("presets"));
+    let base_dir = presets_dir
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(crate::calibration::default_sonix_data_dir);
+    let irs_dir = base_dir.join("irs");
+    (presets_dir, irs_dir)
+}
+
+fn write_atomic_file(target: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("E_ENGINE: falha ao criar diretório: {e}"))?;
+    }
+    let tmp = target.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("E_ENGINE: falha ao gravar arquivo temporário: {e}"))?;
+    if target.exists() {
+        let _ = std::fs::remove_file(target);
+    }
+    std::fs::rename(&tmp, target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("E_ENGINE: falha ao concluir gravação atômica: {e}")
+    })
+}
+
+pub fn export_sforge_package(
+    ctx: &ApiContext,
+    preset_ids: &[String],
+    out_path: &std::path::Path,
+) -> Result<serde_json::Value, String> {
+    if preset_ids.is_empty() {
+        return Err("E_VALIDATION: selecione ao menos um preset para exportar".to_string());
+    }
+
+    let mut docs = Vec::with_capacity(preset_ids.len());
+    for pid in preset_ids {
+        if !is_valid_preset_id(pid) {
+            return Err(format!("E_VALIDATION: ID de preset inválido '{}'", pid));
+        }
+        let content = if let Some(p) = find_preset_file_in(ctx.custom_presets_dir.as_deref(), pid) {
+            std::fs::read_to_string(&p)
+                .map_err(|e| format!("E_ENGINE: falha ao ler preset '{}': {e}", pid))?
+        } else if let Some(embedded) = embedded_factory_preset_content(pid) {
+            embedded.to_string()
+        } else {
+            return Err(format!("E_VALIDATION: preset não encontrado: '{}'", pid));
+        };
+        let doc = sonix_core::persistence::SonixPresetDoc::from_json_str(&content)
+            .map_err(|e| format!("E_VALIDATION: preset '{}' inválido: {e}", pid))?;
+        docs.push(doc);
+    }
+
+    let mut pkg = sonix_core::persistence::SforgePackage::new_multi(docs)
+        .map_err(|e| format!("E_VALIDATION: {e}"))?;
+
+    let (_, irs_dir) = package_data_dirs(ctx);
+    let mut ir_count = 0usize;
+    if let Ok(entries) = std::fs::read_dir(&irs_dir) {
+        for entry in entries.flatten() {
+            if ir_count >= sonix_core::persistence::MAX_PACKAGE_RESOURCES {
+                break;
+            }
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                    if let Ok(meta) = std::fs::metadata(&p) {
+                        if meta.len() as usize <= sonix_core::persistence::MAX_RESOURCE_BYTES {
+                            if let Ok(bytes) = std::fs::read(&p) {
+                                let rel = format!("irs/{name}");
+                                if pkg.add_ir(&rel, bytes).is_ok() {
+                                    ir_count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let bundle_bytes = pkg
+        .export_bundle()
+        .map_err(|e| format!("E_ENGINE: falha ao serializar pacote .sforgepkg: {e}"))?;
+    write_atomic_file(out_path, &bundle_bytes)?;
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "path": out_path.display().to_string(),
+        "presets_exported": pkg.all_presets().len(),
+        "irs_exported": ir_count,
+    }))
+}
+
+pub fn import_sforge_package(
+    ctx: &ApiContext,
+    in_path: &std::path::Path,
+) -> Result<serde_json::Value, String> {
+    let meta = std::fs::metadata(in_path)
+        .map_err(|e| format!("E_VALIDATION: não foi possível abrir pacote '{}': {e}", in_path.display()))?;
+    if meta.len() > sonix_core::persistence::MAX_PACKAGE_BYTES as u64 {
+        return Err(format!(
+            "E_VALIDATION: pacote excede limite máximo de {} bytes",
+            sonix_core::persistence::MAX_PACKAGE_BYTES
+        ));
+    }
+
+    let bytes = std::fs::read(in_path)
+        .map_err(|e| format!("E_ENGINE: falha ao ler pacote '{}': {e}", in_path.display()))?;
+    let pkg = sonix_core::persistence::SforgePackage::import_bundle(&bytes)
+        .map_err(|e| format!("E_VALIDATION: pacote .sforgepkg inválido: {e}"))?;
+
+    let (presets_dir, irs_dir) = package_data_dirs(ctx);
+    std::fs::create_dir_all(&presets_dir)
+        .map_err(|e| format!("E_ENGINE: falha ao preparar pasta de presets: {e}"))?;
+    std::fs::create_dir_all(&irs_dir)
+        .map_err(|e| format!("E_ENGINE: falha ao preparar pasta de IRs: {e}"))?;
+
+    let mut imported_presets = Vec::new();
+    for doc in pkg.all_presets() {
+        if !is_valid_preset_id(&doc.metadata.id) {
+            return Err(format!(
+                "E_VALIDATION: pacote contém preset com ID inválido '{}'",
+                doc.metadata.id
+            ));
+        }
+        let target = presets_dir.join(format!("{}.sonixpreset", doc.metadata.id));
+        if target.parent() != Some(presets_dir.as_path()) {
+            return Err("E_VALIDATION: caminho de preset fora da pasta permitida".to_string());
+        }
+        let json = doc
+            .to_json_str()
+            .map_err(|e| format!("E_ENGINE: falha ao serializar preset '{}': {e}", doc.metadata.id))?;
+        write_atomic_file(&target, json.as_bytes())?;
+        imported_presets.push(doc.metadata.id.clone());
+    }
+
+    let base_dir = presets_dir
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| irs_dir.clone());
+    let mut imported_irs = Vec::new();
+    for (rel_path, ir_bytes) in pkg.list_irs() {
+        let dest = if rel_path.starts_with("irs/") {
+            base_dir.join(rel_path)
+        } else {
+            irs_dir.join(rel_path)
+        };
+        if !dest.starts_with(&irs_dir) {
+            return Err(format!(
+                "E_VALIDATION: caminho de recurso fora da pasta irs: '{}'",
+                rel_path
+            ));
+        }
+        write_atomic_file(&dest, ir_bytes)?;
+        imported_irs.push(rel_path.clone());
+    }
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "path": in_path.display().to_string(),
+        "imported_presets": imported_presets,
+        "imported_irs": imported_irs,
+    }))
+}

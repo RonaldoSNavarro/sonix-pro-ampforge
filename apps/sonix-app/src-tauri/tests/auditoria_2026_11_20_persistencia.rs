@@ -168,3 +168,54 @@ fn aud_18_arquivo_corrompido() {
         "AUD-18: arquivo original inválido não deve permanecer como calibration.json"
     );
 }
+
+#[test]
+fn aud_19_export_e_import_package_presets_e_irs() {
+    let guard = TempDirGuard::new("sonix_aud_19_pkg");
+    let data_dir = guard.path.join("appdata");
+    let presets_dir = data_dir.join("presets");
+    let irs_dir = data_dir.join("irs");
+    std::fs::create_dir_all(&presets_dir).unwrap();
+    std::fs::create_dir_all(&irs_dir).unwrap();
+
+    // Prepara um runtime apontando para data_dir/presets e salva dois presets e um IR.
+    let (mut rt_export, _) = build_runtime_with_data_dir(data_dir.clone(), Some("PkgDev"), false);
+    rt_export.api_ctx.custom_presets_dir = Some(presets_dir.clone());
+
+    let (s_save, _, b_save) = dispatch(
+        &rt_export.api_ctx,
+        "/api/presets/save",
+        "POST",
+        br#"{"id":"pkg_one","name":"Pkg One"}"#,
+    );
+    assert_eq!(s_save, 200, "save falhou: {}", String::from_utf8_lossy(&b_save));
+
+    let ir_bytes = vec![0x52u8, 0x49, 0x46, 0x46, 0x10, 0x20, 0x30, 0x40, 0x55];
+    std::fs::write(irs_dir.join("cab_pkg.wav"), &ir_bytes).unwrap();
+
+    let pkg_path = guard.path.join("meu_pacote.sforgepkg");
+    let exp_res = sonix_desktop::api::export_sforge_package(
+        &rt_export.api_ctx,
+        &["pkg_one".to_string(), "brit800".to_string()],
+        &pkg_path,
+    )
+    .expect("export_sforge_package deve exportar pacote v2");
+    assert_eq!(exp_res["presets_exported"].as_u64(), Some(2));
+    assert!(pkg_path.exists(), ".sforgepkg deve ter sido gravado em disco");
+
+    // Importa em outra pasta de destino limpa
+    let dest_data = guard.path.join("dest_appdata");
+    let dest_presets = dest_data.join("presets");
+    let (mut rt_import, _) = build_runtime_with_data_dir(dest_data.clone(), Some("PkgDev"), false);
+    rt_import.api_ctx.custom_presets_dir = Some(dest_presets.clone());
+
+    let imp_res = sonix_desktop::api::import_sforge_package(&rt_import.api_ctx, &pkg_path)
+        .expect("import_sforge_package deve importar pacote v2");
+    assert!(dest_presets.join("pkg_one.sonixpreset").exists());
+    assert!(dest_presets.join("brit800.sonixpreset").exists());
+    assert_eq!(
+        std::fs::read(dest_data.join("irs").join("cab_pkg.wav")).unwrap(),
+        ir_bytes
+    );
+    assert!(imp_res["imported_presets"].as_array().unwrap().len() == 2);
+}

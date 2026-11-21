@@ -241,6 +241,7 @@ function offlinePreviewStub(
 export class SonixTransport {
   readonly coalescer: ParamCoalescer;
   private readonly invokeFn: InvokeFn;
+  private readonly hasCustomInvoke: boolean;
   private onBridgeError?: (msg: string | null) => void;
   private onNotice?: (msg: string, kind: BridgeFaultKind) => void;
   private lastSeq = { telemetry: 0, tuner: 0, scope: 0 };
@@ -251,6 +252,7 @@ export class SonixTransport {
     onBridgeError?: (msg: string | null) => void;
     onNotice?: (msg: string, kind: BridgeFaultKind) => void;
   } = {}) {
+    this.hasCustomInvoke = Boolean(opts.invokeFn);
     this.invokeFn = opts.invokeFn ?? defaultInvoke;
     this.onBridgeError = opts.onBridgeError;
     this.onNotice = opts.onNotice;
@@ -389,12 +391,32 @@ export class SonixTransport {
   }
 
   async openFileDialog(filters: Array<{ name: string; extensions: string[] }>): Promise<string | null> {
-    if (!isTauriRuntime()) return null;
+    if (!isTauriRuntime() && !this.hasCustomInvoke) return null;
     const selected = await this.invokeFn('plugin:dialog|open', {
       options: { multiple: false, filters },
     });
     if (typeof selected === 'string') return selected;
     return null;
+  }
+
+  async saveFileDialog(
+    filters: Array<{ name: string; extensions: string[] }>,
+    defaultPath?: string,
+  ): Promise<string | null> {
+    if (!isTauriRuntime() && !this.hasCustomInvoke) return null;
+    const selected = await this.invokeFn('plugin:dialog|save', {
+      options: { filters, defaultPath },
+    });
+    if (typeof selected === 'string') return selected;
+    return null;
+  }
+
+  exportPackage(presetIds: string[], path: string): Promise<Record<string, unknown>> {
+    return this.call('export_package', { presetIds, path });
+  }
+
+  importPackage(path: string): Promise<Record<string, unknown>> {
+    return this.call('import_package', { path });
   }
 
   async readFileBytes(path: string): Promise<number[]> {
