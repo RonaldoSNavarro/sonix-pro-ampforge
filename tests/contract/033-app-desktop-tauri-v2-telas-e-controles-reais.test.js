@@ -167,3 +167,48 @@ test('CA-8 e CA-10: Fontes offline e CSP/bundle Tauri sem origens externas ou wi
   assert.ok(!csp.includes('*'), 'CSP não pode ter wildcard *');
   assert.equal(conf.bundle.windows.webviewInstallMode.type, 'offlineInstaller');
 });
+
+test('CA-12: faixa de dispositivo de audio desconectado aparece com lost e some com ok', async () => {
+  // AUD-05
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', {
+    url: 'http://localhost/',
+  });
+  for (const k of [
+    'window', 'document', 'HTMLElement', 'customElements', 'Element', 'SVGElement',
+    'Node', 'Event', 'MouseEvent', 'KeyboardEvent', 'WheelEvent',
+  ]) {
+    globalThis[k] = k === 'window' ? dom.window : k === 'document' ? dom.window.document : dom.window[k];
+  }
+  globalThis.PointerEvent = dom.window.MouseEvent;
+
+  const { AppStore } = await import('../../apps/sonix-app/ui/src/store.ts');
+  const { mountAppShell, syncConnectionBanner } = await import('../../apps/sonix-app/ui/src/shell.ts');
+
+  const store = new AppStore();
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  const unmount = mountAppShell(root, store);
+  const bannerEl = root.querySelector('.disconnect-banner');
+  assert.ok(bannerEl, 'Faixa disconnect-banner deve existir no shell');
+
+  syncConnectionBanner(bannerEl, store);
+  assert.equal(bannerEl.style.display, 'none');
+
+  store.applyTelemetry({ device_state: 'lost', connected: false });
+  assert.equal(store.audioDeviceState, 'lost');
+  assert.equal(store.deviceDisconnected, true);
+  assert.equal(bannerEl.style.display, 'block');
+  assert.equal(
+    bannerEl.textContent,
+    'Dispositivo de áudio desconectado — tentando reconectar…',
+  );
+
+  store.applyTelemetry({ device_state: 'ok', connected: true });
+  assert.equal(store.audioDeviceState, 'ok');
+  assert.equal(store.deviceDisconnected, false);
+  assert.equal(bannerEl.style.display, 'none');
+
+  unmount();
+  root.remove();
+});

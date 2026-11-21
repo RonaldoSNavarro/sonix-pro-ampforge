@@ -7,13 +7,174 @@ use sonix_desktop::api::{dispatch, ApiContext};
 use sonix_desktop::audio::{
     AudioDriverError, AudioStatusTelemetry, InputChannel, RealtimeDspChain,
     RealtimeDuplexAudioStreams, RealtimeDuplexEngine, TelemetryBuffer,
+    STREAM_ERR_DEVICE_NOT_AVAILABLE, STREAM_ERR_OTHER,
 };
 use sonix_desktop::DesktopAudioHost;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tauri::State;
+
+/// Configuração ativa de dispositivo de áudio para recuperação automática (AUD-05).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioDeviceConfig {
+    pub mode: String,
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub buffer_size: Option<u32>,
+}
+
+impl Default for AudioDeviceConfig {
+    fn default() -> Self {
+        Self {
+            mode: "wasapi_shared".to_string(),
+            input_device: None,
+            output_device: None,
+            sample_rate: None,
+            buffer_size: None,
+        }
+    }
+}
+
+/// Supervisor assíncrono que observa erros de stream CPAL a >= 10 Hz e reabre automaticamente (AUD-05).
+pub struct AudioDeviceSupervisor {
+    running: Arc<AtomicBool>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl AudioDeviceSupervisor {
+    pub fn start_with_opener<T, F, E>(
+        api_ctx: ApiContext,
+        duplex: Arc<RealtimeDuplexEngine>,
+        dsp_chain: Arc<Mutex<RealtimeDspChain>>,
+        active_streams: Arc<Mutex<Option<T>>>,
+        config: Arc<Mutex<AudioDeviceConfig>>,
+        mut opener: F,
+        mut on_state_change: E,
+    ) -> Self
+    where
+        T: Send + 'static,
+        F: FnMut(
+                Arc<RealtimeDuplexEngine>,
+                Arc<Mutex<RealtimeDspChain>>,
+                Arc<TelemetryBuffer>,
+                &AudioDeviceConfig,
+            ) -> Result<(Option<T>, AudioStatusTelemetry), AudioDriverError>
+            + Send
+            + 'static,
+        E: FnMut(&str) + Send + 'static,
+    {
+        let running = Arc::new(AtomicBool::new(true));
+        let r = running.clone();
+
+        let handle = thread::spawn(move || {
+            let mut reopen_pending = false;
+            let mut last_attempt = Instant::now();
+
+            while r.load(Ordering::Relaxed) {
+                let err_code = api_ctx.telemetry.take_stream_error_code();
+                if err_code == STREAM_ERR_DEVICE_NOT_AVAILABLE {
+                    if let Ok(mut guard) = active_streams.lock() {
+                        *guard = None;
+                    }
+                    if !api_ctx.telemetry.is_device_lost() {
+                        api_ctx.telemetry.set_device_lost(true);
+                        on_state_change("lost");
+                    }
+                    reopen_pending = true;
+                    last_attempt = Instant::now();
+                } else if err_code == STREAM_ERR_OTHER {
+                    eprintln!("SONIX AUDIO WARN: erro no stream CPAL (Other); tentando reabrir stream");
+                    if let Ok(mut guard) = active_streams.lock() {
+                        *guard = None;
+                    }
+                    let cfg = config
+                        .lock()
+                        .map(|g| g.clone())
+                        .unwrap_or_default();
+                    match opener(
+                        duplex.clone(),
+                        dsp_chain.clone(),
+                        api_ctx.telemetry.clone(),
+                        &cfg,
+                    ) {
+                        Ok((new_stream, actual_tele)) => {
+                            duplex.set_target_period(actual_tele.output_period_frames as usize);
+                            if let Ok(mut guard) = active_streams.lock() {
+                                *guard = new_stream;
+                            }
+                            if let Ok(mut guard) = api_ctx.audio_telemetry.lock() {
+                                *guard = Some(actual_tele);
+                            }
+                            api_ctx.telemetry.set_device_lost(false);
+                            on_state_change("ok");
+                            reopen_pending = false;
+                        }
+                        Err(e) => {
+                            eprintln!("SONIX AUDIO WARN: reabertura imediata falhou ({}); entrando em recuperacao periodica", e);
+                            if !api_ctx.telemetry.is_device_lost() {
+                                api_ctx.telemetry.set_device_lost(true);
+                                on_state_change("lost");
+                            }
+                            reopen_pending = true;
+                            last_attempt = Instant::now();
+                        }
+                    }
+                }
+
+                if reopen_pending && last_attempt.elapsed() >= Duration::from_secs(1) {
+                    last_attempt = Instant::now();
+                    let cfg = config
+                        .lock()
+                        .map(|g| g.clone())
+                        .unwrap_or_default();
+                    if let Ok((new_stream, actual_tele)) = opener(
+                        duplex.clone(),
+                        dsp_chain.clone(),
+                        api_ctx.telemetry.clone(),
+                        &cfg,
+                    ) {
+                        duplex.set_target_period(actual_tele.output_period_frames as usize);
+                        if let Ok(mut guard) = active_streams.lock() {
+                            *guard = new_stream;
+                        }
+                        if let Ok(mut guard) = api_ctx.audio_telemetry.lock() {
+                            *guard = Some(actual_tele);
+                        }
+                        api_ctx.telemetry.set_device_lost(false);
+                        on_state_change("ok");
+                        reopen_pending = false;
+                    }
+                }
+
+                thread::sleep(Duration::from_millis(25));
+            }
+        });
+
+        Self {
+            running,
+            worker: Mutex::new(Some(handle)),
+        }
+    }
+
+    pub fn stop_and_join(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = self.worker.lock() {
+            if let Some(h) = guard.take() {
+                let _ = h.join();
+            }
+        }
+    }
+}
+
+impl Drop for AudioDeviceSupervisor {
+    fn drop(&mut self) {
+        self.stop_and_join();
+    }
+}
 
 /// Controle da thread fallback quando o app inicia sem dispositivo real (Spec 049 CA-5).
 pub struct FallbackWorkerControl {
@@ -39,6 +200,7 @@ pub struct AudioRuntimeControl {
     pub dsp_chain: Arc<Mutex<RealtimeDspChain>>,
     pub active_streams: Arc<Mutex<Option<RealtimeDuplexAudioStreams>>>,
     pub fallback: Arc<FallbackWorkerControl>,
+    pub device_config: Arc<Mutex<AudioDeviceConfig>>,
 }
 
 /// Resposta bruta espelhando `(status, content_type, body)` do despachante puro `api::dispatch`.
@@ -451,7 +613,7 @@ pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<
         .and_then(|v| v.as_str())
         .unwrap_or(backend);
     let mode_enum = host.validate_requested_mode(requested_mode_str)?;
-    configure_audio_device_generic(
+    let res = configure_audio_device_generic(
         &payload,
         &state.api_ctx,
         &ctrl.duplex,
@@ -465,7 +627,18 @@ pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<
             let tele = streams.telemetry.clone();
             Ok((Some(streams), tele))
         },
-    )
+    );
+    if let Ok(ref val) = res {
+        if let Ok(mut cfg) = ctrl.device_config.lock() {
+            cfg.mode = requested_mode_str.to_string();
+            cfg.input_device = val.get("input_device").and_then(|v| v.as_str()).map(ToString::to_string);
+            cfg.output_device = val.get("output_device").and_then(|v| v.as_str()).map(ToString::to_string);
+            cfg.sample_rate = val.get("sample_rate").and_then(|v| v.as_u64()).map(|v| v as u32);
+            cfg.buffer_size = val.get("buffer_size").and_then(|v| v.as_u64()).map(|v| v as u32);
+        }
+        state.api_ctx.telemetry.set_device_lost(false);
+    }
+    res
 }
 
 #[tauri::command]

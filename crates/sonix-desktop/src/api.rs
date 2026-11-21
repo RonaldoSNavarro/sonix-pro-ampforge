@@ -1118,6 +1118,14 @@ pub fn dispatch(
                     "recovery_count".to_string(),
                     serde_json::json!(ctx.telemetry.recovery_count()),
                 );
+                obj.insert(
+                    "device_state".to_string(),
+                    serde_json::json!(ctx.telemetry.device_state_str()),
+                );
+                obj.insert(
+                    "connected".to_string(),
+                    serde_json::json!(!ctx.telemetry.is_device_lost()),
+                );
                 obj.insert("mode_capabilities".to_string(), caps);
             }
             json_response(200, &val)

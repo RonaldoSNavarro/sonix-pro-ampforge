@@ -4,7 +4,9 @@
 pub mod commands;
 pub mod streams;
 
-use commands::{AppRuntime, AudioRuntimeControl, FallbackWorkerControl};
+use commands::{
+    AppRuntime, AudioDeviceConfig, AudioDeviceSupervisor, AudioRuntimeControl, FallbackWorkerControl,
+};
 use sonix_desktop::api::{ApiContext, AppState};
 use sonix_desktop::audio::{
     DesktopAudioHost, RealtimeDspChain, RealtimeDuplexAudioStreams, RealtimeDuplexEngine,
@@ -16,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use streams::StreamCoordinator;
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 static AUDIO_HOST_SINGLETON_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -39,12 +41,16 @@ pub fn ensure_single_audio_host(started_count: &AtomicUsize) -> bool {
 }
 
 struct RuntimeKeepAlive {
+    supervisor: Option<AudioDeviceSupervisor>,
     _streams: Arc<Mutex<Option<RealtimeDuplexAudioStreams>>>,
     fallback: Arc<FallbackWorkerControl>,
 }
 
 impl Drop for RuntimeKeepAlive {
     fn drop(&mut self) {
+        if let Some(ref sup) = self.supervisor {
+            sup.stop_and_join();
+        }
         self.fallback.stop_and_join();
         if let Ok(mut s) = self._streams.lock() {
             *s = None;
@@ -53,7 +59,7 @@ impl Drop for RuntimeKeepAlive {
     }
 }
 
-fn build_runtime() -> AppRuntime {
+fn build_runtime() -> (AppRuntime, Arc<Mutex<Option<tauri::AppHandle>>>) {
     let calib_store = CalibrationStore::new();
     let calib = calib_store.get("default");
     build_runtime_with_calibration(calib_store, calib, true)
@@ -61,14 +67,16 @@ fn build_runtime() -> AppRuntime {
 
 /// Constrói runtime para testes de contrato de inicialização sem abrir hardware WASAPI real (Spec 050, CA-2/CA-4).
 pub fn build_runtime_for_startup_test(calib: Option<(f32, f32)>) -> AppRuntime {
-    build_runtime_with_calibration(CalibrationStore::new(), calib, false)
+    build_runtime_with_calibration(CalibrationStore::new(), calib, false).0
 }
 
 fn build_runtime_with_calibration(
     calib_store: CalibrationStore,
     calib: Option<(f32, f32)>,
     start_audio_host: bool,
-) -> AppRuntime {
+) -> (AppRuntime, Arc<Mutex<Option<tauri::AppHandle>>>) {
+    let app_handle_slot: Arc<Mutex<Option<tauri::AppHandle>>> = Arc::new(Mutex::new(None));
+    let device_config = Arc::new(Mutex::new(AudioDeviceConfig::default()));
     let audio_telemetry = Arc::new(Mutex::new(None));
     let duplex = Arc::new(RealtimeDuplexEngine::new(65536));
     let telemetry = Arc::new(TelemetryBuffer::new(512));
@@ -109,6 +117,21 @@ fn build_runtime_with_calibration(
 
         if let Some(ref s) = streams {
             duplex.set_target_period(s.telemetry.output_period_frames as usize);
+            if let Ok(mut cfg) = device_config.lock() {
+                cfg.mode = s.telemetry.mode.clone();
+                cfg.input_device = if s.telemetry.input_device.is_empty() {
+                    None
+                } else {
+                    Some(s.telemetry.input_device.clone())
+                };
+                cfg.output_device = if s.telemetry.output_device.is_empty() {
+                    None
+                } else {
+                    Some(s.telemetry.output_device.clone())
+                };
+                cfg.sample_rate = Some(s.telemetry.sample_rate);
+                cfg.buffer_size = Some(s.telemetry.output_period_frames);
+            }
             if let Ok(mut guard) = audio_telemetry.lock() {
                 *guard = Some(s.telemetry.clone());
             }
@@ -188,6 +211,7 @@ fn build_runtime_with_calibration(
         dsp_chain: dsp_chain.clone(),
         active_streams: active_streams.clone(),
         fallback: fallback_ctrl.clone(),
+        device_config: device_config.clone(),
     });
 
     let mut api_ctx = ApiContext::new(
@@ -208,20 +232,64 @@ fn build_runtime_with_calibration(
         .join("SonixPro");
     api_ctx.set_data_dir(default_data_dir);
 
-    AppRuntime {
+    let streams_opened = active_streams
+        .lock()
+        .map(|g| g.is_some())
+        .unwrap_or(false);
+    let supervisor = if streams_opened {
+        let handle_for_sup = app_handle_slot.clone();
+        Some(AudioDeviceSupervisor::start_with_opener(
+            api_ctx.clone(),
+            audio_ctrl.duplex.clone(),
+            audio_ctrl.dsp_chain.clone(),
+            active_streams.clone(),
+            device_config,
+            |d, dsp, tel, cfg| {
+                let host = DesktopAudioHost::new();
+                let mode = host
+                    .validate_requested_mode(&cfg.mode)
+                    .map_err(sonix_desktop::audio::AudioDriverError::InitFailed)?;
+                let streams = DesktopAudioHost::start_realtime_duplex_with_mode(
+                    d,
+                    dsp,
+                    tel,
+                    mode,
+                    cfg.input_device.as_deref(),
+                    cfg.output_device.as_deref(),
+                    cfg.sample_rate,
+                    cfg.buffer_size,
+                )?;
+                let tele = streams.telemetry.clone();
+                Ok((Some(streams), tele))
+            },
+            move |state| {
+                if let Ok(g) = handle_for_sup.lock() {
+                    if let Some(ref handle) = *g {
+                        let _ = handle.emit("audio_device_state", state);
+                    }
+                }
+            },
+        ))
+    } else {
+        None
+    };
+
+    let runtime = AppRuntime {
         api_ctx,
         streams: Arc::new(StreamCoordinator::new()),
         audio_ctrl: Some(audio_ctrl),
         _keep_alive: Arc::new(RuntimeKeepAlive {
+            supervisor,
             _streams: active_streams,
             fallback: fallback_ctrl,
         }),
-    }
+    };
+    (runtime, app_handle_slot)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let runtime = build_runtime();
+    let (runtime, app_handle_slot) = build_runtime();
     let streams_for_events = Arc::clone(&runtime.streams);
 
     tauri::Builder::default()
@@ -235,6 +303,12 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .setup(move |app| {
+            if let Ok(mut g) = app_handle_slot.lock() {
+                *g = Some(app.handle().clone());
+            }
+            Ok(())
+        })
         .manage(runtime)
         .on_window_event(move |window, event| match event {
             WindowEvent::Resized(_) => {

@@ -409,6 +409,21 @@ export function installGlobalShortcuts(store: AppStore): () => void {
   };
 }
 
+export function syncConnectionBanner(
+  banner: { style: { display: string }; textContent: string | null },
+  store: Pick<AppStore, 'audioDeviceState' | 'deviceDisconnected' | 'bridgeError'>,
+): void {
+  if (store.audioDeviceState === 'lost') {
+    banner.style.display = 'block';
+    banner.textContent = 'Dispositivo de áudio desconectado — tentando reconectar…';
+  } else if (store.bridgeError) {
+    banner.style.display = 'block';
+    banner.textContent = `Motor DSP desconectado (${store.bridgeError})`;
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
 function updateLiveReadouts(
   appRoot: HTMLElement,
   store: AppStore,
@@ -440,12 +455,7 @@ function updateLiveReadouts(
     ? '<span style="width:6px;height:6px;border-radius:50%;background:#4ee680;box-shadow:0 0 6px #4ee680;display:inline-block;"></span><span style="color:#4ee680;">ponte UI→DSP ok</span>'
     : `<span style="width:6px;height:6px;border-radius:50%;background:#ff5e5e;display:inline-block;"></span><span style="color:#ff7b7b;">ponte UI→DSP erro</span>`;
 
-  if (store.bridgeError) {
-    refs.banner.style.display = 'block';
-    refs.banner.textContent = `Motor DSP desconectado (${store.bridgeError})`;
-  } else {
-    refs.banner.style.display = 'none';
-  }
+  syncConnectionBanner(refs.banner, store);
 
   if (store.notice) {
     refs.toast.style.display = 'block';

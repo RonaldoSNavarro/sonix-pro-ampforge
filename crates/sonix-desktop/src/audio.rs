@@ -24,6 +24,11 @@ use ampforge_dsp::looper::{LooperPosition, LooperProcessor};
 use ampforge_dsp::modshop::{PowerTube, PreampTube, RectifierType, ToneStackTopology};
 use ampforge_dsp::queue::SpscOwnedQueue;
 use ampforge_dsp::tuner::{TunerOutputMode, TunerPitchResult, TunerProcessor};
+pub use cpal::{Error as CpalError, ErrorKind as CpalErrorKind};
+
+pub const STREAM_ERR_OK: u8 = 0;
+pub const STREAM_ERR_DEVICE_NOT_AVAILABLE: u8 = 1;
+pub const STREAM_ERR_OTHER: u8 = 2;
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum AudioDriverError {
@@ -1301,6 +1306,23 @@ impl DesktopAudioHost {
         )
     }
 
+    /// Grava código de erro do callback CPAL sem alocar e sem locks (AUD-05).
+    /// Prioriza `ErrorKind::DeviceNotAvailable` (1) sobre outros erros (2).
+    #[inline]
+    pub fn record_cpal_stream_error(slot: &AtomicU8, err: cpal::Error) {
+        let code = match err.kind() {
+            cpal::ErrorKind::DeviceNotAvailable => STREAM_ERR_DEVICE_NOT_AVAILABLE,
+            _ => STREAM_ERR_OTHER,
+        };
+        let _ = slot.try_update(Ordering::AcqRel, Ordering::Relaxed, |cur| {
+            if cur == STREAM_ERR_DEVICE_NOT_AVAILABLE {
+                None
+            } else {
+                Some(code)
+            }
+        });
+    }
+
     fn start_realtime_duplex_on_host(
         host: &cpal::Host,
         backend_name: &str,
@@ -1369,6 +1391,7 @@ impl DesktopAudioHost {
         telemetry.reset_observed_periods();
         let observed_in_period = Arc::new(AtomicU32::new(target_period));
         let observed_out_period = Arc::new(AtomicU32::new(target_period));
+        let err_slot_base = telemetry.stream_error_code_handle();
 
         let duplex_in = duplex.clone();
         let tele_in = telemetry.clone();
@@ -1376,13 +1399,14 @@ impl DesktopAudioHost {
         let mut mono_buf = vec![0.0f32; 4096];
         let (in_stream, in_opened_fixed) = match in_config.sample_format() {
             cpal::SampleFormat::F32 => {
+                let err_cb = err_slot_base.clone();
                 let build_res = in_device.build_input_stream(
                     in_stream_config.clone(),
                     move |data: &[f32], _| {
                         Self::record_observed_period(&obs_in_f32, data.len(), in_channels);
                         Self::process_input_callback_f32(data, in_channels, &mut mono_buf, &duplex_in, &tele_in);
                     },
-                    |_err| {},
+                    move |err| Self::record_cpal_stream_error(&err_cb, err),
                     None,
                 );
                 match build_res {
@@ -1392,6 +1416,7 @@ impl DesktopAudioHost {
                         let duplex_fb = duplex.clone();
                         let tele_fb = telemetry.clone();
                         let obs_in_fb = observed_in_period.clone();
+                        let err_fb = err_slot_base.clone();
                         let mut in_fb_config: cpal::StreamConfig = in_config.clone().into();
                         in_fb_config.sample_rate = aligned_in_sr;
                         let s = in_device.build_input_stream(
@@ -1400,7 +1425,7 @@ impl DesktopAudioHost {
                                 Self::record_observed_period(&obs_in_fb, data.len(), in_channels);
                                 Self::process_input_callback_f32(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
                             },
-                            |_| {},
+                            move |err| Self::record_cpal_stream_error(&err_fb, err),
                             None,
                         ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e)))?;
                         (s, false)
@@ -1409,19 +1434,21 @@ impl DesktopAudioHost {
             }
             cpal::SampleFormat::I16 => {
                 let obs_in_i16 = observed_in_period.clone();
+                let err_cb = err_slot_base.clone();
                 let s = in_device.build_input_stream(
                     in_stream_config.clone(),
                     move |data: &[i16], _| {
                         Self::record_observed_period(&obs_in_i16, data.len(), in_channels);
                         Self::process_input_callback_i16(data, in_channels, &mut mono_buf, &duplex_in, &tele_in);
                     },
-                    |_err| {},
+                    move |err| Self::record_cpal_stream_error(&err_cb, err),
                     None,
                 ).or_else(|_| {
                     let mut mono_buf_fb = vec![0.0f32; 4096];
                     let duplex_fb = duplex.clone();
                     let tele_fb = telemetry.clone();
                     let obs_in_fb = observed_in_period.clone();
+                    let err_fb = err_slot_base.clone();
                     let mut in_fb_config: cpal::StreamConfig = in_config.clone().into();
                     in_fb_config.sample_rate = aligned_in_sr;
                     in_device.build_input_stream(
@@ -1430,7 +1457,7 @@ impl DesktopAudioHost {
                             Self::record_observed_period(&obs_in_fb, data.len(), in_channels);
                             Self::process_input_callback_i16(data, in_channels, &mut mono_buf_fb, &duplex_fb, &tele_fb);
                         },
-                        |_| {},
+                        move |err| Self::record_cpal_stream_error(&err_fb, err),
                         None,
                     ).map_err(|e2| AudioDriverError::InitFailed(format!("Falha ao construir stream de entrada: {}", e2)))
                 })?;
@@ -1453,6 +1480,7 @@ impl DesktopAudioHost {
                 let duplex_f32 = duplex.clone();
                 let dsp_chain_f32 = dsp_chain.clone();
                 let tele_f32 = telemetry.clone();
+                let err_cb = err_slot_base.clone();
 
                 let build_res = out_device.build_output_stream(
                     out_stream_config.clone(),
@@ -1469,7 +1497,7 @@ impl DesktopAudioHost {
                             Some(&obs_out_c),
                         );
                     },
-                    |_err| {},
+                    move |err| Self::record_cpal_stream_error(&err_cb, err),
                     None,
                 );
                 match build_res {
@@ -1481,6 +1509,7 @@ impl DesktopAudioHost {
                         let dsp_chain_fb = dsp_chain.clone();
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
+                        let err_fb = err_slot_base.clone();
                         let mut out_fb_config: cpal::StreamConfig = out_config.clone().into();
                         out_fb_config.sample_rate = aligned_out_sr;
                         let s = out_device.build_output_stream(
@@ -1498,7 +1527,7 @@ impl DesktopAudioHost {
                                     Some(&obs_fb),
                                 );
                             },
-                            |_| {},
+                            move |err| Self::record_cpal_stream_error(&err_fb, err),
                             None,
                         ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?;
                         (s, false)
@@ -1512,6 +1541,7 @@ impl DesktopAudioHost {
                 let dsp_chain_i16 = dsp_chain.clone();
                 let tele_i16 = telemetry.clone();
                 let obs_i16 = observed_out_period.clone();
+                let err_cb = err_slot_base.clone();
 
                 let build_res = out_device.build_output_stream(
                     out_stream_config.clone(),
@@ -1528,7 +1558,7 @@ impl DesktopAudioHost {
                             Some(&obs_i16),
                         );
                     },
-                    |_err| {},
+                    move |err| Self::record_cpal_stream_error(&err_cb, err),
                     None,
                 );
                 match build_res {
@@ -1540,6 +1570,7 @@ impl DesktopAudioHost {
                         let dsp_chain_fb = dsp_chain.clone();
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
+                        let err_fb = err_slot_base.clone();
                         let mut out_fb_config: cpal::StreamConfig = out_config.clone().into();
                         out_fb_config.sample_rate = aligned_out_sr;
                         let s = out_device.build_output_stream(
@@ -1557,7 +1588,7 @@ impl DesktopAudioHost {
                                     Some(&obs_fb),
                                 );
                             },
-                            |_| {},
+                            move |err| Self::record_cpal_stream_error(&err_fb, err),
                             None,
                         ).map_err(|e| AudioDriverError::InitFailed(format!("Falha ao construir stream de saída: {}", e)))?;
                         (s, false)
@@ -5248,6 +5279,8 @@ pub struct TelemetrySnapshot {
     pub engine_faulted: bool,
     pub panic_count: u64,
     pub recovery_count: u64,
+    pub device_state: String,
+    pub connected: bool,
 }
 
 /// Buffer atômico circular para telemetria sem bloqueio nem alocação da thread de áudio (Spec 013, CA-6 & Spec 037, CA-5)
@@ -5267,6 +5300,8 @@ pub struct TelemetryBuffer {
     engine_faulted: AtomicBool,
     panic_count: AtomicU64,
     recovery_count: AtomicU64,
+    stream_error_code: Arc<AtomicU8>,
+    device_lost: AtomicBool,
 }
 
 impl TelemetryBuffer {
@@ -5289,6 +5324,37 @@ impl TelemetryBuffer {
             engine_faulted: AtomicBool::new(false),
             panic_count: AtomicU64::new(0),
             recovery_count: AtomicU64::new(0),
+            stream_error_code: Arc::new(AtomicU8::new(STREAM_ERR_OK)),
+            device_lost: AtomicBool::new(false),
+        }
+    }
+
+    #[inline]
+    pub fn stream_error_code_handle(&self) -> Arc<AtomicU8> {
+        self.stream_error_code.clone()
+    }
+
+    #[inline]
+    pub fn take_stream_error_code(&self) -> u8 {
+        self.stream_error_code.swap(STREAM_ERR_OK, Ordering::AcqRel)
+    }
+
+    #[inline]
+    pub fn set_device_lost(&self, lost: bool) {
+        self.device_lost.store(lost, Ordering::Release);
+    }
+
+    #[inline]
+    pub fn is_device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    pub fn device_state_str(&self) -> &'static str {
+        if self.is_device_lost() {
+            "lost"
+        } else {
+            "ok"
         }
     }
 
@@ -5460,6 +5526,8 @@ impl TelemetryBuffer {
             engine_faulted: self.engine_faulted.load(Ordering::Acquire),
             panic_count: self.panic_count.load(Ordering::Relaxed),
             recovery_count: self.recovery_count.load(Ordering::Relaxed),
+            device_state: self.device_state_str().to_string(),
+            connected: !self.is_device_lost(),
         }
     }
 }

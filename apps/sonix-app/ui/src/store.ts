@@ -59,6 +59,7 @@ export interface AudioStatusData {
   input_device: string;
   output_device: string;
   fallback_reason?: string | null;
+  device_state?: 'ok' | 'lost' | string;
   connected?: boolean;
   mode_capabilities?: {
     wasapi_shared?: boolean;
@@ -146,6 +147,7 @@ export class AppStore {
   lastSavedStatus = '';
   bridgeError: string | null = null;
   deviceDisconnected = false;
+  audioDeviceState: 'ok' | 'lost' = 'ok';
   isDraggingKnob = false;
   bootstrapped = false;
   reducedMotion =
@@ -403,6 +405,7 @@ export class AppStore {
       if (st && typeof st === 'object') {
         Object.assign(this.audioStatus, st);
         this.deviceDisconnected = st.connected === false;
+        this.audioDeviceState = st.device_state === 'lost' ? 'lost' : 'ok';
       }
     } catch {
       // ignore
@@ -542,8 +545,12 @@ export class AppStore {
     if (typeof p.underruns === 'number') {
       this.audioStatus.underruns = p.underruns;
     }
-    if (p.connected === false) {
+    if (p.device_state === 'lost' || p.connected === false) {
+      this.audioDeviceState = 'lost';
       this.deviceDisconnected = true;
+    } else if (p.device_state === 'ok' || p.connected === true) {
+      this.audioDeviceState = 'ok';
+      this.deviceDisconnected = false;
     }
     this.emit('telemetry');
   }
@@ -800,8 +807,10 @@ export class AppStore {
         output_device: this.audioStatus.output_device,
       });
       this.deviceDisconnected = false;
+      this.audioDeviceState = 'ok';
     } catch {
       this.deviceDisconnected = true;
+      this.audioDeviceState = 'lost';
     }
     this.emit();
   }
