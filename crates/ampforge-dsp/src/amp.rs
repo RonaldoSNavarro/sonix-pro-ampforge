@@ -511,6 +511,7 @@ pub struct WhiteBoxAmpProcessor {
     transicao_amostras_feitas: usize,
     transicao_total_amostras: usize,
     transicao_buf: [f32; 64],
+    measured_latencies: [u32; 4],
 }
 
 #[derive(Debug, Clone)]
@@ -1001,6 +1002,22 @@ impl AmpCore {
     }
 
     fn update_aa_filters(&mut self) {
+        if self.oversampling_factor <= 1 {
+            let identity = BiquadFilter {
+                b0: 1.0,
+                b1: 0.0,
+                b2: 0.0,
+                a1: 0.0,
+                a2: 0.0,
+                x1: 0.0,
+                x2: 0.0,
+                y1: 0.0,
+                y2: 0.0,
+            };
+            self.aa_filters = [identity; 14];
+            self.ai_filters = [identity; 4];
+            return;
+        }
         let os = self.oversampling_factor.max(2) as f64;
         let fs_base = self.sample_rate as f64;
         let fs_os = fs_base * os;
@@ -1057,7 +1074,7 @@ impl AmpCore {
     }
 
     pub fn measure_aa_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
-        let fs_os = (self.sample_rate as f64) * (self.oversampling_factor.max(2) as f64);
+        let fs_os = (self.sample_rate as f64) * (self.oversampling_factor.max(1) as f64);
         let w = 2.0 * std::f64::consts::PI * freq_hz / fs_os;
         let cos_w = w.cos();
         let sin_w = w.sin();
@@ -1166,8 +1183,8 @@ impl AmpCore {
     }
 
     fn process_subblock(&mut self, input: &[f32], output: &mut [f32]) {
-        let os_factor = self.oversampling_factor.max(2);
-        let step_stride = (8 / os_factor).max(1);
+        let os_factor = self.oversampling_factor.max(1);
+        let step_stride = if os_factor <= 1 { 8 } else { (8 / os_factor).max(1) };
         let fs_base = self.sample_rate as f64;
         let sr = fs_base * (os_factor as f64);
 
@@ -1448,14 +1465,19 @@ impl AmpCore {
             let mut sub_count = 0usize;
 
             for step in (0..8).step_by(step_stride) {
-                let weights = &SINC_WEIGHTS[step];
-                let mut s = 0.0f64;
-                for k in 0..8 {
-                    s += self.interp_hist[k] * weights[k];
-                }
-                for f in &mut self.ai_filters {
-                    s = f.process(s);
-                }
+                let s = if os_factor <= 1 {
+                    s_in
+                } else {
+                    let weights = &SINC_WEIGHTS[step];
+                    let mut acc = 0.0f64;
+                    for k in 0..8 {
+                        acc += self.interp_hist[k] * weights[k];
+                    }
+                    for f in &mut self.ai_filters {
+                        acc = f.process(acc);
+                    }
+                    acc
+                };
 
                 // 2. Authentic Per-Model Multi-Stage Preamp Topology
                 let kp_base = (1.0 + 1.2 * asym) * ef86_knee;
@@ -1705,9 +1727,11 @@ impl AmpCore {
                     lim_in.signum() * (0.78 + 0.07 * ((abs_s - 0.78) / 0.07).tanh())
                 };
 
-                // Anti-Aliasing Decimation Filter
-                for f in &mut self.aa_filters {
-                    lim_out = f.process(lim_out);
+                // Anti-Aliasing Decimation Filter (apenas quando os_factor > 1)
+                if os_factor > 1 {
+                    for f in &mut self.aa_filters {
+                        lim_out = f.process(lim_out);
+                    }
                 }
 
                 last_sample = lim_out;
@@ -1733,6 +1757,7 @@ impl WhiteBoxAmpProcessor {
     }
 
     pub fn new(model_id: AmpModelId) -> Self {
+        let measured_latencies = Self::compute_measured_latencies(48_000.0);
         Self {
             model_id,
             amp: Box::new(AmpCore::new(model_id)),
@@ -1741,7 +1766,49 @@ impl WhiteBoxAmpProcessor {
             transicao_amostras_feitas: 0,
             transicao_total_amostras: 960,
             transicao_buf: [0.0; 64],
+            measured_latencies,
         }
+    }
+
+    fn os_index(os_factor: usize) -> usize {
+        match os_factor {
+            1 => 0,
+            2 => 1,
+            4 => 2,
+            _ => 3,
+        }
+    }
+
+    fn measure_impulse_latency_for(sample_rate: f32, os_factor: usize) -> u32 {
+        let mut core = Box::new(AmpCore::new(AmpModelId::BritJcm800_2203));
+        core.sample_rate = sample_rate.max(1.0);
+        core.oversampling_factor = match os_factor {
+            1 => 1,
+            2 => 2,
+            4 => 4,
+            _ => 8,
+        };
+        core.panel.input_gain = 1.0;
+        core.panel.master_volume = 5.0;
+        core.standby_env = 1.0;
+        core.set_smoother_sample_rate(core.sample_rate);
+        core.spring_reverb.set_sample_rate(core.sample_rate);
+        core.update_aa_filters();
+        let mut input = [0.0f32; 256];
+        input[0] = 0.01;
+        let mut output = [0.0f32; 256];
+        core.process_core(&input[0..128], &mut output[0..128]);
+        core.process_core(&input[128..256], &mut output[128..256]);
+        crate::regua::atraso_por_impulso(&output) as u32
+    }
+
+    fn compute_measured_latencies(sample_rate: f32) -> [u32; 4] {
+        [
+            Self::measure_impulse_latency_for(sample_rate, 1),
+            Self::measure_impulse_latency_for(sample_rate, 2),
+            Self::measure_impulse_latency_for(sample_rate, 4),
+            Self::measure_impulse_latency_for(sample_rate, 8),
+        ]
     }
 
     pub fn set_power(&mut self, power: bool) {
@@ -1859,6 +1926,7 @@ impl WhiteBoxAmpProcessor {
 
     pub fn set_oversampling_factor(&mut self, factor: usize) {
         let new_factor = match factor {
+            1 => 1,
             2 => 2,
             4 => 4,
             _ => 8,
@@ -1874,11 +1942,7 @@ impl WhiteBoxAmpProcessor {
     }
 
     pub fn algorithmic_latency_samples(&self) -> u32 {
-        match self.amp.oversampling_factor {
-            2 => 4,
-            4 => 8,
-            _ => 16,
-        }
+        self.measured_latencies[Self::os_index(self.amp.oversampling_factor)]
     }
 
     pub fn measure_aa_filter_magnitude_db(&self, freq_hz: f64) -> f64 {
@@ -1895,6 +1959,7 @@ impl WhiteBoxAmpProcessor {
         self.amp_transicao.set_smoother_sample_rate(sr);
         self.amp_transicao.spring_reverb.set_sample_rate(sr);
         self.amp_transicao.update_aa_filters();
+        self.measured_latencies = Self::compute_measured_latencies(sr);
     }
 
     pub fn set_speaker_resonance_hz(&mut self, hz: f32) {

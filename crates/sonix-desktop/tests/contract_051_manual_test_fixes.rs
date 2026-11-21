@@ -660,21 +660,34 @@ fn test_ca_17_oversampling_2x_4x_8x_updates_algorithmic_latency_and_audio() {
         Some("2x"),
         "CA-17: /api/audio/status padrão deve iniciar em 2x: {v_init_aud}"
     );
+    let expected_init_lat = {
+        let chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+        chain.algorithmic_latency_samples() as u64
+    };
+    assert!(expected_init_lat > 0, "CA-17: latência inicial deve ser > 0");
     assert_eq!(
         v_init_aud["algorithmic_latency_samples"].as_u64(),
-        Some(4),
-        "CA-17: /api/audio/status padrão deve iniciar em 4 amostras (2x): {v_init_aud}"
+        Some(expected_init_lat),
+        "CA-17: /api/audio/status padrão deve iniciar em {expected_init_lat} amostras (2x): {v_init_aud}"
     );
 
-    let expected = [("2x", 4u64), ("4x", 8u64), ("8x", 16u64)];
-    for (mode, samples) in expected {
+    let mut lat_2x_val = 0u64;
+    let mut lat_8x_val = 0u64;
+    for mode in ["2x", "4x", "8x"] {
         let (code, body) = post_params(&ctx, "engine.oversampling", &json!(mode));
         assert_eq!(code, 200, "CA-17: engine.oversampling={mode} rejeitado: {body}");
-        let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
-        let inp = [0.0f32; 64];
-        let mut out = [0.0f32; 64];
-        chain.process(&inp, &mut out);
-        drop(chain);
+        let samples = {
+            let mut chain = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+            let inp = [0.0f32; 64];
+            let mut out = [0.0f32; 64];
+            chain.process(&inp, &mut out);
+            chain.algorithmic_latency_samples() as u64
+        };
+        if mode == "2x" {
+            lat_2x_val = samples;
+        } else if mode == "8x" {
+            lat_8x_val = samples;
+        }
 
         let (c_st, _, b_st) = dispatch(&ctx, "/api/audio/status", "GET", b"");
         assert_eq!(c_st, 200);
@@ -718,8 +731,8 @@ fn test_ca_17_oversampling_2x_4x_8x_updates_algorithmic_latency_and_audio() {
         panics: 0,
         adc_clips: 0,
         measured_roundtrip_ms: None,
-        estimated_roundtrip_ms: 2.667 + 2.667 + 2.667 + (4.0 / 48.0),
-        algorithmic_latency_samples: 4,
+        estimated_roundtrip_ms: 2.667 + 2.667 + 2.667 + ((lat_2x_val as f32) / 48.0),
+        algorithmic_latency_samples: lat_2x_val as u32,
         pitch_wet_latency_ms: 0.0,
     });
     let (_, _, b_2x) = dispatch(&ctx, "/api/audio/status", "GET", b"");
@@ -736,9 +749,10 @@ fn test_ca_17_oversampling_2x_4x_8x_updates_algorithmic_latency_and_audio() {
     let (_, _, b_8x) = dispatch(&ctx, "/api/audio/status", "GET", b"");
     let v_8x: Value = serde_json::from_slice(&b_8x).unwrap();
     let rt_8x = v_8x["estimated_roundtrip_ms"].as_f64().unwrap_or(0.0);
+    let expected_delta_ms = ((lat_8x_val as f64) - (lat_2x_val as f64)) / 48.0;
     assert!(
-        (rt_8x - rt_2x - 0.25).abs() < 0.01,
-        "CA-17/CA-25: estimated_roundtrip_ms com stream ativo deve subir +0.25 ms de 2x para 8x (2x={rt_2x}, 8x={rt_8x})"
+        ((rt_8x - rt_2x) - expected_delta_ms).abs() < 0.01,
+        "CA-17/CA-25: estimated_roundtrip_ms com stream ativo deve variar {expected_delta_ms:.4} ms de 2x para 8x (2x={rt_2x}, 8x={rt_8x})"
     );
 
     // Callbacks observando período real de 480 frames (10 ms @ 48 kHz) propagam para /api/audio/status

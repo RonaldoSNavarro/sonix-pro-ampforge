@@ -271,18 +271,34 @@ fn test_ca_08_selectable_oversampling_modes_and_latency() {
     let sr = 48000.0;
     let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp.set_sample_rate(sr);
+    amp.panel_mut().set_input_gain(1.0);
+    amp.panel_mut().set_master_volume(5.0);
 
-    amp.set_oversampling_factor(2);
-    let lat_2x = amp.algorithmic_latency_samples();
-    assert_eq!(lat_2x, 4);
+    let mut lats = [0u32; 4];
+    for (idx, &os) in [1usize, 2, 4, 8].iter().enumerate() {
+        let mut a = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+        a.set_sample_rate(sr);
+        a.panel_mut().set_input_gain(1.0);
+        a.panel_mut().set_master_volume(5.0);
+        a.set_oversampling_factor(os);
+        let rep = a.algorithmic_latency_samples();
+        let mut inp = [0.0f32; 256];
+        inp[0] = 0.01;
+        let mut out = [0.0f32; 256];
+        a.process(&inp[0..128], &mut out[0..128]);
+        a.process(&inp[128..256], &mut out[128..256]);
+        let med = ampforge_dsp::regua::atraso_por_impulso(&out) as u32;
+        assert!(
+            (rep as isize - med as isize).abs() <= 1,
+            "os={os}x: latência reportada={rep} diverge da medida={med}"
+        );
+        lats[idx] = rep;
+    }
 
-    amp.set_oversampling_factor(4);
-    let lat_4x = amp.algorithmic_latency_samples();
-    assert_eq!(lat_4x, 8);
-
-    amp.set_oversampling_factor(8);
-    let lat_8x = amp.algorithmic_latency_samples();
-    assert_eq!(lat_8x, 16);
-
-    assert!(lat_8x > lat_2x, "8x oversampling deve reportar maior latência que 2x");
+    assert!(
+        lats[1] > lats[0],
+        "2x oversampling ({}) deve reportar maior latência que 1x ({})",
+        lats[1],
+        lats[0]
+    );
 }

@@ -193,3 +193,48 @@ fn aud_10_amp2_troca_de_modelo_sem_clique() {
         falhas.join("\n")
     );
 }
+
+#[test]
+fn aud_13_latencia_reportada_igual_medida() {
+    let mut falhas = Vec::new();
+    let zeros = [0.0_f32; 128];
+    let mut dummy = [0.0_f32; 128];
+
+    for sr in [44_100.0_f32, 48_000.0, 96_000.0] {
+        for os_str in ["1x", "2x", "4x", "8x"] {
+            let mut chain = RealtimeDspChain::new(sr);
+            chain.prepare(sr, 256);
+            chain.set_oversampling_factor(os_str);
+            chain.set_gate_enabled(false);
+            chain.set_amp_gain(1.0);
+            chain.amp_mut().panel_mut().set_input_gain(1.0);
+            chain.set_amp_master(5.0);
+
+            // Aquece 512 zeros para estabilizar gain_smoother e smoothers de 20 ms
+            for _ in 0..8 {
+                chain.process(&zeros, &mut dummy);
+            }
+
+            let mut imp = vec![0.0_f32; 256];
+            imp[0] = 0.01;
+            let mut out = vec![0.0_f32; 256];
+            chain.process(&imp[..128], &mut out[..128]);
+            chain.process(&imp[128..], &mut out[128..]);
+
+            let medida = ampforge_dsp::regua::atraso_por_impulso(&out) as i32;
+            let reportada = chain.algorithmic_latency_samples() as i32;
+            if (reportada - medida).abs() > 1 {
+                falhas.push(format!(
+                    "sr={sr} os={os_str}: reportada={reportada}, medida={medida}, diff={}",
+                    (reportada - medida).abs()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        falhas.is_empty(),
+        "AUD-13 latencia reportada divergiu da medida (> 1 amostra):\n{}",
+        falhas.join("\n")
+    );
+}

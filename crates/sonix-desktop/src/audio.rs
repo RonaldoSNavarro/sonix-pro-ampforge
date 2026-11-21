@@ -2717,6 +2717,52 @@ impl CleanInputRing {
     }
 }
 
+fn os_index_from_factor(factor: usize) -> usize {
+    match factor {
+        1 => 0,
+        2 => 1,
+        4 => 2,
+        _ => 3,
+    }
+}
+
+fn measure_default_chain_latency(sample_rate: f32, os_factor: usize) -> u32 {
+    let sr = sample_rate.max(1.0);
+    let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+    amp.set_sample_rate(sr);
+    amp.set_oversampling_factor(os_factor);
+    amp.panel_mut().set_input_gain(1.0);
+    amp.panel_mut().set_master_volume(5.0);
+
+    let mut cab = VirtualCabProcessor::new();
+    cab.set_sample_rate(sr);
+    cab.set_hicut_khz(8.2);
+
+    let mut dc_x1 = 0.0_f64;
+    let mut dc_y1 = 0.0_f64;
+    let r = 0.99999_f64;
+
+    let mut input = [0.0_f32; 256];
+    input[0] = 0.01;
+    let mut dc_buf = [0.0_f32; 256];
+    for (i, &s) in input.iter().enumerate() {
+        let x = (s as f64) * 2.5;
+        let y = x - dc_x1 + r * dc_y1;
+        dc_x1 = x;
+        dc_y1 = y;
+        dc_buf[i] = y as f32;
+    }
+
+    let mut amp_out = [0.0_f32; 256];
+    let mut cab_out = [0.0_f32; 256];
+    amp.process(&dc_buf[0..128], &mut amp_out[0..128]);
+    cab.process(&amp_out[0..128], &mut cab_out[0..128]);
+    amp.process(&dc_buf[128..256], &mut amp_out[128..256]);
+    cab.process(&amp_out[128..256], &mut cab_out[128..256]);
+
+    ampforge_dsp::regua::atraso_por_impulso(&cab_out) as u32
+}
+
 /// Cadeia DSP Ativa em Tempo Real: Filtro DC + Boost + Noise Gate + White-Box Amp + Cab IR (Spec 013, CA-4 & Spec 014)
 pub struct RealtimeDspChain {
     sample_rate: f32,
@@ -2725,6 +2771,8 @@ pub struct RealtimeDspChain {
     shared_algo_latency_samples: Arc<AtomicU32>,
     shared_pitch_wet_latency_ms_bits: Arc<AtomicU32>,
     shared_b_plus_v_bits: Arc<AtomicU32>,
+    measured_latency_by_os: [u32; 4],
+    current_os_idx: usize,
     gate: NoiseGateProcessor,
     gate_enabled: bool,
     drive: DriveProcessor,
@@ -2964,7 +3012,13 @@ impl RealtimeDspChain {
         let mut looper = LooperProcessor::new();
         looper.prepare(sample_rate, 60);
 
-        let initial_latency = amp.algorithmic_latency_samples();
+        let measured_latency_by_os = [
+            measure_default_chain_latency(sample_rate, 1),
+            measure_default_chain_latency(sample_rate, 2),
+            measure_default_chain_latency(sample_rate, 4),
+            measure_default_chain_latency(sample_rate, 8),
+        ];
+        let initial_latency = measured_latency_by_os[1];
         let initial_b_plus_v = amp.current_b_plus_v();
 
         let resource_queue = Arc::new(LockFreeResourceQueue::new());
@@ -2990,6 +3044,8 @@ impl RealtimeDspChain {
             shared_algo_latency_samples: Arc::new(AtomicU32::new(initial_latency)),
             shared_pitch_wet_latency_ms_bits: Arc::new(AtomicU32::new(0.0_f32.to_bits())),
             shared_b_plus_v_bits: Arc::new(AtomicU32::new(initial_b_plus_v.to_bits())),
+            measured_latency_by_os,
+            current_os_idx: 1,
             gate,
             gate_enabled: true,
             drive,
@@ -3500,7 +3556,7 @@ impl RealtimeDspChain {
             DspParamUpdate::AmpModel(m) => {
                 self.amp.set_target_model(m);
                 self.shared_algo_latency_samples
-                    .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
+                    .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
             }
             DspParamUpdate::AmpBright(b) => self.set_amp_bright(b),
             DspParamUpdate::AmpPower(b) => self.set_amp_power(b),
@@ -3518,9 +3574,17 @@ impl RealtimeDspChain {
             DspParamUpdate::AmpRectifier(r) => self.amp.set_rectifier_type(r),
             DspParamUpdate::AmpToneStack(ts) => self.amp.set_tonestack_topology(ts),
             DspParamUpdate::EngineOversampling(f) => {
-                self.amp.set_oversampling_factor(f);
+                let normalized = match f {
+                    1 => 1,
+                    2 => 2,
+                    4 => 4,
+                    _ => 8,
+                };
+                self.current_os_idx = os_index_from_factor(normalized);
+                self.amp.set_oversampling_factor(normalized);
+                self.amp_2.set_oversampling_factor(normalized);
                 self.shared_algo_latency_samples
-                    .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
+                    .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
             }
             DspParamUpdate::InputBoost(v) => self.set_input_boost(v),
             DspParamUpdate::InputModeLine(is_line) => self.input_mode_line = is_line,
@@ -3969,8 +4033,14 @@ impl RealtimeDspChain {
         self.fade_step = 1.0 / fade_len_samples;
         let preset_fade_len_samples = (sample_rate * 0.020).max(1.0);
         self.preset_fade_step = 1.0 / preset_fade_len_samples;
+        self.measured_latency_by_os = [
+            measure_default_chain_latency(sample_rate, 1),
+            measure_default_chain_latency(sample_rate, 2),
+            measure_default_chain_latency(sample_rate, 4),
+            measure_default_chain_latency(sample_rate, 8),
+        ];
         self.shared_algo_latency_samples
-            .store(self.amp.algorithmic_latency_samples(), Ordering::Relaxed);
+            .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
         self.shared_pitch_wet_latency_ms_bits
             .store(self.pitch_wet_latency_ms().to_bits(), Ordering::Relaxed);
 
@@ -4297,15 +4367,21 @@ impl RealtimeDspChain {
 
     pub fn set_oversampling_factor(&mut self, factor_str: &str) {
         let factor = match factor_str {
+            "1x" => 1,
             "2x" => 2,
             "4x" => 4,
             _ => 8,
         };
+        self.current_os_idx = os_index_from_factor(factor);
         self.amp.set_oversampling_factor(factor);
+        self.amp_2.set_oversampling_factor(factor);
+        self.shared_algo_latency_samples
+            .store(self.algorithmic_latency_samples(), Ordering::Relaxed);
     }
 
     pub fn algorithmic_latency_samples(&self) -> u32 {
-        self.amp.algorithmic_latency_samples() + self.pitch_1.algorithmic_latency_samples() as u32
+        self.measured_latency_by_os[self.current_os_idx]
+            + self.pitch_1.algorithmic_latency_samples() as u32
     }
 
     pub fn pitch_wet_latency_ms(&self) -> f32 {
