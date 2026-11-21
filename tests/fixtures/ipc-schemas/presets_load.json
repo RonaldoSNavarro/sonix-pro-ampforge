@@ -59,7 +59,7 @@
     "cab_1.mic2.phase_invert": false,
     "cab_1.mic2.position": 0.5,
     "cab_1.resonance_hz": 98.0,
-    "cab_1.speaker": "v30_4x12_closed",
+    "cab_1.speaker": "v30_4x12",
     "cab_2.enabled": false,
     "cab_2.hicut_khz": 9.0,
     "cab_2.resonance_hz": 90.0,
@@ -240,7 +240,11 @@
         "name": "Scene H"
       }
     ],
+    "split.balance": 0.5,
     "split.crossover_hz": 600.0,
+    "split.dyn_attack_ms": 5.0,
+    "split.dyn_release_ms": 80.0,
+    "split.dyn_threshold_db": -30.0,
     "split.enabled": false,
     "split.mode": "ab",
     "tuner.enabled": false,
