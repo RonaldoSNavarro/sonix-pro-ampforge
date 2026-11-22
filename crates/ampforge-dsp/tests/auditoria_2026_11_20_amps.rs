@@ -394,3 +394,28 @@ fn aud_24_low_plexi_6db() {
         diff_ch2
     );
 }
+
+#[test]
+fn aud_25_impedancia_menor_mais_ressonante() {
+    let sr = 48_000.0;
+    for model in [AmpModelId::BritPlexi1959, AmpModelId::BritJcm800_2203] {
+        let measure_imp = |ohms: u8| -> (f64, f64) {
+            let mut amp = WhiteBoxAmpProcessor::new(model);
+            amp.panel_mut().set_input_gain(2.0);
+            amp.panel_mut().set_master_volume(5.0);
+            amp.set_secondary_impedance_ohms(ohms);
+            let res_hz = amp.speaker_resonance_hz() as f64;
+            let db = measure_sine_gain_db(&mut amp, res_hz, 0.003162, sr);
+            (res_hz, db)
+        };
+
+        let (res_hz, g4) = measure_imp(4);
+        let (_, g8) = measure_imp(8);
+        let (_, g16) = measure_imp(16);
+        assert!(
+            g4 > g8 && g8 > g16 && (g4 - g8) >= 1.0 && (g8 - g16) >= 1.0,
+            "AUD-25 {:?} @ res={:.1} Hz deve obedecer 4 > 8 > 16 (>= 1 dB/degrau): 4Ω={:.2}, 8Ω={:.2}, 16Ω={:.2}",
+            model, res_hz, g4, g8, g16
+        );
+    }
+}

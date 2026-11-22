@@ -1383,13 +1383,15 @@ impl AmpCore {
         let alpha_ch2 = (1.0 - (-2.0 * std::f64::consts::PI * 310.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
         let alpha_standby = (1.0 - (-1.0 / (fs_base.max(1.0) * 0.00014)).exp()).clamp(0.001, 0.99);
 
-        // Secondary output transformer impedance shifts damping factor and resonance height
+        // Fonte: Marshall 1959HW Owners Manual p. 3 (Tonal Note 3, PRIMARY_OFFICIAL):
+        // NFB retirado da saída do falante; impedância menor (4 Ω) reduz tensão de NFB/amortecimento e aumenta ressonância.
         let imp_factor = match self.panel.impedance_ohms {
-            4 => 0.78,
+            4 => 1.24,
             8 => 1.0,
-            _ => 1.24,
+            _ => 0.78,
         };
-        let res_boost_db = ((10.0 - eff_nfb) / 10.0) * 4.5 * imp_factor;
+        let eff_nfb_damping = (eff_nfb / imp_factor).clamp(0.0, 10.0);
+        let res_boost_db = ((10.0 - eff_nfb_damping) / 10.0) * 5.0 * imp_factor;
         let res_hz = sm_res_hz;
         self.speaker_res_filter
             .update_coeffs(BiquadFilter::peaking(res_hz, res_boost_db, 2.0, sr));
