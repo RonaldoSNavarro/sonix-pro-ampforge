@@ -844,6 +844,12 @@ const SINC_WEIGHTS: [[f64; 8]; 8] = [
 
 const TRIODE_12AX7_MU: f64 = 100.0;
 const TRIODE_12AX7_RP_OHM: f64 = 62_500.0;
+// Fonte: Dr. Tube Marshall JMP/JCM800 2203 schematic (1981) & Rob Robinette
+// (https://robrobinette.com/How_the_Marshall_JCM800_Works.htm), Spec 055 §6.2/§7:
+// V1a: Rp = 100 kΩ, Rl = 1 MΩ (pot Pre-Amp Volume), Rk = 2,7 kΩ || 0,68 µF (bypassado em 1 kHz -> Rk_sem_bypass = 0).
+const JCM800_V1A_RA_OHM: f64 = 100_000.0;
+const JCM800_V1A_RL_OHM: f64 = 1_000_000.0;
+const JCM800_V1A_RK_UNBYPASSED_OHM: f64 = 0.0;
 // DECISAO_SONIX_PREAMP_STAGE_NORM (2026-11-20): normalização grade-placa (~10x entre grade V1 ~1,5 V e estágio seguinte/PI ~15 V)
 // usada enquanto triode_adaa1 opera normalizado em v1_headroom ~ 1,0; confirmável por calibração nodal SPICE/WDF completa.
 const DECISAO_SONIX_PREAMP_STAGE_NORM: f64 = 10.0;
@@ -1008,6 +1014,26 @@ impl AmpCore {
     pub fn current_b_plus_v(&self) -> f32 {
         let factor = (1.0 - self.sag_state as f32).max(0.15);
         self.mod_settings.preamp_plate_v * factor
+    }
+
+    #[inline]
+    fn ganho_estagio1_pequeno_sinal(&self) -> f64 {
+        match self.model_id {
+            // Fonte: Dr. Tube Marshall JMP/JCM800 2203 schematic (1981) & Rob Robinette, Spec 055 §6.2/§7
+            AmpModelId::BritJcm800_2203 => triode_stage_gain(
+                JCM800_V1A_RA_OHM,
+                JCM800_V1A_RL_OHM,
+                JCM800_V1A_RK_UNBYPASSED_OHM,
+            ),
+            // Fonte: Dr. Tube 1969 SL/A schematic & Manual 1959HW, Spec 054 §7 (V1b Rk=2,7k||0,68uF)
+            AmpModelId::BritPlexi1959 => triode_stage_gain(100_000.0, 1_000_000.0, 0.0),
+            // Fonte: Rob Robinette AB763, Spec 056 §7 (V1a Rk=1,5k||22uF)
+            AmpModelId::UsTwinBlackface65 => triode_stage_gain(100_000.0, 1_000_000.0, 0.0),
+            // DECISAO_SONIX_RECTO_S1: 12AX7 ganho padrão (100k/1M, cátodo bypassado) até verificação RF-1F
+            AmpModelId::CaliDualRectoRevF => triode_stage_gain(100_000.0, 1_000_000.0, 0.0),
+            // Fonte: JMI AC30 Top Boost OS/010 (Rp=220k, Rk=1,5k||25uF)
+            AmpModelId::UkAc30TopBoost => triode_stage_gain(220_000.0, 1_000_000.0, 0.0),
+        }
     }
 
     fn update_aa_filters(&mut self) {
@@ -1275,7 +1301,7 @@ impl AmpCore {
         };
 
         let input_pad = if self.panel.input_jack.is_low_pad() {
-            0.50118723 // -6.0 dB
+            0.5 // Divisor resistivo exato 68k / (68k + 68k) = -6,0206 dB
         } else {
             1.0
         };
@@ -1507,18 +1533,19 @@ impl AmpCore {
                     AmpModelId::BritJcm800_2203 => {
                         let is_low = self.panel.input_jack.is_low_pad();
                         let raw_drive = pre_gain_lin * lead_mult * tube_gain;
-                        // Limitação física de condução de grade em cascata extrema (joelho de 4a ordem)
-                        let base_drive = raw_drive / (1.0 + (raw_drive / 18.5).powi(4)).powf(0.25);
-                        // Grid-stopper de 68 kΩ + capacitância de Miller de V1a (~6.4 kHz)
-                        let alpha_grid_jcm = (2.0 * std::f64::consts::PI * 6400.0 / sr).clamp(0.01, 0.85);
-                        self.miller_lp2 = crate::denormal::flush_f64(
-                            self.miller_lp2 + alpha_grid_jcm * (s - self.miller_lp2),
-                        );
-                        let s_v1a_in = self.miller_lp2;
-                        // V1a stage (Low jack skips V1a excess gain while matching -6dB input pad)
+                        // Entrada LOW pula completamente V1a após o divisor 68k/68k (Spec 055 / AUD-24)
                         let s_after_v1a = if is_low {
-                            s_v1a_in * base_drive
+                            let v1a_gain = self.ganho_estagio1_pequeno_sinal();
+                            s * (1.05 * raw_drive / v1a_gain)
                         } else {
+                            // Limitação física de condução de grade em cascata extrema (joelho de 4a ordem)
+                            let base_drive = raw_drive / (1.0 + (raw_drive / 18.5).powi(4)).powf(0.25);
+                            // Grid-stopper de 68 kΩ + capacitância de Miller de V1a (~6.4 kHz)
+                            let alpha_grid_jcm = (2.0 * std::f64::consts::PI * 6400.0 / sr).clamp(0.01, 0.85);
+                            self.miller_lp2 = crate::denormal::flush_f64(
+                                self.miller_lp2 + alpha_grid_jcm * (s - self.miller_lp2),
+                            );
+                            let s_v1a_in = self.miller_lp2;
                             triode_adaa1(
                                 (s_v1a_in * 1.05 * base_drive) / v1_headroom,
                                 &mut self.adaa_pre_prev,
@@ -1874,6 +1901,10 @@ impl WhiteBoxAmpProcessor {
     /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
     pub fn current_b_plus_v(&self) -> f32 {
         self.amp.current_b_plus_v()
+    }
+
+    pub fn ganho_estagio1_pequeno_sinal(&self) -> f64 {
+        self.amp.ganho_estagio1_pequeno_sinal()
     }
 
     pub fn set_negative_feedback(&mut self, nfb: f32) {

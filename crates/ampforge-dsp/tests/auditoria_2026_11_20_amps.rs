@@ -1,4 +1,4 @@
-use ampforge_dsp::amp::{AmpChannelMode, AmpModelId, WhiteBoxAmpProcessor};
+use ampforge_dsp::amp::{AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
 use ampforge_dsp::modshop::ToneStackTopology;
 use ampforge_dsp::tonestack::{
     analog_tonestack_magnitude_db, analog_tonestack_magnitude_db_for_components,
@@ -315,5 +315,82 @@ fn aud_23d_presence_age_em_modern() {
         boost >= 6.0,
         "AUD-23d Presence em Modern (0->10 @ 4 kHz) deveria subir >= 6 dB, subiu {:.2} dB",
         boost
+    );
+}
+
+#[test]
+fn aud_24_low_jcm800_pula_estagio1() {
+    let sr = 48_000.0;
+    let measure = |jack: AmpInputJack| -> (f64, f64) {
+        let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+        amp.panel_mut().set_input_gain(5.0);
+        amp.panel_mut().set_master_volume(5.0);
+        amp.set_input_jack(jack);
+        let stage1 = amp.ganho_estagio1_pequeno_sinal();
+        let gain_db = measure_sine_gain_db(&mut amp, 1000.0, 1e-4, sr);
+        (stage1, gain_db)
+    };
+
+    let (stage1, g_high) = measure(AmpInputJack::High);
+    let (_, g_low) = measure(AmpInputJack::Low);
+    assert!(
+        stage1 > 20.0,
+        "AUD-24 ganho_estagio1_pequeno_sinal do JCM800 deve ser > 20 (foi {:.2})",
+        stage1
+    );
+    let expected_diff_db = 20.0 * stage1.log10() + 6.0206;
+    let actual_diff_db = g_high - g_low;
+    assert!(
+        (actual_diff_db - expected_diff_db).abs() <= 1.0,
+        "AUD-24 JCM800 HIGH-LOW @ 1 kHz -80 dBFS: obtido={:.2} dB vs esperado={:.2} dB (stage1={:.2})",
+        actual_diff_db, expected_diff_db, stage1
+    );
+
+    // Em sinal alto, LOW pula V1a e produz THD muito menor que HIGH
+    let measure_thd = |jack: AmpInputJack| -> f32 {
+        let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+        amp.set_sample_rate(sr as f32);
+        amp.panel_mut().set_input_gain(8.0);
+        amp.panel_mut().set_master_volume(5.0);
+        amp.set_input_jack(jack);
+        let n = sr as usize;
+        let input: Vec<f32> = (0..n)
+            .map(|i| 0.25 * (2.0 * PI * 1000.0 * (i as f64) / sr).sin() as f32)
+            .collect();
+        let mut out = vec![0.0f32; n];
+        amp.process(&input, &mut out);
+        amp.compute_thd(&out[24000..])
+    };
+    let thd_high = measure_thd(AmpInputJack::High);
+    let thd_low = measure_thd(AmpInputJack::Low);
+    assert!(
+        thd_low < 0.5 * thd_high,
+        "AUD-24 JCM800 LOW em sinal alto deve ter THD < 0.5*HIGH (low={:.4}, high={:.4})",
+        thd_low, thd_high
+    );
+}
+
+#[test]
+fn aud_24_low_plexi_6db() {
+    let sr = 48_000.0;
+    let measure = |jack: AmpInputJack| {
+        let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritPlexi1959);
+        amp.panel_mut().set_input_gain(3.0);
+        amp.panel_mut().set_volume_2(5.0);
+        amp.set_input_jack(jack);
+        measure_sine_gain_db(&mut amp, 1000.0, 1e-4, sr)
+    };
+
+    let diff_ch1 = measure(AmpInputJack::High1) - measure(AmpInputJack::Low1);
+    let diff_ch2 = measure(AmpInputJack::High2) - measure(AmpInputJack::Low2);
+    assert!(
+        (diff_ch1 - 6.0).abs() <= 1.0,
+        "AUD-24 Plexi High1 - Low1 deve ser 6.0 +- 1.0 dB, foi {:.2} dB",
+        diff_ch1
+    );
+    assert!(
+        (diff_ch2 - 6.0).abs() <= 1.0,
+        "AUD-24 Plexi High2 - Low2 deve ser 6.0 +- 1.0 dB, foi {:.2} dB",
+        diff_ch2
     );
 }

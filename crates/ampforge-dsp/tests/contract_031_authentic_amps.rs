@@ -204,28 +204,31 @@ fn test_ca_04_jcm800_cold_clipper_even_harmonics_and_low_input_pad() {
         h2_dbc
     );
 
-    // Input LOW vs HIGH (~6 dB +/- 1 dB na entrada antes da saturação pesada)
+    // Input LOW vs HIGH em regime linear (1 kHz, -80 dBFS): LOW pula V1a + divisor 68k/68k
+    let n_lin = 16_384;
     let mut amp_clean = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
     amp_clean.set_sample_rate(48000.0);
-    amp_clean.panel_mut().set_input_gain(2.5);
-    let small_in: Vec<f32> = (0..n)
-        .map(|i| 0.015 * (2.0 * PI * 440.0 * (i as f32 / 48000.0)).sin())
+    amp_clean.panel_mut().set_input_gain(5.0);
+    let small_in: Vec<f32> = (0..n_lin)
+        .map(|i| 0.0001 * (2.0 * PI * 1000.0 * (i as f32 / 48000.0)).sin())
         .collect();
     amp_clean.set_input_jack(AmpInputJack::High);
-    let mut out_hi = vec![0.0f32; n];
+    let mut out_hi = vec![0.0f32; n_lin];
     amp_clean.process(&small_in, &mut out_hi);
-    let rms_hi = rms(&out_hi[1024..]);
+    let mag_hi = goertzel_mag(&out_hi[8192..], 48000.0, 1000.0).max(1e-12);
 
     amp_clean.set_input_jack(AmpInputJack::Low);
-    let mut out_lo = vec![0.0f32; n];
+    let mut out_lo = vec![0.0f32; n_lin];
     amp_clean.process(&small_in, &mut out_lo);
-    let rms_lo = rms(&out_lo[1024..]);
+    let mag_lo = goertzel_mag(&out_lo[8192..], 48000.0, 1000.0).max(1e-12);
 
-    let diff_db = 20.0 * (rms_hi / rms_lo.max(1e-7)).log10();
+    let diff_db = 20.0 * (mag_hi / mag_lo).log10();
+    let expected_diff_db = 20.0 * amp_clean.ganho_estagio1_pequeno_sinal().log10() + 6.0206;
     assert!(
-        (diff_db - 6.0).abs() <= 1.2,
-        "JCM800 entrada Low deve atenuar ~6 dB +-1 dB vs High (foi {:.2} dB)",
-        diff_db
+        (diff_db - expected_diff_db).abs() <= 1.0,
+        "JCM800 HIGH - LOW @ 1 kHz (-80 dBFS) deve igualar 20*log10(ganho_estagio1)+6,02 dB ({:.2} dB vs {:.2} dB)",
+        diff_db,
+        expected_diff_db
     );
 }
 

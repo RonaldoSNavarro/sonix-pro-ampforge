@@ -56,7 +56,7 @@ Não existe controle decorativo. Todo knob, chave, jack, botão, pedal, footswit
 2. **chave aceita e validada pelo backend** (tabela única da Spec 014, validação atômica);
 3. **teste de efeito**: mover o controle de ponta a ponta (ou trocar a opção) com sinal de teste definido muda a saída de forma mensurável **no sentido do equipamento real**. Exemplos:
    - `standby` silencia;
-   - entrada LOW fica 6 dB abaixo da HIGH;
+   - no Plexi 1959, a entrada LOW fica 6 dB abaixo da HIGH;
    - footswitch em bypass deixa a saída igual à entrada;
    - BASS/MIDDLE/TREBLE interagem como a rede FMV.
 
