@@ -6,7 +6,10 @@
 [![Tauri: v2](https://img.shields.io/badge/Tauri-v2-blue?logo=tauri)](https://tauri.app/)
 [![Tests: Contract Suite](https://img.shields.io/badge/Tests-Contract%20Suite-brightgreen.svg)](#-testes-e-qualidade)
 
-Simulador de alta fidelidade para guitarra com pedaleira multi-efeitos, amplificadores valvulados clássicos com **modelagem White-Box** (100% algorítmica em nível de circuito analógico discreto), motor DSP de tempo real em **Rust** (*Zero-Alloc & Lock-Free*) e interface skeuomórfica fotorrealista acelerada por hardware em **Tauri v2**.
+Simulador de guitarra em **Rust** (*zero-alloc* e *lock-free* no callback de áudio) com interface desktop em **Tauri v2**, combinando:
+- **Componentes derivados de circuito** com verificação automatizada: *tone stacks* passivos contra a forma fechada de Yeh & Smith (`crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs::aud_22_stack_igual_a_yeh`), entrada LOW do JCM800 (`crates/ampforge-dsp/tests/auditoria_2026_11_20_amps.rs::aud_24_low_jcm800_pula_estagio1`), rede 470k‖470pF e *bright cap* do Plexi (`aud_27_rede_jcm800`, `aud_27_bright_cap_plexi`), *taper* logarítmico do Middle (`aud_26_middle_10pct_log`) e faixas de ganho de TS808/RAT/DS-1 (`crates/ampforge-dsp/tests/auditoria_2026_11_20_efeitos.rs::aud_29_ts808_ganho_do_esquema`, `aud_29_rat_ganho_do_esquema`, `aud_29_ds1_simetrico`);
+- **Decisões de engenharia sem fonte de circuito** (`DECISAO_SONIX_*`), documentadas na [seção 4 do relatório de auditoria](docs/handoff/RELATORIO-auditoria-2026-11-20-execucao.md);
+- **Aproximações comportamentais**: compressor 1176LN (`crates/ampforge-dsp/src/comp.rs`, envelope comportamental registrado em `controls.registry.ts`).
 
 ---
 
@@ -35,8 +38,8 @@ Para saber como configurar seu ambiente, reportar problemas ou submeter um Pull 
 - **Oversampling Elíptico IIR de 8ª Ordem:** Fatores selecionáveis de 2x, 4x e 8x (`crates/ampforge-dsp/src/os_filters.rs`, atenuação de banda de rejeição >= 60 dB verificada em `auditoria_2026_11_20_artefatos.rs::aud_14_banda_de_rejeicao`). O `HalfBandOversampler` FIR 127-tap (>= 96 dB) permanece apenas em biblioteca (`docs/biblioteca-sem-uso-em-producao.md`).
 - **Telemetria de Latência Real:** A telemetria calcula `estimated_roundtrip_ms = driver_input_latency_ms + driver_output_latency_ms + (algorithmic_latency_samples / sample_rate) * 1000.0` (`crates/sonix-desktop/src/audio.rs`, ex.: 12 amostras algorítmicas = 0,25 ms @ 48 kHz + buffers do driver WASAPI).
 
-### 2. Amplificadores Valvulados Clássicos (White-Box)
-Modelagem rigorosa dos esquemas elétricos originais:
+### 2. Amplificadores Valvulados Clássicos (Modelagem Híbrida Verificada)
+Topologias verificadas em `crates/ampforge-dsp/tests/auditoria_2026_11_20_amps.rs` (`aud_23`–`aud_27`) e `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs` (`aud_22_stack_igual_a_yeh`; normalização de pré-estágio documentada via `DECISAO_SONIX_PREAMP_STAGE_NORM` na seção 4 do relatório):
 - **Marshall JCM800 2203:** Master Volume, estágio *cold clipper* e resposta harmônica consagrada do Hard Rock.
 - **Marshall 1959 SLP (Plexi):** 4 entradas, canais Normal e High Treble, suporte a entradas *jumpered* e interação de volumes.
 - **Fender Twin Reverb AB763:** Clean brilhante com tone stack passivo Fender FMV, reverb de mola acionado a válvula e vibrato óptico.
@@ -50,9 +53,9 @@ Modelagem rigorosa dos esquemas elétricos originais:
 
 ### 4. Pedaleira de Efeitos Analógicos
 - **Drives & Distorções:** Ibanez TS808 Tube Screamer, Klon Centaur (circuito de *clean blend* real), ProCo RAT (filtro analógico reverso), Electro-Harmonix Big Muff Pi (mid-scoop), Dallas Arbiter Fuzz Face (Germânio/Silício) e Boss DS-1.
-- **Compressores:** Studio FET 1176LN com curvas de ataque ultrarrápidas (20–800 µs), tempo de release fiel e modo *"All-Buttons-In"*.
+- **Compressores:** Studio FET 1176LN como **aproximação comportamental** de envelope FET (ataque 20–800 µs, release 50–1100 ms e modo *"All-Buttons-In"*; não modela circuito analógico discreto).
 - **Noise Gate de Estúdio:** Histerese anti-chatter, tempo de Hold, filtragem de sidechain e chaveamento com detecção direta no sinal limpo (DI).
-- **Roland RE-201 Space Echo:** Simulação fiel do mecanismo de fita de 3 cabeças de reprodução, saturação analógica de fita, mola interna e 12 modos de chaveamento originais.
+- **Roland RE-201 Space Echo:** Simulação do mecanismo de fita de 3 cabeças de reprodução, saturação de fita, mola interna e 12 modos de chaveamento (`crates/ampforge-dsp/tests/auditoria_2026_11_20_efeitos.rs::aud_28_*`).
 - **Reverbs:** Tube Spring (mola valvulada com dispersão all-pass) e algoritmo Freeverb (Jezar) — voicing Plate, Hall, Chamber e Shimmer granular (+12 semitons).
 - **Modulações:** Boss CE-2 BBD Chorus, Chorus 3 vozes (mono), MXR Phase 90, Through-Zero Flanger com feedback, Tremolo Óptico LDR (ataque 5 ms / soltura 60 ms) e Rotary Speaker dual-rotor (LR4 800 Hz).
 - **Pitch & Afinador:** Afinador com visual estroboscópico (detecção YIN 38 Hz – 1,4 kHz, cobre E1 = 41,2 Hz; B0 = 30,9 Hz fora da faixa, verificado em `crates/ampforge-dsp/tests/auditoria_2026_11_20_afinador.rs`) e modo polifônico de 6 cordas, além de bloco de Harmonizador Diatônico.
