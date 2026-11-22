@@ -154,10 +154,16 @@ fn configurar_cadeia(cenario: &str, sr: u32, bloco: usize) -> Arc<Mutex<Realtime
     dsp
 }
 
-fn rodar_cenario(cenario: &str, sr: u32, bloco: usize) {
+fn rodar_cenario(
+    cenario: &str,
+    sr: u32,
+    bloco: usize,
+    override_blocks: Option<usize>,
+) -> (usize, usize, serde_json::Value) {
     let budget_us = (bloco as f64) / (sr as f64) * 1_000_000.0;
     let total_secs: f64 = if cenario == "silencio" { 242.0 } else { 10.0 };
-    let total_blocks = ((total_secs * sr as f64) / (bloco as f64)).ceil() as usize;
+    let default_blocks = ((total_secs * sr as f64) / (bloco as f64)).ceil() as usize;
+    let total_blocks = override_blocks.unwrap_or(default_blocks);
     let signal_end_sample = if cenario == "silencio" {
         (2.0 * sr as f64).round() as usize
     } else {
@@ -214,10 +220,16 @@ fn rodar_cenario(cenario: &str, sr: u32, bloco: usize) {
     sorted.sort_by(|a, b| a.total_cmp(b));
     let p99_idx = ((sorted.len() as f64) * 0.99).ceil() as usize;
     let p99_us = sorted[p99_idx.min(sorted.len() - 1)];
+    let p999_idx = ((sorted.len() as f64) * 0.999).ceil() as usize;
+    let p999_us = sorted[p999_idx.min(sorted.len() - 1)];
 
     let avg_pct = (mean_us / budget_us) * 100.0;
     let p99_pct = (p99_us / budget_us) * 100.0;
+    let p999_pct = (p999_us / budget_us) * 100.0;
     let max_pct = (max_us / budget_us) * 100.0;
+
+    let blocos_acima_50 = timings_us.iter().filter(|&&t| t > budget_us * 0.5).count();
+    let blocos_acima_100 = timings_us.iter().filter(|&&t| t > budget_us).count();
 
     let mut report = serde_json::json!({
         "cenario": cenario,
@@ -230,7 +242,10 @@ fn rodar_cenario(cenario: &str, sr: u32, bloco: usize) {
         "max_us": (max_us * 1000.0).round() / 1000.0,
         "media_pct": (avg_pct * 1000.0).round() / 1000.0,
         "p99_pct": (p99_pct * 1000.0).round() / 1000.0,
+        "p999_pct": (p999_pct * 1000.0).round() / 1000.0,
         "max_pct": (max_pct * 1000.0).round() / 1000.0,
+        "blocos_acima_50": blocos_acima_50,
+        "blocos_acima_100": blocos_acima_100,
         "subnormais": subnormais,
     });
 
@@ -286,8 +301,7 @@ fn rodar_cenario(cenario: &str, sr: u32, bloco: usize) {
         }
     }
 
-    println!("{}", report);
-    let _ = std::io::stdout().flush();
+    (total_blocks, blocos_acima_100, report)
 }
 
 fn main() {
@@ -304,8 +318,26 @@ fn main() {
         }
     }
 
-    rodar_cenario(cenario, sr, bloco);
-    if cenario != "ruido" {
-        rodar_cenario("ruido", sr, bloco);
+    if cenario == "ruido" {
+        let (_, _, mut report) = rodar_cenario("ruido", sr, bloco, None);
+        if let Some(obj) = report.as_object_mut() {
+            obj.insert("excesso_sobre_ruido".to_string(), serde_json::json!(0));
+        }
+        println!("{}", report);
+        let _ = std::io::stdout().flush();
+    } else {
+        let (total_blocks, cen_acima_100, mut cen_report) = rodar_cenario(cenario, sr, bloco, None);
+        let (_, ruido_acima_100, mut ruido_report) =
+            rodar_cenario("ruido", sr, bloco, Some(total_blocks));
+        let excesso = (cen_acima_100 as i64) - (ruido_acima_100 as i64);
+        if let Some(obj) = cen_report.as_object_mut() {
+            obj.insert("excesso_sobre_ruido".to_string(), serde_json::json!(excesso));
+        }
+        if let Some(obj) = ruido_report.as_object_mut() {
+            obj.insert("excesso_sobre_ruido".to_string(), serde_json::json!(0));
+        }
+        println!("{}", cen_report);
+        println!("{}", ruido_report);
+        let _ = std::io::stdout().flush();
     }
 }
