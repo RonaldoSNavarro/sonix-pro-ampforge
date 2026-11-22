@@ -37,6 +37,18 @@ fn map_pot_mid_10pct(x: f64) -> f64 {
     0.35 * u + 0.65 * audio_taper(u)
 }
 
+// DECISAO_SONIX_RECTO_*: esquema primário Dual Rectifier Rev F (`RF-1F`) permanece bloqueado na Spec 057 §5/§18;
+// mantém os valores pós-ganho cathode-follower compatíveis com a tabela da Spec 057 onde documentado (39 kΩ slope,
+// 22 nF / 22 nF) e decisão explícita nos itens com divergência secundária (C1 = 470 pF, R_bass = 250 kΩ, R_mid = 25 kΩ).
+const DECISAO_SONIX_RECTO_R_TREBLE: f64 = 250_000.0;
+const DECISAO_SONIX_RECTO_R_BASS: f64 = 250_000.0;
+const DECISAO_SONIX_RECTO_R_MID: f64 = 25_000.0;
+const DECISAO_SONIX_RECTO_R_SLOPE: f64 = 39_000.0;
+const DECISAO_SONIX_RECTO_R_LOAD: f64 = 1_000_000.0;
+const DECISAO_SONIX_RECTO_C1: f64 = 470e-12;
+const DECISAO_SONIX_RECTO_C2: f64 = 22e-9;
+const DECISAO_SONIX_RECTO_C3: f64 = 22e-9;
+
 pub fn resolved_fmv_components(
     topo: ToneStackTopology,
     bass: f32,
@@ -77,8 +89,9 @@ pub fn resolved_fmv_components(
             m_pos: m,
         },
         ToneStackTopology::VoxTopBoost => FmvComponents {
-            // Vox AC30/6 Top Boost (100k slope, 50pF treble, 22nF/22nF bass, fixed 10k tail)
-            r_treble: 220_000.0,
+            // Vox AC30/6 Top Boost OS/010 (https://www.voxac30.org.uk/vox_ac30_top_boost_circuit.html):
+            // 100k slope, 50pF treble, 22nF/22nF bass, RT=1M, RB=1M, resistor fixo R2=10k à terra (sem Middle)
+            r_treble: 1_000_000.0,
             r_bass: 1_000_000.0,
             r_mid: 10_000.0,
             r_slope: 100_000.0,
@@ -88,19 +101,18 @@ pub fn resolved_fmv_components(
             c3: 22e-9,
             t_pos: audio_taper(t),
             b_pos: audio_taper(b),
-            // Original Top Boost has no Middle pot (fixed 10k resistor to ground)
             m_pos: 1.0,
         },
-        ToneStackTopology::MesaMarkPreGain => FmvComponents {
-            // Mesa/Boogie Dual Rectifier FMV stack (39k, 470pF, 22nF, 22nF)
-            r_treble: 250_000.0,
-            r_bass: 250_000.0,
-            r_mid: 25_000.0,
-            r_slope: 39_000.0,
-            r_load: 1_000_000.0,
-            c1: 470e-12,
-            c2: 22e-9,
-            c3: 22e-9,
+        ToneStackTopology::RectoPostGain | ToneStackTopology::MesaMarkPreGain => FmvComponents {
+            // Dual Rectifier Rev F tone stack FMV pós-ganho (parâmetros divergentes registrados com DECISAO_SONIX_RECTO_*)
+            r_treble: DECISAO_SONIX_RECTO_R_TREBLE,
+            r_bass: DECISAO_SONIX_RECTO_R_BASS,
+            r_mid: DECISAO_SONIX_RECTO_R_MID,
+            r_slope: DECISAO_SONIX_RECTO_R_SLOPE,
+            r_load: DECISAO_SONIX_RECTO_R_LOAD,
+            c1: DECISAO_SONIX_RECTO_C1,
+            c2: DECISAO_SONIX_RECTO_C2,
+            c3: DECISAO_SONIX_RECTO_C3,
             t_pos: audio_taper(t),
             b_pos: audio_taper(b),
             m_pos: map_pot_mid_10pct(m),
@@ -284,9 +296,70 @@ fn fmv_transfer_polynomials(c: FmvComponents) -> ([f64; 4], [f64; 4]) {
     ([num[0], num[1], num[2], num[3]], [den[0], den[1], den[2], den[3]])
 }
 
-/// Evaluates continuous-time |H(j * 2 * pi * freq_hz)| in dB for arbitrary `FmvComponents`.
-pub fn analog_tonestack_magnitude_db_for_components(comps: FmvComponents, freq_hz: f64) -> f64 {
-    let (b, a) = fmv_transfer_polynomials(comps);
+/// Função de transferência nodal KCL 5×5 da rede Vox AC30/6 Top Boost (esquema JMI OS/010):
+/// Bass pot atua entre Vbm (RB1 = b_pos * RB) e Vw (RB2 = (1 - b_pos) * RB || R2 = 10 kΩ à terra).
+fn vox_top_boost_transfer_polynomials(c: FmvComponents) -> ([f64; 4], [f64; 4]) {
+    let r_t1 = ((1.0 - c.t_pos) * c.r_treble).max(1e-2);
+    let r_t2 = (c.t_pos * c.r_treble).max(1e-2);
+    let r_b1 = (c.b_pos * c.r_bass).max(1e-2);
+    let r_b2 = ((1.0 - c.b_pos) * c.r_bass).max(1e-2);
+    let r_tail = c.r_mid.max(1e-2);
+
+    let g_t1 = R_REF / r_t1;
+    let g_t2 = R_REF / r_t2;
+    let g_b1 = R_REF / r_b1;
+    let g_b2 = R_REF / r_b2;
+    let g_tail = R_REF / r_tail;
+    let g_4 = R_REF / c.r_slope.max(1.0);
+    let g_l = if c.r_load.is_finite() && c.r_load > 0.0 {
+        R_REF / c.r_load.max(1.0)
+    } else {
+        0.0
+    };
+
+    let c1 = c.c1 / C_REF;
+    let c2 = c.c2 / C_REF;
+    let c3 = c.c3 / C_REF;
+
+    // Nós: [V1, Vout, Vbm, Vw, Vs]
+    let zero = [0.0; 6];
+    let mut m = [[zero; 5]; 5];
+    m[0][0] = lin(g_t1, c1);
+    m[0][1] = lin(-g_t1, 0.0);
+
+    m[1][0] = lin(-g_t1, 0.0);
+    m[1][1] = lin(g_t1 + g_t2 + g_l, 0.0);
+    m[1][2] = lin(-g_t2, 0.0);
+
+    m[2][1] = lin(-g_t2, 0.0);
+    m[2][2] = lin(g_t2 + g_b1, c2);
+    m[2][3] = lin(-g_b1, 0.0);
+    m[2][4] = lin(0.0, -c2);
+
+    m[3][2] = lin(-g_b1, 0.0);
+    m[3][3] = lin(g_b1 + g_b2 + g_tail, c3);
+    m[3][4] = lin(0.0, -c3);
+
+    m[4][2] = lin(0.0, -c2);
+    m[4][3] = lin(0.0, -c3);
+    m[4][4] = lin(g_4, c2 + c3);
+
+    let den = det_5x5(&m);
+
+    let mut m_num = m;
+    m_num[0][1] = lin(0.0, c1);
+    m_num[1][1] = zero;
+    m_num[2][1] = zero;
+    m_num[3][1] = zero;
+    m_num[4][1] = lin(g_4, 0.0);
+
+    let num = det_5x5(&m_num);
+
+    ([num[0], num[1], num[2], num[3]], [den[0], den[1], den[2], den[3]])
+}
+
+#[inline]
+fn eval_polynomial_magnitude_db(b: [f64; 4], a: [f64; 4], freq_hz: f64) -> f64 {
     let w = 2.0 * PI * freq_hz * (R_REF * C_REF);
     let w2 = w * w;
     let w3 = w2 * w;
@@ -301,6 +374,12 @@ pub fn analog_tonestack_magnitude_db_for_components(comps: FmvComponents, freq_h
     10.0 * (num_sq / den_sq).max(1e-18).log10()
 }
 
+/// Evaluates continuous-time |H(j * 2 * pi * freq_hz)| in dB for arbitrary FMV `FmvComponents`.
+pub fn analog_tonestack_magnitude_db_for_components(comps: FmvComponents, freq_hz: f64) -> f64 {
+    let (b, a) = fmv_transfer_polynomials(comps);
+    eval_polynomial_magnitude_db(b, a, freq_hz)
+}
+
 /// Evaluates continuous-time |H(j * 2 * pi * freq_hz)| in dB from the exact schematic RC network.
 pub fn analog_tonestack_magnitude_db(
     topo: ToneStackTopology,
@@ -310,7 +389,12 @@ pub fn analog_tonestack_magnitude_db(
     freq_hz: f64,
 ) -> f64 {
     let comps = resolved_fmv_components(topo, bass, middle, treble);
-    analog_tonestack_magnitude_db_for_components(comps, freq_hz)
+    if topo == ToneStackTopology::VoxTopBoost {
+        let (b, a) = vox_top_boost_transfer_polynomials(comps);
+        eval_polynomial_magnitude_db(b, a, freq_hz)
+    } else {
+        analog_tonestack_magnitude_db_for_components(comps, freq_hz)
+    }
 }
 
 /// 3rd-order Direct Form I passive Tone Stack filter (bilinear transform).
@@ -383,8 +467,7 @@ impl PassiveToneStack {
         self.dn1_y = 0.0;
     }
 
-    fn apply_components(&mut self, comps: FmvComponents, sample_rate_hz: f64) {
-        let (bc, ac) = fmv_transfer_polynomials(comps);
+    fn apply_transfer_polynomials(&mut self, bc: [f64; 4], ac: [f64; 4], sample_rate_hz: f64) {
         self.internal_os2x = sample_rate_hz < 88_200.0;
         let eff_sr = if self.internal_os2x {
             sample_rate_hz.max(8000.0) * 2.0
@@ -420,7 +503,8 @@ impl PassiveToneStack {
 
     pub fn update_with_components(&mut self, comps: FmvComponents, sample_rate_hz: f64) {
         self.last_sr = -1.0;
-        self.apply_components(comps, sample_rate_hz);
+        let (bc, ac) = fmv_transfer_polynomials(comps);
+        self.apply_transfer_polynomials(bc, ac, sample_rate_hz);
     }
 
     pub fn update(
@@ -446,7 +530,12 @@ impl PassiveToneStack {
         self.last_sr = sample_rate_hz;
 
         let comps = resolved_fmv_components(topo, bass, middle, treble);
-        self.apply_components(comps, sample_rate_hz);
+        let (bc, ac) = if topo == ToneStackTopology::VoxTopBoost {
+            vox_top_boost_transfer_polynomials(comps)
+        } else {
+            fmv_transfer_polynomials(comps)
+        };
+        self.apply_transfer_polynomials(bc, ac, sample_rate_hz);
     }
 
     #[inline(always)]

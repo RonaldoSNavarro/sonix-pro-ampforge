@@ -64,6 +64,7 @@ fn test_ca_03_tone_stack_topologies_and_position_routing() {
         ToneStackTopology::FenderTmbMidScoop,
         ToneStackTopology::MarshallCathodeFollower,
         ToneStackTopology::VoxTopBoost,
+        ToneStackTopology::RectoPostGain,
         ToneStackTopology::MesaMarkPreGain,
     ];
 

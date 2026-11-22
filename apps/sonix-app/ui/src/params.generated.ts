@@ -43,7 +43,7 @@ export const PARAMS_SCHEMA = {
   'amp_1.jumpered': { type: 'boolean', defaultValue: false, models: ['plexi_1959'] },
   'amp_1.spongy': { type: 'boolean', defaultValue: false, models: ['dual_rect'] },
   'amp_1.input_jack': { type: 'enum', options: ['high', 'low', 'high1', 'low1', 'high2', 'low2', 'jumpered', 'normal_high', 'normal_low', 'brilliant_high', 'brilliant_low', 'normal', 'vibrato'], defaultValue: 'high' },
-  'amp_1.channel_mode': { type: 'enum', options: ['clean', 'pushed', 'vintage', 'modern'], defaultValue: 'modern' },
+  'amp_1.channel_mode': { type: 'enum', options: ['clean', 'vintage', 'modern'], defaultValue: 'modern' },
   'amp_1.impedance_ohms': { type: 'enum', options: ['4', '8', '16'], defaultValue: '16' },
   'amp_1.gain': { type: 'number', range: [0, 10], step: 0.1, defaultValue: 8 },
   'amp_1.bass': { type: 'number', range: [0, 10], step: 0.1, defaultValue: 5 },

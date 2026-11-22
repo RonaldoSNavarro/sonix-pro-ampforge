@@ -1161,7 +1161,7 @@ pub static PARAMS: &[ParamDesc] = &[
     ParamDesc {
         key: "amp_1.channel_mode",
         aliases: &[],
-        kind: ParamKind::Enum(&["clean", "pushed", "vintage", "modern"]),
+        kind: ParamKind::Enum(&["clean", "vintage", "modern"]),
         default: ParamDefault::Enum("modern"),
         models: None,
         to_dsp: |v| {
@@ -2747,6 +2747,7 @@ pub fn apply_preset_params_queued(
     let mut ignored_keys: Vec<String> = Vec::new();
     let mut matched: Vec<(usize, &'static ParamDesc, &Value)> = Vec::with_capacity(params.len());
     let mut legacy: Vec<(&String, &Value)> = Vec::new();
+    let mut fallback_recto_channel_mode = false;
 
     for (k, v) in params {
         let key = k.as_str();
@@ -2755,6 +2756,14 @@ pub fn apply_preset_params_queued(
             || (key == KEY_AMP_1_CHANNEL_MODE && target_model != MODEL_DUAL_RECT)
         {
             ignored_keys.push(k.clone());
+            continue;
+        }
+        if key == KEY_AMP_1_CHANNEL_MODE
+            && target_model == MODEL_DUAL_RECT
+            && v.as_str().map(|s| s.eq_ignore_ascii_case("pushed")).unwrap_or(false)
+        {
+            ignored_keys.push(k.clone());
+            fallback_recto_channel_mode = true;
             continue;
         }
 
@@ -2784,6 +2793,9 @@ pub fn apply_preset_params_queued(
             updates.push(u);
         }
     }
+    if fallback_recto_channel_mode {
+        updates.push(DspParamUpdate::AmpChannelMode(AmpChannelMode::Modern));
+    }
     for (k, v) in &legacy {
         if k.as_str() == KEY_EQ_1_BANDS_DB {
             if let Some(arr) = v.as_array() {
@@ -2810,6 +2822,9 @@ pub fn apply_preset_params_queued(
     if let Ok(mut st) = app_state.lock() {
         for (_, desc, v) in matched {
             (desc.write_state)(&mut st, v);
+        }
+        if fallback_recto_channel_mode {
+            st.amp_channel_mode = "modern".to_string();
         }
         for (k, v) in legacy {
             if k.as_str() == KEY_EQ_1_BANDS_DB {

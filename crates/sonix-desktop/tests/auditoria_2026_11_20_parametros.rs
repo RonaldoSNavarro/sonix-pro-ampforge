@@ -519,3 +519,82 @@ fn aud_09_lint_sem_literais_de_params_em_api_rs() {
     }
 }
 
+#[test]
+fn aud_23e_revf_sem_pushed() {
+    let dir = TempDirGuard::new("sonix_aud23e_revf_sem_pushed");
+    let (ctx, _) = make_ctx_with_data_dir(dir.path.clone());
+
+    let (st_model, _, _) = dispatch(
+        &ctx,
+        "/api/params",
+        "POST",
+        br#"{"amp_1.model":"dual_rect"}"#,
+    );
+    assert_eq!(st_model, 200);
+
+    let (st_pushed, _, pushed_body) = dispatch(
+        &ctx,
+        "/api/params",
+        "POST",
+        br#"{"amp_1.channel_mode":"pushed"}"#,
+    );
+    assert_eq!(
+        st_pushed,
+        400,
+        "AUD-23e: Dual Rectifier Rev F deve rejeitar channel_mode='pushed' com HTTP 400, obteve {} ({})",
+        st_pushed,
+        String::from_utf8_lossy(&pushed_body)
+    );
+    let pushed_err = String::from_utf8_lossy(&pushed_body);
+    assert!(
+        pushed_err.contains("E_VALIDATION:"),
+        "AUD-23e erro deve conter E_VALIDATION:, obteve: {}",
+        pushed_err
+    );
+
+    let legacy_preset = serde_json::json!({
+        "$schema": "https://sonixpro.local/schemas/sonixpreset-v1.json",
+        "schemaVersion": "1.1.0",
+        "metadata": {
+            "id": "recto_legacy_pushed",
+            "name": "Recto Legacy Pushed",
+            "author": "Audit",
+            "category": "HighGain",
+            "tempoBpm": 120.0,
+            "createdAt": "2026-11-20T00:00:00Z",
+            "footswitchMode": "scenes"
+        },
+        "activeSceneIndex": 0,
+        "scenes": [
+            { "index": 0, "id": "scene_0", "name": "Scene A", "color": "#ff3b2f" }
+        ],
+        "grid": { "rows": 4, "cols": 12, "blocks": [] },
+        "modifiers": [],
+        "params": {
+            "amp_1.model": "dual_rect",
+            "amp_1.channel_mode": "pushed",
+            "amp_1.gain": 6.5
+        }
+    });
+
+    let (st_imp, _, imp_bytes) = dispatch(
+        &ctx,
+        "/api/presets/import",
+        "POST",
+        legacy_preset.to_string().as_bytes(),
+    );
+    assert_eq!(st_imp, 200);
+    let imp_json: serde_json::Value = serde_json::from_slice(&imp_bytes).unwrap();
+    let ignored = imp_json["ignored_keys"].as_array().expect("ignored_keys");
+    assert!(
+        ignored.iter().any(|k| k == "amp_1.channel_mode"),
+        "AUD-23e: preset legado com channel_mode='pushed' deve retornar ignored_keys=['amp_1.channel_mode'], obteve {:?}",
+        ignored
+    );
+
+    let (st_state, _, state_bytes) = dispatch(&ctx, "/api/state", "GET", b"");
+    assert_eq!(st_state, 200);
+    let st_json: serde_json::Value = serde_json::from_slice(&state_bytes).unwrap();
+    assert_eq!(st_json["amp_1.channel_mode"], "modern");
+}
+

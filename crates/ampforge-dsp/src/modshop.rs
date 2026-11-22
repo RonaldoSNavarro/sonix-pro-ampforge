@@ -47,6 +47,7 @@ pub enum ToneStackTopology {
     VoxTopBoost,
     PassiveJamesBaxandall,
     MesaMarkPreGain,
+    RectoPostGain,
 }
 
 impl ToneStackTopology {
@@ -58,6 +59,7 @@ impl ToneStackTopology {
             Self::VoxTopBoost => "vox",
             Self::PassiveJamesBaxandall => "baxandall",
             Self::MesaMarkPreGain => "mesa_mark",
+            Self::RectoPostGain => "recto",
         }
     }
 
@@ -69,6 +71,7 @@ impl ToneStackTopology {
             "vox" => Some(Self::VoxTopBoost),
             "baxandall" => Some(Self::PassiveJamesBaxandall),
             "mesa_mark" => Some(Self::MesaMarkPreGain),
+            "recto" | "rectifier" => Some(Self::RectoPostGain),
             _ => None,
         }
     }

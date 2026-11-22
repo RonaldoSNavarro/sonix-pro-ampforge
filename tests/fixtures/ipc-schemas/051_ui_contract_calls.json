@@ -68,7 +68,6 @@
       "key": "amp_1.channel_mode",
       "options": [
         "clean",
-        "pushed",
         "vintage",
         "modern"
       ]

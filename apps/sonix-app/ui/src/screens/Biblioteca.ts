@@ -39,7 +39,7 @@ const AMP_CATALOG: CatalogEntry<AmpModelId>[] = [
     name: 'Cali Dual Rectifier Solo Head',
     specRef: 'Solo Head Rev F · 100 W',
     sourceStatus: 'fonte: pendente',
-    notes: 'Modos Clean/Pushed/Vintage/Modern, Bold/Spongy Variac e chave Diodo vs Válvula 5U4GB.',
+    notes: 'Modos Clean/Vintage/Modern, Bold/Spongy Variac e chave Diodo vs Válvula 5U4GB.',
   },
   {
     id: 'ac30_tb',

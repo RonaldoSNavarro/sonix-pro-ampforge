@@ -597,7 +597,6 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
     (
       [
         ['clean', 'CLEAN'],
-        ['pushed', 'PUSHED'],
         ['vintage', 'VINTAGE'],
         ['modern', 'MODERN'],
       ] as const
@@ -611,7 +610,7 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
         background:linear-gradient(180deg,#2c2c2c,#121212);color:#ddd;font-size:9px;font-weight:700;letter-spacing:.06em;
         display:flex;align-items:center;gap:5px;cursor:pointer;
       `;
-      const ledColor = val === 'modern' || val === 'pushed' ? '#ff3b2f' : '#29e07a';
+      const ledColor = val === 'modern' ? '#ff3b2f' : '#29e07a';
       b.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${
         rectMode === val ? ledColor : '#2a2a2a'
       };box-shadow:${rectMode === val ? `0 0 6px ${ledColor}` : 'none'};"></span><span>${text}</span>`;

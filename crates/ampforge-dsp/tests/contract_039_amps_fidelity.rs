@@ -108,7 +108,7 @@ fn aud_22_stack_igual_a_yeh() {
     let topos = [
         ToneStackTopology::MarshallCathodeFollower,
         ToneStackTopology::FenderTmbMidScoop,
-        ToneStackTopology::VoxTopBoost,
+        ToneStackTopology::RectoPostGain,
         ToneStackTopology::MesaMarkPreGain,
         ToneStackTopology::PassiveJamesBaxandall,
     ];
@@ -433,7 +433,7 @@ fn test_ca_07_voicing_fontes_doc_exists_for_all_models() {
 
 #[test]
 fn test_ca_08_presence_and_depth_scale_with_effective_nfb() {
-    // Dual Rectifier Modern mode disconnects global NFB (eff_nfb = 0)
+    // AUD-23d: em Dual Rectifier Modern, NFB global = 0, mas o controle Presence continua ativo em 4 kHz
     let mut rect_mod_0 = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
     rect_mod_0.set_channel_mode(AmpChannelMode::Modern);
     rect_mod_0.panel_mut().set_presence(0.0);
@@ -442,15 +442,33 @@ fn test_ca_08_presence_and_depth_scale_with_effective_nfb() {
     rect_mod_10.set_channel_mode(AmpChannelMode::Modern);
     rect_mod_10.panel_mut().set_presence(10.0);
 
-    let g0_hi = measure_sine_gain_db(&mut rect_mod_0, 4200.0, 48000.0);
-    let g10_hi = measure_sine_gain_db(&mut rect_mod_10, 4200.0, 48000.0);
+    let g0_hi = measure_sine_gain_db(&mut rect_mod_0, 4000.0, 48000.0);
+    let g10_hi = measure_sine_gain_db(&mut rect_mod_10, 4000.0, 48000.0);
     assert!(
-        (g10_hi - g0_hi).abs() < 0.2,
-        "With eff_nfb == 0 (Dual Rectifier Modern), Presence should have no effect: diff={:.2} dB",
+        (g10_hi - g0_hi) >= 6.0,
+        "AUD-23d: Presence em Modern (0->10 @ 4 kHz) deve atuar >= 6 dB, diff={:.2} dB",
         g10_hi - g0_hi
     );
 
-    // Vintage mode has NFB connected -> Presence=10 boosts 4.2 kHz noticeably vs Presence=0
+    // Vintage mode com NFB = 0 vs NFB = 8 -> Presence escala conforme realimentação negativa efetiva
+    let mut rect_vin_nfb0_p0 = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
+    rect_vin_nfb0_p0.set_channel_mode(AmpChannelMode::Vintage);
+    rect_vin_nfb0_p0.set_negative_feedback(0.0);
+    rect_vin_nfb0_p0.panel_mut().set_presence(0.0);
+
+    let mut rect_vin_nfb0_p10 = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
+    rect_vin_nfb0_p10.set_channel_mode(AmpChannelMode::Vintage);
+    rect_vin_nfb0_p10.set_negative_feedback(0.0);
+    rect_vin_nfb0_p10.panel_mut().set_presence(10.0);
+
+    let vn0_0 = measure_sine_gain_db(&mut rect_vin_nfb0_p0, 4200.0, 48000.0);
+    let vn0_10 = measure_sine_gain_db(&mut rect_vin_nfb0_p10, 4200.0, 48000.0);
+    assert!(
+        (vn0_10 - vn0_0).abs() < 0.2,
+        "Vintage com nfb=0: Presence não deve agir (diff={:.2} dB)",
+        vn0_10 - vn0_0
+    );
+
     let mut rect_vin_0 = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
     rect_vin_0.set_channel_mode(AmpChannelMode::Vintage);
     rect_vin_0.set_negative_feedback(8.0);
@@ -465,7 +483,7 @@ fn test_ca_08_presence_and_depth_scale_with_effective_nfb() {
     let v10_hi = measure_sine_gain_db(&mut rect_vin_10, 4200.0, 48000.0);
     assert!(
         (v10_hi - v0_hi) > 2.0,
-        "With NFB connected, Presence=10 must boost 4.2 kHz > 2 dB, got {:.2} dB",
+        "With NFB connected (Vintage nfb=8), Presence=10 must boost 4.2 kHz > 2 dB, got {:.2} dB",
         v10_hi - v0_hi
     );
 }

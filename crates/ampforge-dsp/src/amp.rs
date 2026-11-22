@@ -123,7 +123,6 @@ impl AmpInputJack {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AmpChannelMode {
     Clean,
-    Pushed,
     Vintage,
     Modern,
 }
@@ -132,7 +131,6 @@ impl AmpChannelMode {
     pub fn from_str_name(s: &str) -> Option<Self> {
         match s {
             "clean" => Some(Self::Clean),
-            "pushed" => Some(Self::Pushed),
             "vintage" => Some(Self::Vintage),
             "modern" => Some(Self::Modern),
             _ => None,
@@ -142,7 +140,6 @@ impl AmpChannelMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Clean => "clean",
-            Self::Pushed => "pushed",
             Self::Vintage => "vintage",
             Self::Modern => "modern",
         }
@@ -682,6 +679,14 @@ pub struct BiquadFilter {
 }
 
 impl BiquadFilter {
+    #[inline]
+    pub fn identity() -> Self {
+        Self {
+            b0: 1.0,
+            ..Self::default()
+        }
+    }
+
     #[inline(always)]
     pub fn update_coeffs(&mut self, other: BiquadFilter) {
         self.b0 = other.b0;
@@ -863,6 +868,10 @@ fn triode_stage_gain(ra_ohm: f64, rl_ohm: f64, rk_unbypassed_ohm: f64) -> f64 {
         / (r_ac + TRIODE_12AX7_RP_OHM + (TRIODE_12AX7_MU + 1.0) * rk_unbypassed_ohm)
 }
 
+// DECISAO_SONIX_RECTO_MODERN_PRESENCE (2026-11-21): evidência indireta da Mesa (cada modo tem seu pot de presence);
+// esquema primário RF-1F PENDENTE (em Modern, NFB global = 0, mantendo o controle de presence atuante em 4 kHz).
+const DECISAO_SONIX_RECTO_MODERN_PRESENCE: f64 = 1.0;
+
 impl AmpCore {
     pub fn create_voicing_filters(model: AmpModelId, sr: f64) -> (BiquadFilter, BiquadFilter) {
         // Curvas físicas documentadas em docs/amps/voicing-fontes.md e esquemas elétricos originais
@@ -877,7 +886,7 @@ impl AmpCore {
             ),
             AmpModelId::UsTwinBlackface65 => (
                 BiquadFilter::high_shelf(4200.0, 3.2, sr),
-                BiquadFilter::peaking(450.0, -4.5, 1.0, sr),
+                BiquadFilter::identity(),
             ),
             AmpModelId::CaliDualRectoRevF => (
                 BiquadFilter::peaking(85.0, 3.8, 1.4, sr),
@@ -1082,7 +1091,7 @@ impl AmpCore {
             }
             AmpModelId::UsTwinBlackface65 => ToneStackTopology::FenderTmbMidScoop,
             AmpModelId::UkAc30TopBoost => ToneStackTopology::VoxTopBoost,
-            AmpModelId::CaliDualRectoRevF => ToneStackTopology::MesaMarkPreGain,
+            AmpModelId::CaliDualRectoRevF => ToneStackTopology::RectoPostGain,
         }
     }
 
@@ -1092,7 +1101,7 @@ impl AmpCore {
             ToneStackTopology::MarshallCathodeFollower | ToneStackTopology::Model => 3.5,
             ToneStackTopology::FenderTmbMidScoop => 5.4,
             ToneStackTopology::VoxTopBoost => 4.2,
-            ToneStackTopology::MesaMarkPreGain => 3.5,
+            ToneStackTopology::RectoPostGain | ToneStackTopology::MesaMarkPreGain => 3.5,
             ToneStackTopology::PassiveJamesBaxandall => 2.6,
         }
     }
@@ -1198,7 +1207,14 @@ impl AmpCore {
 
         // Feedback loop filter: Presence (>2 kHz) modulated by NFB loop somente nos modelos com Presence real
         if self.model_id.has_presence() {
-            let pres_db = (sm_presence as f64 / 10.0) * 10.0 * nfb_scale;
+            let presence_nfb_scale = if self.model_id == AmpModelId::CaliDualRectoRevF
+                && self.panel.channel_mode == AmpChannelMode::Modern
+            {
+                DECISAO_SONIX_RECTO_MODERN_PRESENCE
+            } else {
+                nfb_scale
+            };
+            let pres_db = (sm_presence as f64 / 10.0) * 10.0 * presence_nfb_scale;
             self.presence_filter
                 .update_coeffs(BiquadFilter::peaking(4000.0, pres_db, 1.4, sr));
         }
@@ -1207,7 +1223,7 @@ impl AmpCore {
         let (v1_cur, v2_cur) = if self.mod_settings.tonestack != ToneStackTopology::Model {
             match self.mod_settings.tonestack {
                 ToneStackTopology::FenderTmbMidScoop => (
-                    BiquadFilter::peaking(450.0, -3.5, 1.0, sr),
+                    BiquadFilter::identity(),
                     BiquadFilter::high_shelf(5500.0, 2.5, sr),
                 ),
                 ToneStackTopology::MarshallCathodeFollower => (
@@ -1222,7 +1238,7 @@ impl AmpCore {
                     BiquadFilter::low_shelf(100.0, 1.5, sr),
                     BiquadFilter::high_shelf(4000.0, 1.5, sr),
                 ),
-                ToneStackTopology::MesaMarkPreGain => (
+                ToneStackTopology::RectoPostGain | ToneStackTopology::MesaMarkPreGain => (
                     BiquadFilter::peaking(750.0, -2.5, 1.1, sr),
                     BiquadFilter::peaking(85.0, 3.0, 1.4, sr),
                 ),
@@ -1296,11 +1312,10 @@ impl AmpCore {
                     let master_pot = master as f64 / 10.0;
                     let m_mult = match ch_mode {
                         AmpChannelMode::Clean => 0.55,
-                        AmpChannelMode::Pushed => 0.95,
                         AmpChannelMode::Vintage => 1.35,
                         AmpChannelMode::Modern => 1.75,
                     };
-                    (1.0 + master_pot * 4.2 * m_mult) / power_tube_headroom
+                    (0.02 + master_pot.powi(3) * 21.3 * m_mult) / power_tube_headroom
                 }
                 AmpModelId::UkAc30TopBoost => {
                     // AC30 Top Boost clássico (JMI OS/010 / OS/056) não possui Master Volume:
@@ -1541,7 +1556,6 @@ impl AmpCore {
                     AmpModelId::CaliDualRectoRevF => {
                         let (stage_drive, n_stages, use_tight_hp) = match self.panel.channel_mode {
                             AmpChannelMode::Clean => (0.65, 2usize, false),
-                            AmpChannelMode::Pushed => (1.25, 3usize, false),
                             AmpChannelMode::Vintage => (2.15, 4usize, false),
                             AmpChannelMode::Modern => (3.10, 4usize, true),
                         };

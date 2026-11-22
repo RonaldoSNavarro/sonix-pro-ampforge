@@ -955,7 +955,7 @@ pub fn dispatch(
                                     ToneStackTopology::VoxTopBoost
                                 }
                                 ampforge_dsp::amp::AmpModelId::CaliDualRectoRevF => {
-                                    ToneStackTopology::MesaMarkPreGain
+                                    ToneStackTopology::RectoPostGain
                                 }
                             }
                         };
