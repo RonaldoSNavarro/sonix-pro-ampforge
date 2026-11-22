@@ -900,3 +900,79 @@ fn ca2_clear_tail_on_scene_switch_is_o1_without_latency_spike() {
         elapsed
     );
 }
+
+#[test]
+fn ca3_009_troca_de_cena_sem_clique_razao_transiente_le_2() {
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 256);
+    chain.set_gate_enabled(false);
+    chain.set_amp_enabled(true);
+    chain.set_cab_enabled(false);
+    chain.set_amp_gain(6.0);
+
+    let sr = 48000.0_f32;
+    let block_len = 256;
+    let mut phase = 0.0_f32;
+    let mut next_block = |out_in: &mut Vec<f32>| {
+        out_in.clear();
+        for _ in 0..block_len {
+            out_in.push(0.15 * (2.0 * std::f32::consts::PI * 220.0 * phase / sr).sin());
+            phase += 1.0;
+        }
+    };
+
+    let mut inp = Vec::with_capacity(block_len);
+    let mut out = vec![0.0_f32; block_len];
+    let mut stable_tail = Vec::new();
+    for b in 0..20 {
+        next_block(&mut inp);
+        chain.process(&inp, &mut out);
+        if b >= 16 {
+            stable_tail.extend_from_slice(&out);
+        }
+    }
+
+    // Troca de cena/canal em produção enquanto o áudio flui
+    chain.set_active_channel(1);
+    let mut full_signal = stable_tail;
+    let evento = full_signal.len();
+    for _ in 0..8 {
+        next_block(&mut inp);
+        chain.process(&inp, &mut out);
+        full_signal.extend_from_slice(&out);
+    }
+
+    let ratio = ampforge_dsp::regua::razao_transiente(&full_signal, evento, sr);
+    assert!(
+        ratio <= 2.0,
+        "CA-3/CA-4 (Spec 009): troca de cena em produção deve ter razao_transiente <= 2.0 (obtido {ratio:.3})"
+    );
+}
+
+#[test]
+fn ca4_009_quatro_canais_por_bloco_comutam() {
+    let mut chain = RealtimeDspChain::new(48000.0);
+    chain.prepare(48000.0, 256);
+    chain.set_gate_enabled(false);
+    chain.set_amp_enabled(true);
+    chain.set_cab_enabled(false);
+
+    // Verifica que os 4 canais (0..3) respondem de forma independente sem alocação/erro
+    let inp: Vec<f32> = (0..256)
+        .map(|i| 0.1 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 48000.0).sin())
+        .collect();
+    let mut out = vec![0.0_f32; 256];
+    let mut rms_per_channel = Vec::new();
+    for ch in 0..4usize {
+        chain.set_active_channel(ch);
+        chain.set_amp_gain(2.0 + ch as f32 * 2.0);
+        for _ in 0..8 {
+            chain.process(&inp, &mut out);
+        }
+        rms_per_channel.push(rms_of(&out));
+    }
+    assert!(
+        rms_per_channel.iter().all(|&r| r.is_finite() && r > 1e-4),
+        "CA-3 (Spec 009): todos os 4 canais A/B/C/D devem produzir áudio válido ({rms_per_channel:?})"
+    );
+}

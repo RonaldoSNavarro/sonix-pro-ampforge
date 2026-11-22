@@ -156,17 +156,27 @@ fn test_ca_08_generate_and_verify_rust_ipc_schema_fixtures() {
         let (code, _ct, body) = dispatch(&ctx, route, method, req_body);
         assert_eq!(code, 200, "CA-8: Rota {} falhou com {}", route, code);
         let val: Value = serde_json::from_slice(&body).unwrap();
-        let pretty = serde_json::to_string_pretty(&val).unwrap();
-        fs::write(fixtures_dir.join(fname), format!("{}\n", pretty)).unwrap();
+        let expected_text = format!("{}\n", serde_json::to_string_pretty(&val).unwrap());
+        let on_disk = fs::read_to_string(fixtures_dir.join(fname)).unwrap_or_else(|e| {
+            panic!("CA-8: Fixture {} ausente em disco (rode `cargo run -p sonix-desktop --example gerar_fixtures_ipc`): {}", fname, e)
+        });
+        assert_eq!(
+            on_disk.replace("\r\n", "\n"),
+            expected_text,
+            "CA-8: Fixture {} divergente do contrato IPC atual (rode `cargo run -p sonix-desktop --example gerar_fixtures_ipc`)",
+            fname
+        );
     }
 
     let manifest = json!({
         "generated_by": "contract_035_ui_backend_contracts",
         "files": routes.iter().map(|(f, ..)| *f).collect::<Vec<_>>()
     });
-    fs::write(
-        fixtures_dir.join("manifest.json"),
-        format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap()),
-    )
-    .unwrap();
+    let expected_manifest = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
+    let manifest_on_disk = fs::read_to_string(fixtures_dir.join("manifest.json")).unwrap();
+    assert_eq!(
+        manifest_on_disk.replace("\r\n", "\n"),
+        expected_manifest,
+        "CA-8: manifest.json divergente"
+    );
 }

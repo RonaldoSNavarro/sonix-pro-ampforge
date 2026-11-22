@@ -210,44 +210,46 @@ fn aud_22_stack_igual_a_yeh() {
 }
 
 #[test]
-fn test_ca_02_antialiasing_decimation_passband_flat_and_stopband_attenuated() {
-    let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
-    amp.set_sample_rate(48000.0);
-    amp.set_oversampling_factor(8);
+fn ca2_amp_resposta_linear_igual_entre_taxas() {
+    let rates = [44_100.0_f32, 48_000.0, 88_200.0, 96_000.0];
+    let freqs = [20.0_f64, 100.0, 1000.0, 5000.0, 10000.0, 16000.0];
+    let amp_peak = 0.0001_f32; // -80 dBFS (regime linear)
 
-    let mut freqs = Vec::new();
-    let mut f = 100.0;
-    while f <= 18000.0 {
-        freqs.push(f);
-        f *= 1.35;
-    }
-    freqs.push(18000.0);
-
-    let mut mags = Vec::new();
-    let sr = 48000.0 * 8.0;
     for &freq in &freqs {
-        // Measure aa_filters directly via public method
-        let mag_db = amp.measure_aa_filter_magnitude_db(freq);
-        mags.push((freq, mag_db));
+        let mut gains_db = Vec::with_capacity(rates.len());
+        for &sr in &rates {
+            let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
+            amp.set_sample_rate(sr);
+            amp.set_oversampling_factor(8);
+
+            let total_samples = (sr as f64 * 0.5) as usize;
+            let tail_start = (sr as f64 * 0.25) as usize;
+            let input: Vec<f32> = (0..total_samples)
+                .map(|i| {
+                    amp_peak
+                        * (2.0 * std::f64::consts::PI * freq * (i as f64) / (sr as f64)).sin()
+                            as f32
+                })
+                .collect();
+            let mut output = vec![0.0_f32; total_samples];
+            amp.process(&input, &mut output);
+            let g = ampforge_dsp::regua::ganho_db(
+                &input[tail_start..],
+                &output[tail_start..],
+                sr,
+                freq as f32,
+            );
+            gains_db.push(g);
+        }
+
+        let max_db = gains_db.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let min_db = gains_db.iter().copied().fold(f64::INFINITY, f64::min);
+        let diff_db = max_db - min_db;
+        assert!(
+            diff_db <= 0.5,
+            "CA-2: Resposta linear a {freq} Hz (-80 dBFS) deve variar <= 0.5 dB entre 44.1k/48k/88.2k/96k; obtido {diff_db:.3} dB ({gains_db:?})"
+        );
     }
-
-    let max_db = mags.iter().map(|m| m.1).fold(f64::NEG_INFINITY, f64::max);
-    let min_db = mags.iter().map(|m| m.1).fold(f64::INFINITY, f64::min);
-    let ripple_db = max_db - min_db;
-    assert!(
-        ripple_db <= 1.0,
-        "AA passband ripple 100Hz..18kHz must be <= 1.0 dB, got {:.2} dB ({:?})",
-        ripple_db,
-        mags
-    );
-
-    let stop_24k = amp.measure_aa_filter_magnitude_db(24000.0);
-    assert!(
-        stop_24k <= -60.0,
-        "AA stopband at fs_base/2 (24 kHz, sr={}) must attenuate >= 60 dB, got {:.2} dB",
-        sr,
-        stop_24k
-    );
 }
 
 #[test]

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { chromium } from 'playwright-core';
@@ -12,7 +13,7 @@ const REF_DIR = path.join(ROOT, 'docs', 'ui-desktop', 'referencia');
 const CANVAS_JSON_PATH = path.join(ROOT, 'docs', 'ui-desktop', 'canvas', 'canvas.json');
 const DIST_DIR = path.join(ROOT, 'apps', 'sonix-app', 'ui', 'dist');
 const STYLES_PATH = path.join(ROOT, 'apps', 'sonix-app', 'ui', 'src', 'styles.css');
-const DIFF_DIR = path.join(ROOT, 'tests', 'fixtures', '048-diffs');
+const DIFF_DIR = path.join(os.tmpdir(), 'sonix-048-diffs');
 
 function findBrowserExecutable() {
   const candidates = [

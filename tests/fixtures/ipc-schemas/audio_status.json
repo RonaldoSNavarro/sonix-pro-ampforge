@@ -1,6 +1,6 @@
 {
   "adc_clips": 0,
-  "algorithmic_latency_samples": 16,
+  "algorithmic_latency_samples": 12,
   "backend": "wasapi",
   "connected": true,
   "cpu_avg_pct": 6.5,
@@ -10,7 +10,7 @@
   "driver_output_latency_ms": 2.67,
   "dsp_contention_silence_blocks": 0,
   "engine_faulted": false,
-  "estimated_roundtrip_ms": 5.673,
+  "estimated_roundtrip_ms": 5.59,
   "fallback_reason": null,
   "input_device": "Focusrite USB",
   "input_period_frames": 128,

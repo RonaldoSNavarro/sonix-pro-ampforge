@@ -5,7 +5,7 @@
 use sonix_core::footswitch::{FootswitchArray, FootswitchMode};
 use sonix_core::modifiers::{ModifierBinding, ModifierMatrix, ModifierSource};
 use sonix_core::preset::{
-    BlockChannel, BlockChannelState, BlockNode, CoreError, GaplessCrossfader, Preset, Setlist,
+    BlockChannel, BlockChannelState, BlockNode, CoreError, Preset, Setlist,
 };
 
 #[test]
@@ -53,31 +53,6 @@ fn test_ca_03_inactive_channels_consume_zero_cpu() {
     // Only active channel B is executed; A, C, D are inactive
     let active_ch = block.active_channel_for_scene(0);
     assert_eq!(active_ch, BlockChannel::B);
-
-    let active_count = block.count_active_channels_in_scene(0);
-    assert_eq!(active_count, 1, "Only 1 channel is active, 3 inactive channels consume 0.0% CPU");
-}
-
-#[test]
-fn test_ca_04_gapless_scene_transition_cosine_crossfade_1_5ms() {
-    let crossfader = GaplessCrossfader::new(48000.0, 1.5); // 1.5 ms crossfade
-    assert_eq!(crossfader.crossfade_samples(), 72); // 1.5ms * 48 = 72 samples
-
-    let len = 72;
-    let old_buffer = vec![1.0f32; len];
-    let new_buffer = vec![1.0f32; len];
-    let mut output = vec![0.0f32; len];
-
-    crossfader.crossfade(&old_buffer, &new_buffer, &mut output);
-
-    // Cosine window crossfade: w_out(t) + w_in(t) = cos^2 + sin^2 = 1.0 (constant level!)
-    for i in 0..len {
-        assert!(
-            (output[i] - 1.0).abs() < 1e-4,
-            "Cosine crossfade must maintain continuous sum without dropouts (got {} at sample {})",
-            output[i], i
-        );
-    }
 }
 
 #[test]

@@ -107,10 +107,6 @@ impl BlockNode {
             BlockChannel::A
         }
     }
-
-    pub fn count_active_channels_in_scene(&self, _scene_idx: usize) -> usize {
-        1 // Exactly 1 active channel per block, 3 remain idle
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -180,39 +176,5 @@ impl Setlist {
 
     pub fn presets(&self) -> &[Preset] {
         &self.presets
-    }
-}
-
-pub struct GaplessCrossfader {
-    sample_rate: f32,
-    crossfade_samples: usize,
-}
-
-impl GaplessCrossfader {
-    pub fn new(sample_rate: f32, crossfade_ms: f32) -> Self {
-        let samples = (crossfade_ms * 0.001 * sample_rate).round() as usize;
-        Self {
-            sample_rate,
-            crossfade_samples: samples.max(1),
-        }
-    }
-
-    pub fn sample_rate(&self) -> f32 {
-        self.sample_rate
-    }
-
-    pub fn crossfade_samples(&self) -> usize {
-        self.crossfade_samples
-    }
-
-    pub fn crossfade(&self, old_buf: &[f32], new_buf: &[f32], out_buf: &mut [f32]) {
-        let n = out_buf.len().min(old_buf.len()).min(new_buf.len());
-        for i in 0..n {
-            let t = i as f32 / n as f32; // 0.0 to 1.0
-            let angle = t * (std::f32::consts::PI * 0.5);
-            let w_out = angle.cos().powi(2);
-            let w_in = angle.sin().powi(2);
-            out_buf[i] = old_buf[i] * w_out + new_buf[i] * w_in;
-        }
     }
 }

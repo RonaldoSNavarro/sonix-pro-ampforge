@@ -5,7 +5,7 @@ pub mod modifiers;
 pub mod footswitch;
 pub mod persistence;
 
-pub use preset::{BlockChannel, BlockChannelState, BlockNode, CoreError, GaplessCrossfader, Preset, Scene, Setlist};
+pub use preset::{BlockChannel, BlockChannelState, BlockNode, CoreError, Preset, Scene, Setlist};
 pub use modifiers::{ModifierBinding, ModifierMatrix, ModifierSource};
 pub use footswitch::{FootswitchArray, FootswitchMode, FootswitchUnit};
 pub use persistence::{

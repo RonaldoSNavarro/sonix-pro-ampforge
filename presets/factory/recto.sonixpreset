@@ -50,7 +50,7 @@
     "amp_1.master": 6.5,
     "cab_1.enabled": true,
     "cab_1.speaker": "v30_4x12",
-    "cab_1.model": "v30_4x12_closed",
+    "cab_1.model": "v30_4x12",
     "cab_1.ir_enabled": false,
     "cab_1.mic1.position": 0.15,
     "cab_1.mic1.distance_cm": 1.5,
