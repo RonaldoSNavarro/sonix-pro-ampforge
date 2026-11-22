@@ -3,7 +3,7 @@ use ampforge_dsp::cab::VirtualCabProcessor;
 use ampforge_dsp::fx::eq::{EqMode, EqProcessor};
 use ampforge_dsp::modshop::{PowerTube, ToneStackTopology};
 use ampforge_dsp::tonestack::{
-    analog_tonestack_magnitude_db, resolved_fmv_components, PassiveToneStack,
+    analog_tonestack_magnitude_db_for_components, resolved_fmv_components, PassiveToneStack,
 };
 use std::f64::consts::PI;
 
@@ -28,48 +28,185 @@ fn measure_sine_gain_db(amp: &mut WhiteBoxAmpProcessor, freq_hz: f32, sample_rat
     20.0 * ((tail_out as f64) / (tail_in as f64).max(1e-12)).log10()
 }
 
-#[test]
-fn test_ca_01_fender_ab763_components_and_curve_accuracy() {
-    let comps = resolved_fmv_components(ToneStackTopology::FenderTmbMidScoop, 5.0, 5.0, 5.0);
-    assert!(
-        (comps.c2 - 100e-9).abs() < 1e-12,
-        "Fender AB763 c2 must be 100e-9 (0.1 uF), got {}",
-        comps.c2
-    );
-    assert!(
-        (comps.c3 - 47e-9).abs() < 1e-12,
-        "Fender AB763 c3 must be 47e-9 (0.047 uF), got {}",
-        comps.c3
-    );
+fn yeh_smith_magnitude_db(
+    r1: f64,
+    r2: f64,
+    r3: f64,
+    r4: f64,
+    c1: f64,
+    c2: f64,
+    c3: f64,
+    t: f64,
+    l: f64,
+    m: f64,
+    freq_hz: f64,
+) -> f64 {
+    let b1 = t * c1 * r1 + m * c3 * r3 + l * (c1 * r2 + c2 * r2) + (c1 * r3 + c2 * r3);
+    let b2 = t * (c1 * c2 * r1 * r4 + c1 * c3 * r1 * r4)
+        - m * m * (c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + m * (c1 * c3 * r1 * r3 + c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + l * (c1 * c2 * r1 * r2 + c1 * c2 * r2 * r4 + c1 * c3 * r2 * r4)
+        + l * m * (c1 * c3 * r2 * r3 + c2 * c3 * r2 * r3)
+        + (c1 * c2 * r1 * r3 + c1 * c2 * r3 * r4 + c1 * c3 * r3 * r4);
+    let b3 = l * m * (c1 * c2 * c3 * r1 * r2 * r3 + c1 * c2 * c3 * r2 * r3 * r4)
+        - m * m * (c1 * c2 * c3 * r1 * r3 * r3 + c1 * c2 * c3 * r3 * r3 * r4)
+        + m * (c1 * c2 * c3 * r1 * r3 * r3 + c1 * c2 * c3 * r3 * r3 * r4)
+        + t * c1 * c2 * c3 * r1 * r3 * r4
+        - t * m * c1 * c2 * c3 * r1 * r3 * r4
+        + t * l * c1 * c2 * c3 * r1 * r2 * r4;
+    let a0 = 1.0;
+    let a1 = (c1 * r1 + c1 * r3 + c2 * r3 + c2 * r4 + c3 * r4)
+        + m * c3 * r3
+        + l * (c1 * r2 + c2 * r2);
+    let a2 = m * (c1 * c3 * r1 * r3 - c2 * c3 * r3 * r4 + c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + l * m * (c1 * c3 * r2 * r3 + c2 * c3 * r2 * r3)
+        - m * m * (c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + l * (c1 * c2 * r2 * r4 + c1 * c2 * r1 * r2 + c1 * c3 * r2 * r4 + c2 * c3 * r2 * r4)
+        + (c1 * c2 * r1 * r4
+            + c1 * c3 * r1 * r4
+            + c1 * c2 * r3 * r4
+            + c1 * c2 * r1 * r3
+            + c1 * c3 * r3 * r4
+            + c2 * c3 * r3 * r4);
+    let a3 = l * m * (c1 * c2 * c3 * r1 * r2 * r3 + c1 * c2 * c3 * r2 * r3 * r4)
+        - m * m * (c1 * c2 * c3 * r1 * r3 * r3 + c1 * c2 * c3 * r3 * r3 * r4)
+        + m * (c1 * c2 * c3 * r3 * r3 * r4 + c1 * c2 * c3 * r1 * r3 * r3 - c1 * c2 * c3 * r1 * r3 * r4)
+        + l * c1 * c2 * c3 * r1 * r2 * r4
+        + c1 * c2 * c3 * r1 * r3 * r4;
 
-    // Compare digital PassiveToneStack response at 384 kHz (8x OS) against theoretical AB763 curve
-    let sr = 384_000.0;
+    let w = 2.0 * PI * freq_hz;
+    let w2 = w * w;
+    let w3 = w2 * w;
+    let num_re = -b2 * w2;
+    let num_im = b1 * w - b3 * w3;
+    let den_re = a0 - a2 * w2;
+    let den_im = a1 * w - a3 * w3;
+    let num_sq = num_re * num_re + num_im * num_im;
+    let den_sq = (den_re * den_re + den_im * den_im).max(1e-30);
+    10.0 * (num_sq / den_sq).max(1e-18).log10()
+}
+
+#[test]
+fn aud_22_stack_igual_a_yeh() {
+    let grid = [0.0f64, 0.25, 0.5, 0.75, 1.0];
+    let mut freqs_analog = Vec::new();
+    let mut freqs_digital = Vec::new();
+    for k in 0..=32 {
+        let f = 20.0 * 2.0f64.powf((k as f64) / 3.0);
+        if f <= 20_000.5 {
+            freqs_analog.push(f);
+        }
+        if f <= 5_000.5 {
+            freqs_digital.push(f);
+        }
+    }
+
+    let ab763 = resolved_fmv_components(ToneStackTopology::FenderTmbMidScoop, 5.0, 5.0, 5.0);
+    assert!((ab763.c2 - 100e-9).abs() < 1e-12);
+    assert!((ab763.c3 - 47e-9).abs() < 1e-12);
+
+    let topos = [
+        ToneStackTopology::MarshallCathodeFollower,
+        ToneStackTopology::FenderTmbMidScoop,
+        ToneStackTopology::VoxTopBoost,
+        ToneStackTopology::MesaMarkPreGain,
+        ToneStackTopology::PassiveJamesBaxandall,
+    ];
+
+    let sr = 48_000.0f64;
+    let ir_len = 24_000usize;
     let mut ts = PassiveToneStack::new();
-    for &freq in &[100.0f64, 400.0, 1000.0, 4000.0] {
-        ts.reset();
-        ts.update(ToneStackTopology::FenderTmbMidScoop, 5.0, 5.0, 5.0, sr);
-        let theory_db =
-            analog_tonestack_magnitude_db(ToneStackTopology::FenderTmbMidScoop, 5.0, 5.0, 5.0, freq);
-        let n = 32_768usize;
-        let mut out_sq = 0.0f64;
-        let mut in_sq = 0.0f64;
-        for i in 0..n {
-            let x = (2.0 * PI * freq * (i as f64) / sr).sin();
-            let y = ts.process(x);
-            if i >= n / 2 {
-                in_sq += x * x;
-                out_sq += y * y;
+    let mut ir = vec![0.0f64; ir_len];
+
+    let mut max_analog_err = 0.0f64;
+    let mut max_digital_err = 0.0f64;
+
+    for topo in topos {
+        let base = resolved_fmv_components(topo, 5.0, 5.0, 5.0);
+        for &t in &grid {
+            for &m in &grid {
+                for &l in &grid {
+                    let mut comps = base;
+                    comps.t_pos = t;
+                    comps.m_pos = m;
+                    comps.b_pos = l;
+                    comps.r_load = f64::INFINITY;
+
+                    for &freq in &freqs_analog {
+                        let yeh_db = yeh_smith_magnitude_db(
+                            comps.r_treble,
+                            comps.r_bass,
+                            comps.r_mid,
+                            comps.r_slope,
+                            comps.c1,
+                            comps.c2,
+                            comps.c3,
+                            t,
+                            l,
+                            m,
+                            freq,
+                        );
+                        let prod_db = analog_tonestack_magnitude_db_for_components(comps, freq);
+                        let err = (prod_db - yeh_db).abs();
+                        max_analog_err = max_analog_err.max(err);
+                        assert!(
+                            err <= 0.05,
+                            "AUD-22 analógico ({:?}, t={}, m={}, l={}) @ {:.1} Hz: prod={:.4} vs yeh={:.4} (erro={:.4} dB > 0.05)",
+                            topo, t, m, l, freq, prod_db, yeh_db, err
+                        );
+                    }
+
+                    ts.reset();
+                    ts.update_with_components(comps, sr);
+                    for (i, sample_out) in ir.iter_mut().enumerate() {
+                        *sample_out = ts.process(if i == 0 { 1.0 } else { 0.0 });
+                    }
+
+                    for &freq in &freqs_digital {
+                        let yeh_db = yeh_smith_magnitude_db(
+                            comps.r_treble,
+                            comps.r_bass,
+                            comps.r_mid,
+                            comps.r_slope,
+                            comps.c1,
+                            comps.c2,
+                            comps.c3,
+                            t,
+                            l,
+                            m,
+                            freq,
+                        );
+                        let w = 2.0 * PI * freq / sr;
+                        let mut re = 0.0f64;
+                        let mut im = 0.0f64;
+                        let step_cos = w.cos();
+                        let step_sin = w.sin();
+                        let mut cw = 1.0f64;
+                        let mut sw = 0.0f64;
+                        for &h in &ir {
+                            re += h * cw;
+                            im -= h * sw;
+                            let next_cw = cw * step_cos - sw * step_sin;
+                            sw = sw * step_cos + cw * step_sin;
+                            cw = next_cw;
+                        }
+                        let dig_db = 10.0 * (re * re + im * im).max(1e-18).log10();
+                        let err = (dig_db - yeh_db).abs();
+                        max_digital_err = max_digital_err.max(err);
+                        assert!(
+                            err <= 0.1,
+                            "AUD-22 digital 48kHz ({:?}, t={}, m={}, l={}) @ {:.1} Hz: dig={:.4} vs yeh={:.4} (erro={:.4} dB > 0.1)",
+                            topo, t, m, l, freq, dig_db, yeh_db, err
+                        );
+                    }
+                }
             }
         }
-        let meas_db = 10.0 * (out_sq / in_sq.max(1e-24)).max(1e-18).log10();
-        assert!(
-            (meas_db - theory_db).abs() < 1.0,
-            "AB763 curve mismatch at {} Hz: measured {:.2} dB vs theory {:.2} dB",
-            freq,
-            meas_db,
-            theory_db
-        );
     }
+    eprintln!(
+        "AUD-22 GREEN: max_analog_err={:.6} dB (lim 0.05), max_digital_err={:.4} dB (lim 0.10)",
+        max_analog_err, max_digital_err
+    );
 }
 
 #[test]

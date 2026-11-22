@@ -108,9 +108,9 @@ fn test_ca_01_passive_tonestack_matches_analog_curves_and_interacts() {
         }
     }
 
-    // Interação real Bass/Middle/Treble: alterar Middle em Fender/Marshall desloca a resposta fora da banda média
-    let gain_treb_mid0 = measure_filter_db(&mut ts, ToneStackTopology::MarshallCathodeFollower, 5.0, 0.0, 5.0, sr, 250.0);
-    let gain_treb_mid10 = measure_filter_db(&mut ts, ToneStackTopology::MarshallCathodeFollower, 5.0, 10.0, 5.0, sr, 250.0);
+    // Interação real Bass/Middle/Treble: alterar Middle em Marshall desloca a resposta em 400 Hz (+2,35 dB conforme Yeh & Smith)
+    let gain_treb_mid0 = measure_filter_db(&mut ts, ToneStackTopology::MarshallCathodeFollower, 5.0, 0.0, 5.0, sr, 400.0);
+    let gain_treb_mid10 = measure_filter_db(&mut ts, ToneStackTopology::MarshallCathodeFollower, 5.0, 10.0, 5.0, sr, 400.0);
     assert!(
         (gain_treb_mid10 - gain_treb_mid0).abs() >= 1.5,
         "Malha passiva FMV deve exibir interação forte entre Middle e graves/médio-graves (diff={:.2} dB)",

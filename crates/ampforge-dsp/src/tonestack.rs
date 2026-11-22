@@ -219,20 +219,28 @@ fn det_5x5(m: &[[Poly; 5]; 5]) -> Poly {
     acc
 }
 
+const HB_A0: f64 = 0.10557280900008414; // tan^2(pi / 10)
+const HB_A1: f64 = 0.5278640450004207;  // tan^2(2 * pi / 10)
+
 /// Computes normalized polynomial transfer function H(p) = (b0+b1 p+b2 p^2+b3 p^3) / (a0+a1 p+a2 p^2+a3 p^3),
 /// where p = s * (R_REF * C_REF).
 fn fmv_transfer_polynomials(c: FmvComponents) -> ([f64; 4], [f64; 4]) {
-    let r_t1 = ((1.0 - c.t_pos) * c.r_treble).max(50.0);
-    let r_t2 = (c.t_pos * c.r_treble).max(50.0);
-    let r_b = (c.b_pos * c.r_bass).max(50.0);
-    let r_m = (c.m_pos * c.r_mid).max(20.0);
+    let r_t1 = ((1.0 - c.t_pos) * c.r_treble).max(1e-2);
+    let r_t2 = (c.t_pos * c.r_treble).max(1e-2);
+    // Topologia FMV (Yeh & Smith DAFx-06): R_bass em serie com a fracao superior (1 - m) * R_mid
+    let r_b = (c.b_pos * c.r_bass + (1.0 - c.m_pos) * c.r_mid).max(1e-2);
+    let r_m = (c.m_pos * c.r_mid).max(1e-2);
 
     let g_t1 = R_REF / r_t1;
     let g_t2 = R_REF / r_t2;
     let g_b = R_REF / r_b;
     let g_m = R_REF / r_m;
-    let g_4 = R_REF / c.r_slope.max(100.0);
-    let g_l = R_REF / c.r_load.max(10_000.0);
+    let g_4 = R_REF / c.r_slope.max(1.0);
+    let g_l = if c.r_load.is_finite() && c.r_load > 0.0 {
+        R_REF / c.r_load.max(1.0)
+    } else {
+        0.0
+    };
 
     let c1 = c.c1 / C_REF;
     let c2 = c.c2 / C_REF;
@@ -249,16 +257,16 @@ fn fmv_transfer_polynomials(c: FmvComponents) -> ([f64; 4], [f64; 4]) {
     m[1][2] = lin(-g_t2, 0.0);
 
     m[2][1] = lin(-g_t2, 0.0);
-    m[2][2] = lin(g_t2 + g_b, c3);
+    m[2][2] = lin(g_t2 + g_b, c2);
     m[2][3] = lin(-g_b, 0.0);
-    m[2][4] = lin(0.0, -c3);
+    m[2][4] = lin(0.0, -c2);
 
     m[3][2] = lin(-g_b, 0.0);
-    m[3][3] = lin(g_b + g_m, c2);
-    m[3][4] = lin(0.0, -c2);
+    m[3][3] = lin(g_b + g_m, c3);
+    m[3][4] = lin(0.0, -c3);
 
-    m[4][2] = lin(0.0, -c3);
-    m[4][3] = lin(0.0, -c2);
+    m[4][2] = lin(0.0, -c2);
+    m[4][3] = lin(0.0, -c3);
     m[4][4] = lin(g_4, c2 + c3);
 
     let den = det_5x5(&m);
@@ -276,15 +284,8 @@ fn fmv_transfer_polynomials(c: FmvComponents) -> ([f64; 4], [f64; 4]) {
     ([num[0], num[1], num[2], num[3]], [den[0], den[1], den[2], den[3]])
 }
 
-/// Evaluates continuous-time |H(j * 2 * pi * freq_hz)| in dB from the exact schematic RC network.
-pub fn analog_tonestack_magnitude_db(
-    topo: ToneStackTopology,
-    bass: f32,
-    middle: f32,
-    treble: f32,
-    freq_hz: f64,
-) -> f64 {
-    let comps = resolved_fmv_components(topo, bass, middle, treble);
+/// Evaluates continuous-time |H(j * 2 * pi * freq_hz)| in dB for arbitrary `FmvComponents`.
+pub fn analog_tonestack_magnitude_db_for_components(comps: FmvComponents, freq_hz: f64) -> f64 {
     let (b, a) = fmv_transfer_polynomials(comps);
     let w = 2.0 * PI * freq_hz * (R_REF * C_REF);
     let w2 = w * w;
@@ -300,6 +301,18 @@ pub fn analog_tonestack_magnitude_db(
     10.0 * (num_sq / den_sq).max(1e-18).log10()
 }
 
+/// Evaluates continuous-time |H(j * 2 * pi * freq_hz)| in dB from the exact schematic RC network.
+pub fn analog_tonestack_magnitude_db(
+    topo: ToneStackTopology,
+    bass: f32,
+    middle: f32,
+    treble: f32,
+    freq_hz: f64,
+) -> f64 {
+    let comps = resolved_fmv_components(topo, bass, middle, treble);
+    analog_tonestack_magnitude_db_for_components(comps, freq_hz)
+}
+
 /// 3rd-order Direct Form I passive Tone Stack filter (bilinear transform).
 /// Uses signal histories (`x_hist`, `y_hist`) so smooth coefficient ramps avoid
 /// Direct Form II state-jump transients at high oversampling rates.
@@ -309,6 +322,15 @@ pub struct PassiveToneStack {
     a: [f64; 4], // a[0] normalized to 1.0, stores a1..a3 in a[1..4]
     x_hist: [f64; 3],
     y_hist: [f64; 3],
+    internal_os2x: bool,
+    up0_x: f64,
+    up0_y: f64,
+    up1_x: f64,
+    up1_y: f64,
+    dn0_x: f64,
+    dn0_y: f64,
+    dn1_x: f64,
+    dn1_y: f64,
     last_topo: ToneStackTopology,
     last_b: f32,
     last_m: f32,
@@ -329,6 +351,15 @@ impl PassiveToneStack {
             a: [1.0, 0.0, 0.0, 0.0],
             x_hist: [0.0; 3],
             y_hist: [0.0; 3],
+            internal_os2x: false,
+            up0_x: 0.0,
+            up0_y: 0.0,
+            up1_x: 0.0,
+            up1_y: 0.0,
+            dn0_x: 0.0,
+            dn0_y: 0.0,
+            dn1_x: 0.0,
+            dn1_y: 0.0,
             last_topo: ToneStackTopology::MarshallCathodeFollower,
             last_b: -1.0,
             last_m: -1.0,
@@ -342,6 +373,54 @@ impl PassiveToneStack {
     pub fn reset(&mut self) {
         self.x_hist = [0.0; 3];
         self.y_hist = [0.0; 3];
+        self.up0_x = 0.0;
+        self.up0_y = 0.0;
+        self.up1_x = 0.0;
+        self.up1_y = 0.0;
+        self.dn0_x = 0.0;
+        self.dn0_y = 0.0;
+        self.dn1_x = 0.0;
+        self.dn1_y = 0.0;
+    }
+
+    fn apply_components(&mut self, comps: FmvComponents, sample_rate_hz: f64) {
+        let (bc, ac) = fmv_transfer_polynomials(comps);
+        self.internal_os2x = sample_rate_hz < 88_200.0;
+        let eff_sr = if self.internal_os2x {
+            sample_rate_hz.max(8000.0) * 2.0
+        } else {
+            sample_rate_hz.max(8000.0)
+        };
+
+        // Bilinear transform: p = K * (1 - z^-1) / (1 + z^-1), where p = s * (R_REF * C_REF)
+        let k = 2.0 * eff_sr * (R_REF * C_REF);
+        let k2 = k * k;
+        let k3 = k2 * k;
+
+        let transform = |c: [f64; 4]| -> [f64; 4] {
+            let c0 = c[0];
+            let c1 = c[1] * k;
+            let c2 = c[2] * k2;
+            let c3 = c[3] * k3;
+            [
+                c0 + c1 + c2 + c3,
+                3.0 * c0 + c1 - c2 - 3.0 * c3,
+                3.0 * c0 - c1 - c2 + 3.0 * c3,
+                c0 - c1 + c2 - c3,
+            ]
+        };
+
+        let bz = transform(bc);
+        let az = transform(ac);
+        let inv_a0 = if az[0].abs() > 1e-18 { 1.0 / az[0] } else { 1.0 };
+
+        self.b = [bz[0] * inv_a0, bz[1] * inv_a0, bz[2] * inv_a0, bz[3] * inv_a0];
+        self.a = [1.0, az[1] * inv_a0, az[2] * inv_a0, az[3] * inv_a0];
+    }
+
+    pub fn update_with_components(&mut self, comps: FmvComponents, sample_rate_hz: f64) {
+        self.last_sr = -1.0;
+        self.apply_components(comps, sample_rate_hz);
     }
 
     pub fn update(
@@ -367,36 +446,19 @@ impl PassiveToneStack {
         self.last_sr = sample_rate_hz;
 
         let comps = resolved_fmv_components(topo, bass, middle, treble);
-        let (bc, ac) = fmv_transfer_polynomials(comps);
-
-        // Bilinear transform: p = K * (1 - z^-1) / (1 + z^-1), where p = s * (R_REF * C_REF)
-        let k = 2.0 * sample_rate_hz.max(8000.0) * (R_REF * C_REF);
-        let k2 = k * k;
-        let k3 = k2 * k;
-
-        let transform = |c: [f64; 4]| -> [f64; 4] {
-            let c0 = c[0];
-            let c1 = c[1] * k;
-            let c2 = c[2] * k2;
-            let c3 = c[3] * k3;
-            [
-                c0 + c1 + c2 + c3,
-                3.0 * c0 + c1 - c2 - 3.0 * c3,
-                3.0 * c0 - c1 - c2 + 3.0 * c3,
-                c0 - c1 + c2 - c3,
-            ]
-        };
-
-        let bz = transform(bc);
-        let az = transform(ac);
-        let inv_a0 = if az[0].abs() > 1e-18 { 1.0 / az[0] } else { 1.0 };
-
-        self.b = [bz[0] * inv_a0, bz[1] * inv_a0, bz[2] * inv_a0, bz[3] * inv_a0];
-        self.a = [1.0, az[1] * inv_a0, az[2] * inv_a0, az[3] * inv_a0];
+        self.apply_components(comps, sample_rate_hz);
     }
 
     #[inline(always)]
-    pub fn process(&mut self, x: f64) -> f64 {
+    fn ap1(x: f64, a: f64, x1: &mut f64, y1: &mut f64) -> f64 {
+        let y = crate::denormal::flush_f64(a * (x - *y1) + *x1);
+        *x1 = crate::denormal::flush_f64(x);
+        *y1 = y;
+        y
+    }
+
+    #[inline(always)]
+    fn process_df1(&mut self, x: f64) -> f64 {
         let y = crate::denormal::flush_f64(
             self.b[0] * x
                 + self.b[1] * self.x_hist[0]
@@ -413,5 +475,20 @@ impl PassiveToneStack {
         self.y_hist[1] = self.y_hist[0];
         self.y_hist[0] = y;
         y
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, x: f64) -> f64 {
+        if self.internal_os2x {
+            let s0 = Self::ap1(x, HB_A0, &mut self.up0_x, &mut self.up0_y);
+            let s1 = Self::ap1(x, HB_A1, &mut self.up1_x, &mut self.up1_y);
+            let y0 = self.process_df1(s0);
+            let y1 = self.process_df1(s1);
+            let d0 = Self::ap1(y1, HB_A0, &mut self.dn0_x, &mut self.dn0_y);
+            let d1 = Self::ap1(y0, HB_A1, &mut self.dn1_x, &mut self.dn1_y);
+            0.5 * (d0 + d1)
+        } else {
+            self.process_df1(x)
+        }
     }
 }
