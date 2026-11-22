@@ -161,8 +161,11 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
   cabLbl.style.cssText = 'font-size:9px;margin-right:4px;';
   cabLbl.textContent = 'Caixa';
   cabPickRow.appendChild(cabLbl);
+  const irActive = bool(store, 'cab_1.ir_enabled', false);
   for (const [id, info] of Object.entries(cabSpecs)) {
     const b = makeChipButton('cab.speaker', info.title, activeSpeaker === id, () => store.setControl('cab.speaker', id));
+    b.disabled = irActive;
+    if (irActive) b.title = 'IR carregada substitui o alto-falante';
     cabPickRow.appendChild(b);
   }
   topBar.append(backBtn, dot, title, spacer, cabPickRow);
@@ -435,7 +438,6 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
   const sideBody = document.createElement('div');
   sideBody.style.cssText = 'flex:1;min-height:0;padding:12px 16px;display:flex;flex-direction:column;gap:14px;overflow:hidden;';
 
-  const irActive = bool(store, 'cab_1.ir_enabled', false);
   const irMicHint = 'IR ativa — microfonação vem da IR';
 
   if (store.cabTab === 'mics') {

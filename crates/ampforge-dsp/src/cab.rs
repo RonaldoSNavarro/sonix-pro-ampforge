@@ -316,6 +316,175 @@ const HALF_N: usize = 128;
 const FFT_N: usize = 256;
 const SPEC_BINS: usize = 129;
 const MAX_PARTITIONS: usize = 512;
+const SPEAKER_FIR_LEN: usize = 384;
+const SPEAKER_FFT_N: usize = 1024;
+
+/// Pontos de resposta em frequência amostrados em 1/3 de oitava dos datasheets dos fabricantes:
+/// - Greenback4x12Closed: Celestion G12M Greenback (https://celestion.com/wp-content/uploads/2021/10/T1221_G12M-Greenback_Data_Sheet.pdf)
+/// - V304x12Closed: Celestion Vintage 30 (https://celestion.com/wp-content/uploads/2021/10/T3904_Vintage-30_Data_Sheet.pdf)
+/// - AlnicoBlue2x12Open: Celestion Alnico Blue (https://celestion.com/wp-content/uploads/2021/10/T1225_Celestion-Blue_Data_Sheet.pdf)
+/// - Twin2x12Open: Jensen C12N (https://www.jensentone.com/sites/default/files/c12n_1.pdf)
+pub fn speaker_curve_points_hz_db(model: SpeakerCabModel) -> &'static [(f32, f32)] {
+    match model {
+        SpeakerCabModel::Greenback4x12Closed => &[
+            (63.0, -0.5), (80.0, 0.5), (100.0, 0.5), (125.0, 0.0), (160.0, 0.0),
+            (200.0, 0.0), (250.0, 0.0), (315.0, 0.0), (400.0, -0.5), (500.0, -0.5),
+            (630.0, 0.0), (800.0, 0.5), (1000.0, 0.0), (1250.0, 0.5), (1600.0, 1.5),
+            (2000.0, 2.5), (2500.0, 3.0), (3150.0, 2.5), (4000.0, 1.5), (5000.0, -3.0),
+            (6300.0, -9.0), (8000.0, -14.0), (10000.0, -18.0),
+        ],
+        SpeakerCabModel::V304x12Closed => &[
+            (63.0, -9.0), (80.0, -4.5), (100.0, -1.0), (125.0, 0.5), (160.0, 0.0),
+            (200.0, -0.5), (250.0, -0.5), (315.0, -0.5), (400.0, -1.0), (500.0, -0.5),
+            (630.0, 0.0), (800.0, 0.5), (1000.0, 0.0), (1250.0, 1.0), (1600.0, 2.5),
+            (2000.0, 3.5), (2500.0, 4.5), (3150.0, 4.5), (4000.0, 4.0), (5000.0, 1.5),
+            (6300.0, -5.5), (8000.0, -11.0), (10000.0, -15.5),
+        ],
+        SpeakerCabModel::AlnicoBlue2x12Open => &[
+            (63.0, -11.0), (80.0, -7.0), (100.0, -3.5), (125.0, -1.5), (160.0, -0.5),
+            (200.0, 0.0), (250.0, 0.0), (315.0, 0.0), (400.0, -0.5), (500.0, -0.5),
+            (630.0, 0.0), (800.0, 0.5), (1000.0, 0.0), (1250.0, 1.0), (1600.0, 2.0),
+            (2000.0, 3.0), (2500.0, 3.5), (3150.0, 4.0), (4000.0, 3.5), (5000.0, 1.0),
+            (6300.0, -4.5), (8000.0, -9.5), (10000.0, -14.0),
+        ],
+        SpeakerCabModel::Twin2x12Open => &[
+            (63.0, -10.5), (80.0, -6.5), (100.0, -3.0), (125.0, -1.0), (160.0, 0.0),
+            (200.0, 0.5), (250.0, 0.0), (315.0, -0.5), (400.0, -1.0), (500.0, -1.0),
+            (630.0, -0.5), (800.0, 0.0), (1000.0, 0.0), (1250.0, 0.5), (1600.0, 1.5),
+            (2000.0, 2.5), (2500.0, 3.5), (3150.0, 4.0), (4000.0, 4.5), (5000.0, 3.5),
+            (6300.0, -1.0), (8000.0, -6.0), (10000.0, -11.0),
+        ],
+    }
+}
+
+fn interpolate_curve_db(points: &[(f32, f32)], freq_hz: f64) -> f64 {
+    if freq_hz <= points[0].0 as f64 {
+        return points[0].1 as f64;
+    }
+    let last = points[points.len() - 1];
+    if freq_hz >= last.0 as f64 {
+        // Continua rolloff suave além de 10 kHz
+        let octs = (freq_hz / last.0 as f64).log2();
+        return (last.1 as f64 - octs * 12.0).max(-40.0);
+    }
+    for w in points.windows(2) {
+        let (f0, db0) = (w[0].0 as f64, w[0].1 as f64);
+        let (f1, db1) = (w[1].0 as f64, w[1].1 as f64);
+        if freq_hz >= f0 && freq_hz <= f1 {
+            let t = (freq_hz.log2() - f0.log2()) / (f1.log2() - f0.log2()).max(1e-9);
+            return db0 + t * (db1 - db0);
+        }
+    }
+    0.0
+}
+
+fn fft_512(re: &mut [f64; SPEAKER_FFT_N], im: &mut [f64; SPEAKER_FFT_N], inverse: bool) {
+    let mut j = 0usize;
+    for i in 0..SPEAKER_FFT_N {
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+        let mut bit = SPEAKER_FFT_N >> 1;
+        while bit > 0 && (j & bit) != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j |= bit;
+    }
+
+    let sign = if inverse { 1.0f64 } else { -1.0f64 };
+    let mut len = 2usize;
+    while len <= SPEAKER_FFT_N {
+        let half = len >> 1;
+        let angle = sign * 2.0 * std::f64::consts::PI / (len as f64);
+        let wlen_re = angle.cos();
+        let wlen_im = angle.sin();
+        let mut start = 0usize;
+        while start < SPEAKER_FFT_N {
+            let mut w_re = 1.0f64;
+            let mut w_im = 0.0f64;
+            for k in 0..half {
+                let u_re = re[start + k];
+                let u_im = im[start + k];
+                let v_re = re[start + k + half] * w_re - im[start + k + half] * w_im;
+                let v_im = re[start + k + half] * w_im + im[start + k + half] * w_re;
+                re[start + k] = u_re + v_re;
+                im[start + k] = u_im + v_im;
+                re[start + k + half] = u_re - v_re;
+                im[start + k + half] = u_im - v_im;
+                let next_re = w_re * wlen_re - w_im * wlen_im;
+                w_im = w_re * wlen_im + w_im * wlen_re;
+                w_re = next_re;
+            }
+            start += len;
+        }
+        len <<= 1;
+    }
+
+    if inverse {
+        let inv_n = 1.0 / (SPEAKER_FFT_N as f64);
+        for k in 0..SPEAKER_FFT_N {
+            re[k] *= inv_n;
+            im[k] *= inv_n;
+        }
+    }
+}
+
+fn build_min_phase_speaker_fir(model: SpeakerCabModel, sr: f32) -> [f32; SPEAKER_FIR_LEN] {
+    let points = speaker_curve_points_hz_db(model);
+    let mut log_re = [0.0f64; SPEAKER_FFT_N];
+    let mut log_im = [0.0f64; SPEAKER_FFT_N];
+    let fs = (sr as f64).max(1.0);
+    for k in 0..=SPEAKER_FFT_N / 2 {
+        let freq = (k as f64) * fs / (SPEAKER_FFT_N as f64);
+        let db = if k == 0 {
+            points[0].1 as f64
+        } else {
+            interpolate_curve_db(points, freq)
+        };
+        let mag = 10.0f64.powf(db / 20.0).max(1e-4);
+        log_re[k] = mag.ln();
+        if k > 0 && k < SPEAKER_FFT_N / 2 {
+            log_re[SPEAKER_FFT_N - k] = log_re[k];
+        }
+    }
+
+    // IFFT -> cepstro real
+    fft_512(&mut log_re, &mut log_im, true);
+    for n in 1..SPEAKER_FFT_N / 2 {
+        log_re[n] *= 2.0;
+        log_im[n] *= 2.0;
+    }
+    for n in (SPEAKER_FFT_N / 2 + 1)..SPEAKER_FFT_N {
+        log_re[n] = 0.0;
+        log_im[n] = 0.0;
+    }
+
+    // FFT -> espectro complexo log mínimo, depois exp() -> H_min
+    fft_512(&mut log_re, &mut log_im, false);
+    for k in 0..SPEAKER_FFT_N {
+        let r = log_re[k].exp();
+        let theta = log_im[k];
+        log_re[k] = r * theta.cos();
+        log_im[k] = r * theta.sin();
+    }
+
+    // IFFT -> FIR de fase mínima
+    fft_512(&mut log_re, &mut log_im, true);
+    let mut fir = [0.0f32; SPEAKER_FIR_LEN];
+    for n in 0..SPEAKER_FIR_LEN {
+        // Janela suave apenas nos últimos 16 taps para zerar borda
+        let win = if n >= SPEAKER_FIR_LEN - 16 {
+            let t = (n - (SPEAKER_FIR_LEN - 16)) as f64 / 16.0;
+            0.5 * (1.0 + (std::f64::consts::PI * t).cos())
+        } else {
+            1.0
+        };
+        fir[n] = (log_re[n] * win) as f32;
+    }
+    fir
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Complex32 {
@@ -905,6 +1074,11 @@ pub struct VirtualCabProcessor {
     hicut_smoother: crate::smoother::ParamSmoother,
     resonance_smoother: crate::smoother::ParamSmoother,
     has_processed: bool,
+    speaker_fir: [f32; SPEAKER_FIR_LEN],
+    speaker_hist: [f32; SPEAKER_FIR_LEN],
+    speaker_hist_pos: usize,
+    fir_model: SpeakerCabModel,
+    fir_sr: f32,
 }
 
 impl Default for VirtualCabProcessor {
@@ -961,6 +1135,11 @@ impl VirtualCabProcessor {
             hicut_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_hicut_hz),
             resonance_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_res_hz),
             has_processed: false,
+            speaker_fir: build_min_phase_speaker_fir(spk, 48000.0),
+            speaker_hist: [0.0; SPEAKER_FIR_LEN],
+            speaker_hist_pos: 0,
+            fir_model: spk,
+            fir_sr: 48000.0,
         };
         s.update_filters();
         s
@@ -988,6 +1167,10 @@ impl VirtualCabProcessor {
 
     pub fn speaker_model(&self) -> SpeakerCabModel {
         self.speaker_model
+    }
+
+    pub fn speaker_fir_taps(&self) -> &[f32] {
+        &self.speaker_fir
     }
 
     pub fn set_resonance_hz(&mut self, hz: f32) {
@@ -1165,19 +1348,54 @@ impl VirtualCabProcessor {
             self.open_back_hp.update_coeffs(BiquadFilter::default());
         }
 
-        // Voicing acústico por falante (Jensen Twin 2x12 Open brilhante; Greenback neutro para manter precisão de hicut)
-        match self.speaker_model {
-            SpeakerCabModel::Twin2x12Open => {
-                self.speaker_voicing_filter.update_coeffs(BiquadFilter::high_shelf(2200.0, 3.8, sr));
+        // Curva de resposta do alto-falante por FIR de fase mínima (calculada em prepare / troca de modelo/sr)
+        if self.fir_model != self.speaker_model || (self.fir_sr - self.sample_rate).abs() > 0.5 {
+            self.speaker_fir = build_min_phase_speaker_fir(self.speaker_model, self.sample_rate);
+            self.fir_model = self.speaker_model;
+            self.fir_sr = self.sample_rate;
+        }
+        self.speaker_voicing_filter.update_coeffs(BiquadFilter::default());
+    }
+
+    #[inline(always)]
+    fn step_speaker_fir(&mut self, x: f32) -> f32 {
+        self.speaker_hist[self.speaker_hist_pos] = x;
+        let mut acc = 0.0f32;
+        let mut idx = self.speaker_hist_pos;
+        for k in 0..SPEAKER_FIR_LEN {
+            acc += self.speaker_hist[idx] * self.speaker_fir[k];
+            idx = if idx == 0 { SPEAKER_FIR_LEN - 1 } else { idx - 1 };
+        }
+        self.speaker_hist_pos = (self.speaker_hist_pos + 1) % SPEAKER_FIR_LEN;
+        crate::denormal::flush_f32(acc)
+    }
+
+    fn apply_hicut_output(&mut self, output: &mut [f32]) {
+        if !self.hicut_smoother.is_ramping() {
+            let fc = self.hicut_smoother.current();
+            if fc >= 17990.0 {
+                return;
             }
-            SpeakerCabModel::AlnicoBlue2x12Open => {
-                self.speaker_voicing_filter.update_coeffs(BiquadFilter::high_shelf(2800.0, 2.0, sr));
+            self.update_hicut_coeffs(fc);
+            for s in output.iter_mut() {
+                let mut v = *s as f64;
+                v = self.hicut_filter1.process(v);
+                v = self.hicut_filter2.process(v);
+                *s = v as f32;
             }
-            SpeakerCabModel::V304x12Closed => {
-                self.speaker_voicing_filter.update_coeffs(BiquadFilter::peaking(2200.0, 1.5, 1.8, sr));
-            }
-            SpeakerCabModel::Greenback4x12Closed => {
-                self.speaker_voicing_filter.update_coeffs(BiquadFilter::default());
+        } else {
+            let mut offset = 0usize;
+            while offset < output.len() {
+                let chunk = (output.len() - offset).min(4);
+                let fc = self.hicut_smoother.advance(chunk);
+                self.update_hicut_coeffs(fc);
+                for s in &mut output[offset..offset + chunk] {
+                    let mut v = *s as f64;
+                    v = self.hicut_filter1.process(v);
+                    v = self.hicut_filter2.process(v);
+                    *s = v as f32;
+                }
+                offset += chunk;
             }
         }
     }
@@ -1188,9 +1406,9 @@ impl VirtualCabProcessor {
         output.fill(0.0);
 
         if self.ir_enabled && (self.custom_ir.is_some() || self.target_ir.is_some()) {
-            self.hicut_smoother.advance(input.len());
             self.resonance_smoother.advance(input.len());
             self.process_ir_convolution(input, output);
+            self.apply_hicut_output(output);
             return;
         }
 
@@ -1320,12 +1538,12 @@ impl VirtualCabProcessor {
             }
         }
 
-        // Condicionamento acústico do gabinete: voicing do falante, corte de agudos e open-back
+        // Condicionamento acústico do gabinete: FIR de fase mínima do falante, open-back e corte de agudos
         if !self.hicut_smoother.is_ramping() && !self.resonance_smoother.is_ramping() {
             for s in output.iter_mut() {
-                let mut v = *s as f64;
+                let fir_out = self.step_speaker_fir(*s);
+                let mut v = fir_out as f64;
                 v = self.open_back_hp.process(v);
-                v = self.speaker_voicing_filter.process(v);
                 v = self.hicut_filter1.process(v);
                 v = self.hicut_filter2.process(v);
                 *s = v as f32;
@@ -1338,9 +1556,9 @@ impl VirtualCabProcessor {
                 self.resonance_smoother.advance(chunk);
                 self.update_hicut_coeffs(fc);
                 for s in &mut output[offset..offset + chunk] {
-                    let mut v = *s as f64;
+                    let fir_out = self.step_speaker_fir(*s);
+                    let mut v = fir_out as f64;
                     v = self.open_back_hp.process(v);
-                    v = self.speaker_voicing_filter.process(v);
                     v = self.hicut_filter1.process(v);
                     v = self.hicut_filter2.process(v);
                     *s = v as f32;

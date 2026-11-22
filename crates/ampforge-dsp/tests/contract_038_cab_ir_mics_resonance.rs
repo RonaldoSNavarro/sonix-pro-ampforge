@@ -49,6 +49,7 @@ fn ca1_48000_taps_96khz_ir_matches_f64_reference_under_minus_80db() {
     cab.set_sample_rate(sr);
     cab.set_custom_ir(ir);
     cab.set_ir_enabled(true);
+    cab.set_hicut_khz(18.0);
 
     // Entrada multi-tom de 49152 amostras em blocos de 128
     let total = 49_152usize;
@@ -97,6 +98,7 @@ fn ca2_zero_additional_latency_on_ir_convolution() {
     cab.set_sample_rate(sr);
     cab.set_custom_ir(ir);
     cab.set_ir_enabled(true);
+    cab.set_hicut_khz(18.0);
 
     let mut input = vec![0.0f32; 256];
     input[0] = 1.0;

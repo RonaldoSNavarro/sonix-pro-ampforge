@@ -1,6 +1,9 @@
 //! Testes de contrato da auditoria 2026-11-20 (Fase 5 — Efeitos).
 
 use ampforge_dsp::amp::{Ac30VibTremMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
+use ampforge_dsp::cab::{
+    ImpulseResponse, SpeakerCabModel, VirtualCabProcessor, speaker_curve_points_hz_db,
+};
 use ampforge_dsp::fx::delay::{DelayModel, DelayProcessor};
 use ampforge_dsp::fx::drive::{DECISAO_SONIX_LM308_GBW, DriveModel, DriveProcessor};
 use ampforge_dsp::fx::modulation::{
@@ -886,4 +889,84 @@ fn aud_31c_rt60_twin() {
         (2.75..=4.0).contains(&rt60),
         "AUD-31c: RT60 da mola do Twin (500 Hz..2 kHz) esperado entre 2.75 s e 4.0 s, obtido {rt60:.3} s"
     );
+}
+
+#[test]
+fn aud_32_hicut_age_com_ir() {
+    let sr = 48_000.0f32;
+    let mut ir_samples = vec![0.0f32; 256];
+    ir_samples[0] = 1.0;
+    let ir = ImpulseResponse::from_samples(sr, ir_samples);
+
+    let measure_8k = |hicut_khz: f32| -> f32 {
+        let mut cab = VirtualCabProcessor::new();
+        cab.set_sample_rate(sr);
+        cab.set_custom_ir(ir.clone());
+        cab.set_ir_enabled(true);
+        cab.set_hicut_khz(hicut_khz);
+
+        let n = 4096usize;
+        let inp: Vec<f32> = (0..n)
+            .map(|i| 0.25 * (2.0 * std::f32::consts::PI * 8000.0 * i as f32 / sr).sin())
+            .collect();
+        let mut out = vec![0.0f32; n];
+        cab.process(&inp, &mut out);
+        rms(&out[2048..])
+    };
+
+    let rms_max = measure_8k(18.0);
+    let rms_5k = measure_8k(5.0);
+    let atten_db = 20.0 * (rms_max.max(1e-9) / rms_5k.max(1e-9)).log10();
+    assert!(
+        atten_db >= 6.0,
+        "AUD-32: com IR ativa, hi-cut 18->5 kHz deve atenuar 8 kHz em >= 6 dB (foi {atten_db:.2} dB)"
+    );
+}
+
+#[test]
+fn aud_32_alto_falantes_seguem_datasheet() {
+    let sr = 48_000.0f32;
+    let models = [
+        SpeakerCabModel::Greenback4x12Closed,
+        SpeakerCabModel::V304x12Closed,
+        SpeakerCabModel::AlnicoBlue2x12Open,
+        SpeakerCabModel::Twin2x12Open,
+    ];
+
+    for model in models {
+        let mut cab = VirtualCabProcessor::new();
+        cab.set_sample_rate(sr);
+        cab.set_speaker_model(model);
+        let taps = cab.speaker_fir_taps();
+        assert!(
+            taps.len() >= 32,
+            "AUD-32: FIR de {model:?} precisa ter comprimento razoável"
+        );
+
+        let is_identity = (taps[0] - 1.0).abs() < 1e-3 && taps[1..].iter().all(|&v| v.abs() < 1e-3);
+        assert!(
+            !is_identity,
+            "AUD-32: {model:?} não pode ser filtro identidade"
+        );
+
+        let curve = speaker_curve_points_hz_db(model);
+        for &(freq, expected_db) in curve {
+            if !(100.0..=10_000.0).contains(&freq) {
+                continue;
+            }
+            let mut re = 0.0f64;
+            let mut im = 0.0f64;
+            let omega = 2.0 * std::f64::consts::PI * (freq as f64) / (sr as f64);
+            for (k, &h) in taps.iter().enumerate() {
+                re += (h as f64) * (omega * k as f64).cos();
+                im -= (h as f64) * (omega * k as f64).sin();
+            }
+            let mag_db = 20.0 * re.hypot(im).max(1e-9).log10();
+            let err = (mag_db - expected_db as f64).abs();
+            assert!(
+                err <= 2.0,
+                "AUD-32 {model:?} @ {freq} Hz: FIR={mag_db:.2} dB vs datasheet={expected_db:.2} dB (erro={err:.2} dB > 2 dB)"
+            );
+        }
+    }
 }

@@ -68,8 +68,11 @@ fn test_ca_02_hicut_filter_response() {
     let sr = 48000.0;
     let mut cab = VirtualCabProcessor::new();
     cab.set_sample_rate(sr);
-    cab.mic_slot_mut(0).position_cap_to_edge = 0.0; // Centro (plano nos agudos para isolar o filtro hicut)
-    cab.mic_slot_mut(0).distance_cm = 0.0;          // Distância zero para isolar o filtro hicut de delay fracionário
+    // Usa IR unitária plana para isolar o filtro Butterworth 4a ordem do hi-cut da curva do falante (AUD-32)
+    let mut flat_ir = vec![0.0f32; 256];
+    flat_ir[0] = 1.0;
+    cab.set_custom_ir(ImpulseResponse::from_samples(sr, flat_ir));
+    cab.set_ir_enabled(true);
 
     for &target_khz in &[4.0, 8.0, 16.0] {
         cab.set_hicut_khz(target_khz);
@@ -244,6 +247,7 @@ fn test_ca_08_zero_latency_fir_convolution_fidelity() {
     let ir = ImpulseResponse::from_samples(sr, ir_samples.clone());
     cab.set_custom_ir(ir);
     cab.set_ir_enabled(true);
+    cab.set_hicut_khz(18.0);
 
     // 1. Verifica latência zero: impulso na entrada produz IR[0] no índice 0
     let mut impulse_in = vec![0.0f32; 128];
@@ -354,6 +358,7 @@ fn test_ca_10_ir_normalization_options() {
     let ir_raw = ImpulseResponse::from_samples_with_normalization(sr, raw_ir.clone(), false);
     cab.set_custom_ir(ir_raw);
     cab.set_ir_enabled(true);
+    cab.set_hicut_khz(18.0);
 
     let in_sig = vec![1.0f32; 128];
     let mut out_raw = vec![0.0f32; 128];

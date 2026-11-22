@@ -273,8 +273,12 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
     const chips = document.createElement('div');
     chips.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
     const cur = str(store, spkKey, isB ? 'alnico_blue_2x12' : 'v30_4x12');
+    const irActive = !isB && bool(store, 'cab_1.ir_enabled', false);
     for (const [val, lbl] of Object.entries(CAB_LABELS)) {
-      chips.appendChild(makeChipButton(ctrlId, lbl, cur === val, () => void store.setControl(ctrlId, val)));
+      const b = makeChipButton(ctrlId, lbl, cur === val, () => void store.setControl(ctrlId, val));
+      b.disabled = irActive;
+      if (irActive) b.title = 'IR carregada substitui o alto-falante';
+      chips.appendChild(b);
     }
     container.append(
       chips,
