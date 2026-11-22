@@ -146,12 +146,9 @@ As Specs 001–052 implementadas (e 053–092 em rascunho) possuem rastreabilida
 
 ## 📄 Licença e Termos de Uso
 
-Este projeto está licenciado sob a **Creative Commons Atribuição-NãoComercial 4.0 Internacional (CC BY-NC 4.0)** — veja o texto legal completo no arquivo [LICENSE](LICENSE).
-
-### Resumo dos Termos em Linguagem Simples:
-- ✅ **Permitido:** Você é livre para baixar, executar, estudar, copiar, modificar e compartilhar este código-fonte ou seus binários para fins pessoais, educacionais e de pesquisa.
-- 👤 **Atribuição Obrigatória:** Você deve dar o devido crédito ao autor original (**Ronaldo S. Navarro** / `@ronaldosnavarro`), incluir um link para a licença e informar se foram realizadas alterações.
-- 🚫 **Uso Não Comercial:** O software, seu código-fonte, modelos algorítmicos ou binários resultantes **não podem ser comercializados, vendidos ou utilizados para obtenção de lucro ou benefício comercial direto/indireto**.
+- Este repositório está licenciado sob **CC BY-NC 4.0** (veja o arquivo [LICENSE](LICENSE)).
+- Binários VST3 gerados com `nih-plug`/`vst3-sys` ficam sujeitos à **GPLv3** e **não são distribuídos** por este repositório.
+- Este é um projeto pessoal, sem uso comercial.
 
 ---
 
