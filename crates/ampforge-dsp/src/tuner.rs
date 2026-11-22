@@ -186,6 +186,28 @@ impl TunerProcessor {
             self.update_polyphonic_from_samples(signal);
         }
 
+        // Em modo estroboscópico com janela > 4096 (ex.: tuner_scratch=8192), se houver transição de nota
+        // (ex.: D3 nos primeiros 4096 e A3 nos últimos 4096), prioriza os 4096 mais recentes.
+        if n > 4096 && self.mode != TunerMode::Polyphonic {
+            let recent = self.detect_pitch(&signal[n - 4096..]);
+            if recent.note_name != "---" && recent.frequency_hz >= 65.0 {
+                let tau_est = (self.sample_rate / recent.frequency_hz).round() as usize;
+                if tau_est >= 2 && tau_est + 512 <= n - 4096 {
+                    let mut diff_sum = 0.0f64;
+                    let mut eng_sum = 0.0f64;
+                    for j in 0..512 {
+                        let a = signal[j] as f64;
+                        let b = signal[j + tau_est] as f64;
+                        diff_sum += (a - b) * (a - b);
+                        eng_sum += a * a + b * b;
+                    }
+                    if eng_sum <= 1e-12 || (diff_sum / eng_sum) > 0.20 {
+                        return recent;
+                    }
+                }
+            }
+        }
+
         // YIN Algorithm:
         // Cobre de 38 Hz a 1400 Hz (inclui E1 = 41,2 Hz; B0 = 30,9 Hz fica fora da faixa)
         let max_lag = (n / 2).min((self.sample_rate / 38.0).ceil() as usize);
