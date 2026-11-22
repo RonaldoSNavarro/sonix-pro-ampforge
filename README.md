@@ -53,7 +53,7 @@ Modelagem rigorosa dos esquemas elétricos originais:
 - **Compressores:** Studio FET 1176LN com curvas de ataque ultrarrápidas (20–800 µs), tempo de release fiel e modo *"All-Buttons-In"*.
 - **Noise Gate de Estúdio:** Histerese anti-chatter, tempo de Hold, filtragem de sidechain e chaveamento com detecção direta no sinal limpo (DI).
 - **Roland RE-201 Space Echo:** Simulação fiel do mecanismo de fita de 3 cabeças de reprodução, saturação analógica de fita, mola interna e 12 modos de chaveamento originais.
-- **Reverbs Analógicos e Digitais:** Tube Spring (mola valvulada), Studio Vintage Plate, Chamber, Concert Hall e Shimmer granular (+12 semitons).
+- **Reverbs:** Tube Spring (mola valvulada com dispersão all-pass) e algoritmo Freeverb (Jezar) — voicing Plate, Hall, Chamber e Shimmer granular (+12 semitons).
 - **Modulações:** Boss CE-2 BBD Chorus, Chorus 3 vozes (mono), MXR Phase 90, Through-Zero Flanger com feedback, Tremolo Óptico LDR (ataque 5 ms / soltura 60 ms) e Rotary Speaker dual-rotor (LR4 800 Hz).
 - **Pitch & Afinador:** Afinador estroboscópico e polifônico de alta precisão (algoritmo YIN 40 Hz – 1,4 kHz) e bloco de Harmonizador Diatônico inteligente.
 

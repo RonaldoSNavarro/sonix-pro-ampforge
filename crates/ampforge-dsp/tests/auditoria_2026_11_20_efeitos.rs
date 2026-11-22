@@ -8,7 +8,8 @@ use ampforge_dsp::fx::modulation::{
     DECISAO_SONIX_ROTARY_DRUM_SLOW_HZ, DECISAO_SONIX_ROTARY_HORN_FAST_HZ,
     DECISAO_SONIX_ROTARY_HORN_SLOW_HZ, ModModel, ModulationProcessor,
 };
-use ampforge_dsp::regua::{cents, ganho_db};
+use ampforge_dsp::fx::reverb::{ReverbModel, ReverbProcessor};
+use ampforge_dsp::regua::{cents, ganho_db, rt60_schroeder};
 use ampforge_dsp::unidades::VOLTS_POR_FS;
 
 fn rms(buf: &[f32]) -> f32 {
@@ -786,5 +787,103 @@ fn aud_30_ac30_vibtrem() {
     assert!(
         am_db_trem >= 6.0 && dev_trem_cents <= 0.5,
         "AUD-30 AC30 Tremolo: esperado AM >= 6 dB (foi {am_db_trem:.2} dB) e desvio <= 0.5 cent (foi {dev_trem_cents:.2})"
+    );
+}
+
+fn burst_first_arrival_ms(freq_hz: f32) -> f64 {
+    let sr = 48_000.0f32;
+    let burst_len = (0.008 * sr) as usize; // 8 ms
+    let total = 3_200usize;
+    let mut inp = vec![0.0f32; total];
+    for i in 0..burst_len {
+        let win = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (burst_len - 1) as f32).cos());
+        inp[i] = 0.5 * win * (2.0 * std::f32::consts::PI * freq_hz * i as f32 / sr).sin();
+    }
+
+    let mut r = ReverbProcessor::new(ReverbModel::TubeSpringReverb);
+    r.set_sample_rate(sr);
+    r.set_decay_time_s(2.5);
+    r.set_predelay_ms(0.0);
+    r.set_damping(0.0);
+    r.set_spring_tension(5.0);
+    r.set_mix_pct(100.0);
+
+    let mut out = vec![0.0f32; total];
+    r.process(&inp, &mut out);
+
+    // Primeira chegada dos combs (sem incluir a 2a reflexão em ~2232+ amostras)
+    let start = 900usize;
+    let end = 2_400usize;
+    let mut num = 0.0f64;
+    let mut den = 0.0f64;
+    for idx in start..end {
+        let e = (out[idx] as f64) * (out[idx] as f64);
+        num += (idx as f64) * e;
+        den += e;
+    }
+    (num / den.max(1e-18)) / (sr as f64) * 1000.0
+}
+
+#[test]
+fn aud_31b_dispersao() {
+    let gd_300 = burst_first_arrival_ms(300.0);
+    let gd_3k = burst_first_arrival_ms(3000.0);
+    let diff_ms = (gd_300 - gd_3k).abs();
+    assert!(
+        diff_ms >= 5.0,
+        "AUD-31b: |atraso_grupo(3 kHz) - atraso_grupo(300 Hz)| na primeira chegada esperado >= 5 ms, obtido {diff_ms:.2} ms (300Hz={gd_300:.2}ms, 3kHz={gd_3k:.2}ms)"
+    );
+}
+
+fn offline_bandpass_500_2k(buf: &[f32], sr: f32) -> Vec<f32> {
+    // 1a ordem HPF 500 Hz + LPF 2000 Hz em f64 (fora de RT)
+    let a_hp = (-2.0 * std::f64::consts::PI * 500.0 / sr as f64).exp();
+    let a_lp = 1.0 - (-2.0 * std::f64::consts::PI * 2000.0 / sr as f64).exp();
+    let mut hp_prev_x = 0.0f64;
+    let mut hp_prev_y = 0.0f64;
+    let mut lp_y = 0.0f64;
+    let mut out = Vec::with_capacity(buf.len());
+    for &s in buf {
+        let x = s as f64;
+        let hp = a_hp * (hp_prev_y + x - hp_prev_x);
+        hp_prev_x = x;
+        hp_prev_y = hp;
+        lp_y += a_lp * (hp - lp_y);
+        out.push(lp_y as f32);
+    }
+    out
+}
+
+#[test]
+fn aud_31c_rt60_twin() {
+    let sr = 48_000.0f32;
+    let total = (sr * 5.0) as usize;
+    let mut imp = vec![0.0f32; total];
+    imp[0] = 0.05;
+
+    let run_twin = |rev: f32| -> Vec<f32> {
+        let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
+        amp.set_sample_rate(sr);
+        amp.set_input_jack(AmpInputJack::Vibrato);
+        amp.panel_mut().set_input_gain(4.0);
+        amp.panel_mut().set_vibrato_depth(0.0);
+        amp.panel_mut().set_reverb(rev);
+        let mut out = vec![0.0f32; total];
+        amp.process(&imp, &mut out);
+        out
+    };
+
+    let out_dry = run_twin(0.0);
+    let out_wet = run_twin(10.0);
+    let tail: Vec<f32> = out_wet
+        .iter()
+        .zip(out_dry.iter())
+        .map(|(w, d)| w - d)
+        .collect();
+    let bp = offline_bandpass_500_2k(&tail, sr);
+    let rt60 = rt60_schroeder(&bp[1_200..], sr);
+    assert!(
+        (2.75..=4.0).contains(&rt60),
+        "AUD-31c: RT60 da mola do Twin (500 Hz..2 kHz) esperado entre 2.75 s e 4.0 s, obtido {rt60:.3} s"
     );
 }

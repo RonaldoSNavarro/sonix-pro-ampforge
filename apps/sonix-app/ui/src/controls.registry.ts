@@ -1112,10 +1112,10 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     id: 'rev_1.enabled',
     screen: 'main',
     group: 'rack_plate',
-    label: 'Bypass Plate Reverb',
+    label: 'Bypass Reverb (Freeverb)',
     kind: 'toggle',
     ...paramMeta('rev_1.enabled'),
-    hardwareBehavior: 'Ativa/bypassa o reverb de placa.',
+    hardwareBehavior: 'Ativa/bypassa o reverb (algoritmo Freeverb (Jezar) — voicing Plate/Hall/Chamber/Shimmer).',
     pendingSpec: null,
   },
   {

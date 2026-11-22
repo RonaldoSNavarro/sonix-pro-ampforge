@@ -548,6 +548,9 @@ pub struct WhiteBoxAmpProcessor {
     measured_latencies: [u32; 4],
 }
 
+/// Tanque do Fender Twin Reverb AB763: Accutronics 4AB3C1B, código de decay 'C' (longo, 2,75–4,0 s).
+pub const DECISAO_SONIX_TWIN_RT60: f64 = 3.0;
+
 #[derive(Debug, Clone)]
 struct SpringReverbTank {
     lines: [[f64; 2048]; 4],
@@ -555,16 +558,21 @@ struct SpringReverbTank {
     idx: [usize; 4],
     lp: [f64; 4],
     lp_alpha: f64,
+    feedback_g: f64,
 }
 
 impl Default for SpringReverbTank {
     fn default() -> Self {
+        let lens = [347, 509, 683, 887];
+        let avg_len_s = (lens.iter().sum::<usize>() as f64 / 4.0) / 48000.0;
+        let feedback_g = 10.0f64.powf(-3.0 * avg_len_s / DECISAO_SONIX_TWIN_RT60) * 1.003;
         Self {
             lines: [[0.0; 2048]; 4],
-            lens: [347, 509, 683, 887],
+            lens,
             idx: [0; 4],
             lp: [0.0; 4],
-            lp_alpha: 1.0 - (-2.0 * std::f64::consts::PI * 3650.0 / 48000.0).exp(),
+            lp_alpha: 1.0 - (-2.0 * std::f64::consts::PI * 6500.0 / 48000.0).exp(),
+            feedback_g,
         }
     }
 }
@@ -581,14 +589,18 @@ impl SpringReverbTank {
     fn set_sample_rate(&mut self, sr: f32) {
         let fs = (sr as f64).max(1.0);
         let scale = (fs / 48000.0).clamp(0.5, 2.0);
-        self.lp_alpha = (1.0 - (-2.0 * std::f64::consts::PI * 3650.0 / fs).exp()).clamp(0.01, 0.99);
+        self.lp_alpha = (1.0 - (-2.0 * std::f64::consts::PI * 6500.0 / fs).exp()).clamp(0.01, 0.99);
         let base = [347.0, 509.0, 683.0, 887.0];
+        let mut sum_lens = 0usize;
         for i in 0..4 {
             self.lens[i] = ((base[i] * scale).round() as usize).clamp(64, 2047);
+            sum_lens += self.lens[i];
             if self.idx[i] >= self.lens[i] {
                 self.idx[i] = 0;
             }
         }
+        let avg_len_s = (sum_lens as f64 / 4.0) / fs;
+        self.feedback_g = (10.0f64.powf(-3.0 * avg_len_s / DECISAO_SONIX_TWIN_RT60) * 1.003).clamp(0.5, 0.995);
     }
 
     #[inline(always)]
@@ -601,9 +613,9 @@ impl SpringReverbTank {
             self.lp[k] += self.lp_alpha * (raw - self.lp[k]);
             d[k] = self.lp[k];
         }
-        // Hadamard scattering matrix with g = 0.895 for authentic long AB763 spring decay
+        // Hadamard scattering matrix calibrated to Accutronics 4AB3C1B RT60 = 3.0 s
         let s_all = 0.5 * (d[0] + d[1] + d[2] + d[3]);
-        let g = 0.895;
+        let g = self.feedback_g;
         for k in 0..4 {
             let fb = g * (d[k] - s_all);
             let p = self.idx[k];

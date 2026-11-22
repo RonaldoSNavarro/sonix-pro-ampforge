@@ -13,6 +13,7 @@ pub enum ReverbModel {
 const BASE_COMB_LENS: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
 const BASE_AP_LENS: [usize; 4] = [556, 441, 341, 225];
 const SHIMMER_BUF_LEN: usize = 4096;
+const SPRING_DISP_STAGES: usize = 192;
 
 pub struct ReverbProcessor {
     pub model: ReverbModel,
@@ -34,9 +35,9 @@ pub struct ReverbProcessor {
     ap_buffers: Vec<Vec<f32>>,
     ap_active_lens: [usize; 4],
     ap_positions: [usize; 4],
-    // Spring dispersive all-pass chain
-    spring_disp_x1: [f32; 8],
-    spring_disp_y1: [f32; 8],
+    // Spring dispersive all-pass chain (Välimäki, Parker & Abel 2010)
+    spring_disp_x1: [f32; SPRING_DISP_STAGES],
+    spring_disp_y1: [f32; SPRING_DISP_STAGES],
     // Pre-allocated +12 semitone shimmer granular buffer
     shimmer_buf: Vec<f32>,
     shimmer_write_pos: usize,
@@ -78,8 +79,8 @@ impl ReverbProcessor {
             ap_buffers,
             ap_active_lens: BASE_AP_LENS,
             ap_positions: [0; 4],
-            spring_disp_x1: [0.0; 8],
-            spring_disp_y1: [0.0; 8],
+            spring_disp_x1: [0.0; SPRING_DISP_STAGES],
+            spring_disp_y1: [0.0; SPRING_DISP_STAGES],
             shimmer_buf: vec![0.0; SHIMMER_BUF_LEN],
             shimmer_write_pos: 0,
             shimmer_phase: 0.0,
@@ -284,8 +285,8 @@ impl ReverbProcessor {
             let mut diffused = wet_sum * comb_norm;
 
             if self.model == ReverbModel::TubeSpringReverb {
-                // Dispersive spring all-pass chain controlled by spring_tension
-                for s in 0..8 {
+                // Dispersive spring all-pass chain controlled by spring_tension (Välimäki et al. 2010)
+                for s in 0..SPRING_DISP_STAGES {
                     let y = crate::denormal::flush_f32(
                         -spring_disp_a * diffused
                             + self.spring_disp_x1[s]

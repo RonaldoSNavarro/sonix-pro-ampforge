@@ -207,10 +207,10 @@ const PEDAL_CATALOG: CatalogEntry<PedalModelId | RackModelId>[] = [
   },
   {
     id: 'plate',
-    name: 'Studio Plate Reverb',
-    specRef: 'Tanque Metálico Estéreo',
+    name: 'Studio Plate (Freeverb)',
+    specRef: 'Algoritmo Freeverb (Jezar) — voicing Plate',
     sourceStatus: 'fonte: verificada',
-    notes: 'Pre-delay até 250 ms, damping de agudos e decaimento até 20 segundos.',
+    notes: 'Algoritmo Freeverb (Jezar) — voicing Plate (também disponível em Hall, Chamber e Shimmer); pre-delay até 250 ms, damping de agudos e decaimento até 20 segundos.',
   },
 ];
 
