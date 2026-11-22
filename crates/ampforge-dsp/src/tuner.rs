@@ -87,8 +87,8 @@ impl TunerProcessor {
             a4_ref: 440.0,
             sample_rate: 48000.0,
             mute_gain: 1.0,
-            d_scratch: vec![0.0; 8192],
-            d_prime_scratch: vec![0.0; 8192],
+            d_scratch: vec![0.0; 16384],
+            d_prime_scratch: vec![0.0; 16384],
             last_poly_cents: [0.0; 6],
         }
     }
@@ -395,41 +395,48 @@ impl TunerProcessor {
         }
     }
 
-    fn estimate_string_freq_hanning(samples: &[f32], f_ref: f32, sample_rate: f32) -> f32 {
-        let n = samples.len();
-        if n < 64 {
-            return f_ref;
+    fn fft_radix2(re: &mut [f64], im: &mut [f64]) {
+        let n = re.len();
+        let mut j = 0usize;
+        for i in 0..n {
+            if i < j {
+                re.swap(i, j);
+                im.swap(i, j);
+            }
+            let mut bit = n >> 1;
+            while bit > 0 && (j & bit) != 0 {
+                j ^= bit;
+                bit >>= 1;
+            }
+            j |= bit;
         }
-        let shift = (n / 8).max(1);
-        let m = n - shift;
-        let inv_m1 = 1.0 / ((m - 1) as f64);
-        let w_ref = 2.0 * std::f64::consts::PI * (f_ref as f64) / (sample_rate as f64);
-        let mut re0 = 0.0f64;
-        let mut im0 = 0.0f64;
-        let mut re1 = 0.0f64;
-        let mut im1 = 0.0f64;
-        for i in 0..m {
-            let win = 0.54 - 0.46 * (2.0 * std::f64::consts::PI * (i as f64) * inv_m1).cos();
-            let angle = w_ref * (i as f64);
-            let c = angle.cos();
-            let s = angle.sin();
-            let x0 = (samples[i] as f64) * win;
-            let x1 = (samples[i + shift] as f64) * win;
-            re0 += x0 * c;
-            im0 -= x0 * s;
-            re1 += x1 * c;
-            im1 -= x1 * s;
+        let mut len = 2usize;
+        while len <= n {
+            let half = len >> 1;
+            let angle = -2.0 * std::f64::consts::PI / (len as f64);
+            let wlen_re = angle.cos();
+            let wlen_im = angle.sin();
+            let mut start = 0usize;
+            while start < n {
+                let mut w_re = 1.0f64;
+                let mut w_im = 0.0f64;
+                for k in 0..half {
+                    let u_re = re[start + k];
+                    let u_im = im[start + k];
+                    let v_re = re[start + k + half] * w_re - im[start + k + half] * w_im;
+                    let v_im = re[start + k + half] * w_im + im[start + k + half] * w_re;
+                    re[start + k] = u_re + v_re;
+                    im[start + k] = u_im + v_im;
+                    re[start + k + half] = u_re - v_re;
+                    im[start + k + half] = u_im - v_im;
+                    let next_re = w_re * wlen_re - w_im * wlen_im;
+                    w_im = w_re * wlen_im + w_im * wlen_re;
+                    w_re = next_re;
+                }
+                start += len;
+            }
+            len <<= 1;
         }
-        // X1 * conj(X0) * exp(-j * w_ref * shift) -> phase is (w_actual - w_ref) * shift
-        let cross_re = re1 * re0 + im1 * im0;
-        let cross_im = im1 * re0 - re1 * im0;
-        let shift_ang = w_ref * (shift as f64);
-        let sc = shift_ang.cos();
-        let ss = shift_ang.sin();
-        let norm_re = cross_re * sc + cross_im * ss;
-        let norm_im = cross_im * sc - cross_re * ss;
-        let delta_w = norm_im.atan2(norm_re) / (shift as f64);
-        ((w_ref + delta_w) * (sample_rate as f64) / (2.0 * std::f64::consts::PI)) as f32
     }
 
     fn update_polyphonic_from_samples(&mut self, samples: &[f32]) {
@@ -441,57 +448,201 @@ impl TunerProcessor {
             (59, 246.94165),
             (64, 329.62756),
         ];
-        let n = samples.len().min(self.d_scratch.len());
-        if n < 64 {
+        let n = samples.len();
+        if n < 256 {
             return;
         }
         let a4_scale = self.a4_ref / 440.0;
-        let mut f_refs = [0.0f32; 6];
-        let mut a_coef = [0.0f64; 6];
-        let mut b_coef = [0.0f64; 6];
-
-        // Pass 1: estimate complex Fourier coefficients for each string (Hanning-windowed)
-        let inv_n1 = 1.0 / ((n - 1) as f64);
-        let norm = 4.0 / (n as f64); // 2/N * 2 for Hanning mean 0.5
+        let mut f_refs = [0.0f64; 6];
         for (k, &(midi, f_eq)) in base_strings.iter().enumerate() {
             let offset_c = if self.temperament == TunerTemperament::SweetenedGuitar {
                 Self::sweetened_offset_cents(midi)
             } else {
                 0.0
             };
-            f_refs[k] = f_eq * a4_scale * 2.0f32.powf(offset_c / 1200.0);
-            let w = 2.0 * std::f64::consts::PI * (f_refs[k] as f64) / (self.sample_rate as f64);
-            let mut sum_c = 0.0f64;
-            let mut sum_s = 0.0f64;
-            for i in 0..n {
-                let win = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * (i as f64) * inv_n1).cos());
-                let x = (samples[i] as f64) * win;
-                let ang = w * (i as f64);
-                sum_c += x * ang.cos();
-                sum_s += x * ang.sin();
-            }
-            a_coef[k] = sum_c * norm;
-            b_coef[k] = sum_s * norm;
+            f_refs[k] = (f_eq * a4_scale * 2.0f32.powf(offset_c / 1200.0)) as f64;
         }
 
-        // Pass 2: subtract interfering strings and measure each string cleanly
-        for s_idx in 0..6 {
-            for i in 0..n {
-                let mut r = samples[i] as f64;
-                for j in 0..6 {
-                    if j != s_idx {
-                        let w =
-                            2.0 * std::f64::consts::PI * (f_refs[j] as f64) / (self.sample_rate as f64);
-                        let ang = w * (i as f64);
-                        r -= a_coef[j] * ang.cos() + b_coef[j] * ang.sin();
+        // Para janelas curtas (< 16384 amostras), atenua vazamento de lóbulo principal entre fundamentais vizinhas
+        let mut work_buf: Vec<f64> = samples.iter().map(|&s| s as f64).collect();
+        if n < 16384 {
+            let inv_n1 = 1.0 / ((n - 1) as f64);
+            let norm = 4.0 / (n as f64);
+            let mut a_c = [0.0f64; 6];
+            let mut b_c = [0.0f64; 6];
+            let sr_f = self.sample_rate as f64;
+            for k in 0..6 {
+                let w = 2.0 * std::f64::consts::PI * f_refs[k] / sr_f;
+                let mut sc = 0.0f64;
+                let mut ss = 0.0f64;
+                for i in 0..n {
+                    let win = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * (i as f64) * inv_n1).cos());
+                    let x = work_buf[i] * win;
+                    let ang = w * (i as f64);
+                    sc += x * ang.cos();
+                    ss += x * ang.sin();
+                }
+                a_c[k] = sc * norm;
+                b_c[k] = ss * norm;
+            }
+            // Calcula espectro por corda subtraindo as outras 5 fundamentais quando n < 16384
+            for s_idx in 0..6 {
+                let n_fft = (n * 4).next_power_of_two();
+                let mut re = vec![0.0f64; n_fft];
+                let mut im = vec![0.0f64; n_fft];
+                for i in 0..n {
+                    let mut r = work_buf[i];
+                    for j in 0..6 {
+                        if j != s_idx {
+                            let w = 2.0 * std::f64::consts::PI * f_refs[j] / sr_f;
+                            let ang = w * (i as f64);
+                            r -= a_c[j] * ang.cos() + b_c[j] * ang.sin();
+                        }
+                    }
+                    let win = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * (i as f64) * inv_n1).cos());
+                    re[i] = r * win;
+                }
+                Self::fft_radix2(&mut re, &mut im);
+                let bin_hz = sr_f / (n_fft as f64);
+                let half_bins = n_fft / 2;
+                let f_ref = f_refs[s_idx];
+                let f_lo = f_ref * 2.0f64.powf(-60.0 / 1200.0);
+                let f_hi = f_ref * 2.0f64.powf(60.0 / 1200.0);
+                let k_lo = (f_lo / bin_hz).floor().max(1.0) as usize;
+                let k_hi = (f_hi / bin_hz).ceil().min((half_bins - 2) as f64) as usize;
+                let mut best_k = 0usize;
+                let mut best_m = 0.0f64;
+                for k in (k_lo + 1)..k_hi {
+                    let m = re[k].hypot(im[k]);
+                    if m > re[k - 1].hypot(im[k - 1]) && m > re[k + 1].hypot(im[k + 1]) && m > best_m {
+                        best_m = m;
+                        best_k = k;
                     }
                 }
-                self.d_scratch[i] = r as f32;
+                if best_k > 0 && best_m > 1e-12 {
+                    let l0 = re[best_k - 1].hypot(im[best_k - 1]).max(1e-12).ln();
+                    let l1 = best_m.max(1e-12).ln();
+                    let l2 = re[best_k + 1].hypot(im[best_k + 1]).max(1e-12).ln();
+                    let denom = 2.0 * (l0 - 2.0 * l1 + l2);
+                    let delta = if denom.abs() > 1e-12 && (l0 - 2.0 * l1 + l2) < 0.0 {
+                        ((l0 - l2) / denom).clamp(-0.5, 0.5)
+                    } else {
+                        0.0
+                    };
+                    let f_est = (best_k as f64 + delta) * bin_hz;
+                    self.last_poly_cents[s_idx] = (1200.0 * (f_est / f_ref).log2()) as f32;
+                } else {
+                    self.last_poly_cents[s_idx] = 0.0;
+                }
             }
+            return;
+        }
+        let _ = &mut work_buf;
+
+        // Janela Hann com zero-padding 4x (para n >= 16384 -> n_fft = 65536)
+        let n_fft = (n * 4).next_power_of_two();
+        let mut re = vec![0.0f64; n_fft];
+        let mut im = vec![0.0f64; n_fft];
+        let inv_n1 = 1.0 / ((n - 1) as f64);
+        for i in 0..n {
+            let win = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * (i as f64) * inv_n1).cos());
+            re[i] = (samples[i] as f64) * win;
+        }
+        Self::fft_radix2(&mut re, &mut im);
+
+        let sr = self.sample_rate as f64;
+        let bin_hz = sr / (n_fft as f64);
+        let half_bins = n_fft / 2;
+        let mag = |k: usize| -> f64 { re[k].hypot(im[k]) };
+
+        let partial_collides_with_lower = |f_cand: f64, s_idx: usize| -> bool {
+            for j in 0..s_idx {
+                for harm in 1..=8 {
+                    let f_low = f_refs[j] * (harm as f64);
+                    let diff_cents = (1200.0 * (f_cand / f_low).log2()).abs();
+                    if diff_cents <= 15.0 {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+
+        let estimate_partial = |f_target: f64| -> Option<(f64, f64)> {
+            let f_lo = f_target * 2.0f64.powf(-60.0 / 1200.0);
+            let f_hi = f_target * 2.0f64.powf(60.0 / 1200.0);
+            let k_lo = (f_lo / bin_hz).floor().max(1.0) as usize;
+            let k_hi = (f_hi / bin_hz).ceil().min((half_bins - 2) as f64) as usize;
+            if k_hi <= k_lo {
+                return None;
+            }
+            let mut best_k = 0usize;
+            let mut best_m = 0.0f64;
+            for k in (k_lo + 1)..k_hi {
+                let m = mag(k);
+                if m > mag(k - 1) && m > mag(k + 1) && m > best_m {
+                    best_m = m;
+                    best_k = k;
+                }
+            }
+            if best_k == 0 || best_m <= 1e-12 {
+                return None;
+            }
+            let l0 = mag(best_k - 1).max(1e-12).ln();
+            let l1 = best_m.max(1e-12).ln();
+            let l2 = mag(best_k + 1).max(1e-12).ln();
+            let denom = 2.0 * (l0 - 2.0 * l1 + l2);
+            let delta = if denom.abs() > 1e-12 && (l0 - 2.0 * l1 + l2) < 0.0 {
+                ((l0 - l2) / denom).clamp(-0.5, 0.5)
+            } else {
+                0.0
+            };
+            let f_est = (best_k as f64 + delta) * bin_hz;
+            Some((f_est, best_m))
+        };
+
+        for s_idx in 0..6 {
             let f_ref = f_refs[s_idx];
-            let f_est = Self::estimate_string_freq_hanning(&self.d_scratch[..n], f_ref, self.sample_rate);
-            if f_est > 20.0 {
-                self.last_poly_cents[s_idx] = 1200.0 * (f_est / f_ref).log2();
+            let mut num = 0.0f64;
+            let mut den = 0.0f64;
+            let mut used_primary = false;
+
+            let mut f1_mag = 0.0f64;
+            for harm in [1usize, 2usize] {
+                let f_cand = f_ref * (harm as f64);
+                if !partial_collides_with_lower(f_cand, s_idx) {
+                    used_primary = true;
+                    if let Some((f_est, m)) = estimate_partial(f_cand) {
+                        if harm == 1 {
+                            f1_mag = m;
+                            num += m * f_est;
+                            den += m;
+                        } else if f1_mag <= 0.0 || m >= 0.08 * f1_mag {
+                            num += m * (f_est / (harm as f64));
+                            den += m;
+                        }
+                    }
+                }
+            }
+
+            if !used_primary {
+                // Se fundamental e 2o harmônico forem excluídos, usa o 3o (ou 5o se o 3o também coincidir com n <= 8)
+                let fallback_harm = if !partial_collides_with_lower(f_ref * 3.0, s_idx) {
+                    3usize
+                } else if !partial_collides_with_lower(f_ref * 5.0, s_idx) {
+                    5usize
+                } else {
+                    3usize
+                };
+                if let Some((f_est, m)) = estimate_partial(f_ref * (fallback_harm as f64)) {
+                    num += m * (f_est / (fallback_harm as f64));
+                    den += m;
+                }
+            }
+
+            if den > 0.0 {
+                let f_est = num / den;
+                self.last_poly_cents[s_idx] = (1200.0 * (f_est / f_ref).log2()) as f32;
             } else {
                 self.last_poly_cents[s_idx] = 0.0;
             }
