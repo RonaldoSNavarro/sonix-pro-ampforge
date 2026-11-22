@@ -236,14 +236,14 @@ struct DriveBiquad64 {
 impl DriveBiquad64 {
     #[inline(always)]
     fn process(&mut self, x: f64) -> f64 {
-        let y = crate::denormal::flush_f64(
-            self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2,
-        );
+        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
         self.x2 = self.x1;
-        self.x1 = crate::denormal::flush_f64(x);
+        self.x1 = x;
         self.y2 = self.y1;
-        self.y1 = if y.is_finite() { y } else { 0.0 };
-        self.y1
+        self.y1 = y;
+        y
     }
 }
 
@@ -427,9 +427,10 @@ impl DriveProcessor {
         let sr = self.sample_rate;
         let g_norm = self.gain / 10.0;
         let t_norm = self.tone / 10.0;
-        let sr_os = (sr as f64) * 8.0;
+        let os_factor = if sr > 64_000.0 { 4.0 } else { 8.0 };
+        let sr_os = (sr as f64) * os_factor;
 
-        // 1. TS808 (AUD-29): realimentação Zf/Zg e LPF pós-clip de 1k + 0.22 µF (723,43 Hz) @ 16x (subpasso 2x em 8x OS)
+        // 1. TS808 (AUD-29): realimentação Zf/Zg e LPF pós-clip de 1k + 0.22 µF (723,43 Hz) @ ~768 kHz
         let k_ts = 2.0 * sr_os * 2.0;
         let d_ts = g_norm.clamp(0.0, 1.0) as f64;
         let rf_ts = 51_000.0 + d_ts * 500_000.0;
@@ -495,8 +496,8 @@ impl DriveProcessor {
         let rat_fc = 32150.0 * (600.0f32 / 32150.0f32).powf(t_norm);
         self.rat_filter_biquad.update_coeffs(DriveBiquad::first_order_lowpass(rat_fc, sr));
 
-        // 12th-order Chebyshev Type I decimation LPF (6 biquads, 0.2 dB ripple) @ 8x OS (Spec 041 CA-5)
-        let sr_os = (sr as f64) * 8.0;
+        // 12th-order Chebyshev Type I decimation LPF (6 biquads, 0.2 dB ripple) @ ~384 kHz (Spec 041 CA-5)
+        let sr_os = (sr as f64) * (if sr > 64_000.0 { 4.0 } else { 8.0 });
         let fp = 17800.0f64.min((sr as f64) * 0.37);
         let n_order = 12.0f64;
         let eps = (10.0f64.powf(0.20 / 10.0) - 1.0).sqrt();
@@ -576,6 +577,7 @@ impl DriveProcessor {
         os_ai_lp: &mut [DriveBiquad64; 4],
         os_aa_lp: &mut [DriveBiquad64; 6],
         os_u_prev: &mut f64,
+        os_steps: usize,
         substeps: usize,
         x: f32,
         mut shaper: impl FnMut(f64) -> f64,
@@ -594,10 +596,11 @@ impl DriveProcessor {
         let c2 = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
         let c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
 
+        let inv_os = 1.0f32 / (os_steps as f32);
         let inv_sub = 1.0 / (substeps.max(1) as f64);
         let mut out = 0.0f64;
-        for k in 1..=8 {
-            let t = (k as f32) * 0.125;
+        for k in 1..=os_steps {
+            let t = (k as f32) * inv_os;
             let mut u = (c0 + t * (c1 + t * (c2 + t * c3))) as f64;
             for ai in os_ai_lp.iter_mut() {
                 u = ai.process(u);
@@ -619,7 +622,7 @@ impl DriveProcessor {
             for lpf in os_aa_lp.iter_mut() {
                 d = lpf.process(d);
             }
-            if k == 8 {
+            if k == os_steps {
                 out = d;
             }
         }
@@ -628,11 +631,13 @@ impl DriveProcessor {
 
     #[inline(always)]
     fn oversample_4x(&mut self, x: f32, mut shaper: impl FnMut(f32) -> f32) -> f32 {
+        let os_steps = if self.sample_rate > 64_000.0 { 4 } else { 8 };
         Self::step_oversample_sub(
             &mut self.os_hist,
             &mut self.os_ai_lp,
             &mut self.os_aa_lp,
             &mut self.os_u_prev,
+            os_steps,
             1,
             x,
             |u| shaper(u as f32) as f64,
@@ -646,6 +651,7 @@ impl DriveProcessor {
         let vf_p = (vf_pos as f64).max(1e-6);
         let vf_n = (vf_neg as f64).max(1e-6);
         let out_gain = self.out_level_taper();
+        let os_steps = if self.sample_rate > 64_000.0 { 4 } else { 8 };
 
         for i in 0..input.len() {
             let clipped = Self::step_oversample_sub(
@@ -653,16 +659,23 @@ impl DriveProcessor {
                 &mut self.os_ai_lp,
                 &mut self.os_aa_lp,
                 &mut self.os_u_prev,
+                os_steps,
                 2,
                 input[i],
                 |us| {
                     let v_fb = self.ts_fb_bq_os.process(us);
                     let v_clip = if v_fb >= 0.0 {
                         let r = v_fb / vf_p;
-                        v_fb / (1.0 + r.powi(8)).powf(0.125)
+                        let r2 = r * r;
+                        let r4 = r2 * r2;
+                        let r8 = r4 * r4;
+                        v_fb / (1.0 + r8).sqrt().sqrt().sqrt()
                     } else {
                         let r = (-v_fb) / vf_n;
-                        v_fb / (1.0 + r.powi(8)).powf(0.125)
+                        let r2 = r * r;
+                        let r4 = r2 * r2;
+                        let r8 = r4 * r4;
+                        v_fb / (1.0 + r8).sqrt().sqrt().sqrt()
                     };
                     let v_stage = us + v_clip;
                     self.ts_post_lp_os.process(v_stage)
@@ -708,19 +721,25 @@ impl DriveProcessor {
         let vn = (vf_n as f64).max(1e-6);
         let out_gain = self.out_level_taper();
 
+        let os_steps = if self.sample_rate > 64_000.0 { 4 } else { 8 };
+
         for i in 0..input.len() {
             let clipped = Self::step_oversample_sub(
                 &mut self.os_hist,
                 &mut self.os_ai_lp,
                 &mut self.os_aa_lp,
                 &mut self.os_u_prev,
+                os_steps,
                 4,
                 input[i],
                 |us| {
                     let v = self.rat_cl_iir_os.process(us);
                     let vf = if v >= 0.0 { vp } else { vn };
                     let r = v.abs() / vf;
-                    v / (1.0 + r.powi(8)).powf(0.125)
+                    let r2 = r * r;
+                    let r4 = r2 * r2;
+                    let r8 = r4 * r4;
+                    v / (1.0 + r8).sqrt().sqrt().sqrt()
                 },
             );
             let filtered = self.rat_filter_biquad.process(clipped);
@@ -736,6 +755,7 @@ impl DriveProcessor {
         let (vf_p, vf_n) = self.diode_thresholds();
         let stage_knee = (((vf_p + vf_n) * 0.5).clamp(0.25, 1.2)) as f64;
         let out_gain = self.out_level_taper() * 1.35;
+        let os_steps = if self.sample_rate > 64_000.0 { 4 } else { 8 };
 
         for i in 0..input.len() {
             let pre = self.muff_hpf_biquad.process(input[i]) * sustain;
@@ -744,6 +764,7 @@ impl DriveProcessor {
                 &mut self.os_ai_lp,
                 &mut self.os_aa_lp,
                 &mut self.os_u_prev,
+                os_steps,
                 2,
                 pre,
                 |mut u| {
@@ -807,6 +828,8 @@ impl DriveProcessor {
         let vf = volts_para_fs(0.60) as f64;
         let out_gain = self.out_level_taper();
 
+        let os_steps = if self.sample_rate > 64_000.0 { 4 } else { 8 };
+
         for i in 0..input.len() {
             let x_hp = self.ds1_pre_hpf.process(input[i]) * pre_gain;
             let clipped = Self::step_oversample_sub(
@@ -814,11 +837,15 @@ impl DriveProcessor {
                 &mut self.os_ai_lp,
                 &mut self.os_aa_lp,
                 &mut self.os_u_prev,
+                os_steps,
                 2,
                 x_hp,
                 |u64| {
                     let r = u64.abs() / vf;
-                    u64 / (1.0 + r.powi(8)).powf(0.125)
+                    let r2 = r * r;
+                    let r4 = r2 * r2;
+                    let r8 = r4 * r4;
+                    u64 / (1.0 + r8).sqrt().sqrt().sqrt()
                 },
             );
             let scooped = self.ds1_mid_notch.process(clipped);

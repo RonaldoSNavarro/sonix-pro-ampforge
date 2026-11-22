@@ -1458,6 +1458,10 @@ impl AmpCore {
         let ri = self.mod_settings.rectifier.internal_resistance();
         let tau_att = self.mod_settings.rectifier.attack_time_sec();
         let tau_rel = self.mod_settings.rectifier.release_time_sec();
+        let alpha_sag_att = 1.0 - (-1.0 / (sr * tau_att)).exp();
+        let alpha_sag_rel = 1.0 - (-1.0 / (sr * tau_rel)).exp();
+        let alpha_ac30_brilliant_hp = 1.0
+            - (-2.0 * std::f64::consts::PI * DECISAO_SONIX_AC30_BRILLIANT_HP_HZ / sr).exp();
 
         let out_lin = 10.0f64.powf(self.panel.output_level_db as f64 / 20.0);
         let live_target = if self.panel.power && !self.panel.standby { 1.0 } else { 0.0 };
@@ -1598,7 +1602,9 @@ impl AmpCore {
                             s * (1.05 * raw_drive / v1a_gain)
                         } else {
                             // Limitação física de condução de grade em cascata extrema (joelho de 4a ordem)
-                            let base_drive = raw_drive / (1.0 + (raw_drive / 18.5).powi(4)).powf(0.25);
+                            let r = raw_drive / 18.5;
+                            let r2 = r * r;
+                            let base_drive = raw_drive / (1.0 + r2 * r2).sqrt().sqrt();
                             // Grid-stopper de 68 kΩ + capacitância de Miller de V1a (~6.4 kHz)
                             let alpha_grid_jcm = (2.0 * std::f64::consts::PI * 6400.0 / sr).clamp(0.01, 0.85);
                             self.miller_lp2 = crate::denormal::flush_f64(
@@ -1693,9 +1699,7 @@ impl AmpCore {
                             // Fonte: JMI AC30 Top Boost OS/010 & OS/056 (V2a: Ra=100k, Rl=220k, Rk=1.5k -> gain/norm = 2.431)
                             let tb_v2_gain = triode_stage_gain(100_000.0, 220_000.0, 1_500.0)
                                 / DECISAO_SONIX_PREAMP_STAGE_NORM;
-                            let alpha_ac30_brilliant = (1.0
-                                - (-2.0 * std::f64::consts::PI * DECISAO_SONIX_AC30_BRILLIANT_HP_HZ / sr).exp())
-                            .clamp(0.0001, 0.5);
+                            let alpha_ac30_brilliant = alpha_ac30_brilliant_hp.clamp(0.0001, 0.5);
                             let hp1 = one_pole_hpf(&mut self.interstage_hp1, v1, alpha_ac30_brilliant);
                             triode_adaa1((hp1 * tb_v2_gain) / v1_headroom, &mut self.adaa_s2_prev, kp_base * 1.1, kn_base * 0.88)
                                 * v1_headroom
@@ -1797,9 +1801,9 @@ impl AmpCore {
                     0.0
                 };
                 let alpha_sag = if target_drop > self.sag_state {
-                    1.0 - (-1.0 / (sr * tau_att)).exp()
+                    alpha_sag_att
                 } else {
-                    1.0 - (-1.0 / (sr * tau_rel)).exp()
+                    alpha_sag_rel
                 };
                 self.sag_state = crate::denormal::flush_f64(
                     self.sag_state + alpha_sag * (target_drop - self.sag_state),

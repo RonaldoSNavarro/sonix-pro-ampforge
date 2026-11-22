@@ -343,6 +343,32 @@ impl Complex32 {
     }
 }
 
+fn rfft_256_twiddles() -> &'static [Complex32; (HALF_N / 2) + 1] {
+    static TWIDDLES: std::sync::OnceLock<[Complex32; (HALF_N / 2) + 1]> = std::sync::OnceLock::new();
+    TWIDDLES.get_or_init(|| {
+        let mut table = [Complex32::default(); (HALF_N / 2) + 1];
+        for (k, slot) in table.iter_mut().enumerate() {
+            let angle = -std::f32::consts::PI * (k as f32) / (HALF_N as f32);
+            let (im, re) = angle.sin_cos();
+            *slot = Complex32::new(re, im);
+        }
+        table
+    })
+}
+
+fn fft_128_stage_twiddles() -> &'static [(f32, f32); 7] {
+    static STAGES: std::sync::OnceLock<[(f32, f32); 7]> = std::sync::OnceLock::new();
+    STAGES.get_or_init(|| {
+        let mut arr = [(0.0f32, 0.0f32); 7];
+        for (stage, slot) in arr.iter_mut().enumerate() {
+            let half = 1usize << stage;
+            let angle_step = -std::f32::consts::PI / (half as f32);
+            *slot = (angle_step.cos(), angle_step.sin());
+        }
+        arr
+    })
+}
+
 /// FFT Radix-2 Cooley-Tukey in-place de 128 pontos (zero-alloc).
 fn fft_128(buf: &mut [Complex32; HALF_N], inverse: bool) {
     for i in 0..HALF_N {
@@ -352,13 +378,15 @@ fn fft_128(buf: &mut [Complex32; HALF_N], inverse: bool) {
         }
     }
 
-    let sign = if inverse { 1.0f32 } else { -1.0f32 };
+    let stages = fft_128_stage_twiddles();
+    let sign = if inverse { -1.0f32 } else { 1.0f32 };
     let mut half = 1usize;
+    let mut stage = 0usize;
     while half < HALF_N {
         let step = half << 1;
-        let angle_step = sign * std::f32::consts::PI / (half as f32);
-        let w_step_re = angle_step.cos();
-        let w_step_im = angle_step.sin();
+        let (w_step_re, raw_im) = stages[stage];
+        let w_step_im = raw_im * sign;
+        stage += 1;
 
         let mut start = 0usize;
         while start < HALF_N {
@@ -407,6 +435,7 @@ fn rfft_256_forward(
     out[0] = Complex32::new(scratch[0].re + scratch[0].im, 0.0);
     out[HALF_N] = Complex32::new(scratch[0].re - scratch[0].im, 0.0);
 
+    let twiddles = rfft_256_twiddles();
     for k in 1..=(HALF_N / 2) {
         let c_k = scratch[k];
         let c_nk = scratch[HALF_N - k];
@@ -415,10 +444,9 @@ fn rfft_256_forward(
         let odd_re = 0.5 * (c_k.im + c_nk.im);
         let odd_im = -0.5 * (c_k.re - c_nk.re);
 
-        let angle = -std::f32::consts::PI * (k as f32) / (HALF_N as f32);
-        let (w_im, w_re) = angle.sin_cos();
-        let rot_re = w_re * odd_re - w_im * odd_im;
-        let rot_im = w_re * odd_im + w_im * odd_re;
+        let w = twiddles[k];
+        let rot_re = w.re * odd_re - w.im * odd_im;
+        let rot_im = w.re * odd_im + w.im * odd_re;
 
         out[k] = Complex32::new(even_re + rot_re, even_im + rot_im);
         out[HALF_N - k] = Complex32::new(even_re - rot_re, -(even_im - rot_im));
@@ -436,6 +464,7 @@ fn rfft_256_inverse(
         0.5 * (spec[0].re - spec[HALF_N].re),
     );
 
+    let twiddles = rfft_256_twiddles();
     for k in 1..=(HALF_N / 2) {
         let y_k = spec[k];
         let y_nk = Complex32::new(spec[HALF_N - k].re, -spec[HALF_N - k].im);
@@ -444,8 +473,9 @@ fn rfft_256_inverse(
         let diff_re = 0.5 * (y_k.re - y_nk.re);
         let diff_im = 0.5 * (y_k.im - y_nk.im);
 
-        let angle = std::f32::consts::PI * (k as f32) / (HALF_N as f32);
-        let (w_im, w_re) = angle.sin_cos();
+        let w = twiddles[k];
+        let w_re = w.re;
+        let w_im = -w.im;
         let w_diff_re = w_re * diff_re - w_im * diff_im;
         let w_diff_im = w_re * diff_im + w_im * diff_re;
         let odd_re = -w_diff_im;
@@ -499,7 +529,7 @@ impl IrPartitionedData {
 }
 
 struct PartitionedConvolverState {
-    head_circ: [f32; PART_B],
+    head_circ: [f32; PART_B * 2],
     head_pos: usize,
     in_block: [f32; PART_B],
     block_pos: usize,
@@ -517,8 +547,10 @@ struct PartitionedConvolverState {
 
 impl PartitionedConvolverState {
     fn new() -> Self {
+        let _ = rfft_256_twiddles();
+        let _ = fft_128_stage_twiddles();
         Self {
-            head_circ: [0.0; PART_B],
+            head_circ: [0.0; PART_B * 2],
             head_pos: 0,
             in_block: [0.0; PART_B],
             block_pos: 0,
@@ -554,27 +586,35 @@ impl PartitionedConvolverState {
         let fdl_idx = (self.fdl_pos + MAX_PARTITIONS - p) % MAX_PARTITIONS;
         let x_spec = &self.fdl[fdl_idx];
         let h_spec = &data.tail_partitions[p];
-        for k in 0..SPEC_BINS {
-            let a = x_spec[k];
-            let b = h_spec[k];
-            self.acc_buf[k].re += a.re * b.re - a.im * b.im;
-            self.acc_buf[k].im += a.re * b.im + a.im * b.re;
+        for ((acc, &a), &b) in self.acc_buf[..SPEC_BINS]
+            .iter_mut()
+            .zip(x_spec[..SPEC_BINS].iter())
+            .zip(h_spec[..SPEC_BINS].iter())
+        {
+            acc.re += a.re * b.re - a.im * b.im;
+            acc.im += a.re * b.im + a.im * b.re;
         }
         self.last_call_macs = self.last_call_macs.saturating_add(1);
     }
 
     #[inline]
     fn process_sample(&mut self, x: f32, data: &IrPartitionedData) -> f32 {
-        // 1. Partição 0: FIR direto (latência zero)
-        self.head_circ[self.head_pos] = x;
-        let mut y_head = 0.0f32;
+        // 1. Partição 0: FIR direto (latência zero, janela contígua sem desvio por tap)
+        let pos = if self.head_pos == 0 {
+            PART_B - 1
+        } else {
+            self.head_pos - 1
+        };
+        self.head_pos = pos;
+        self.head_circ[pos] = x;
+        self.head_circ[pos + PART_B] = x;
         let h_len = data.head_len;
-        let h_taps = &data.head_taps;
-        for k in 0..h_len {
-            let idx = (self.head_pos + PART_B - k) & (PART_B - 1);
-            y_head += self.head_circ[idx] * h_taps[k];
+        let hist = &self.head_circ[pos..pos + h_len];
+        let h_taps = &data.head_taps[..h_len];
+        let mut y_head = 0.0f32;
+        for (&h, &f) in hist.iter().zip(h_taps.iter()) {
+            y_head += h * f;
         }
-        self.head_pos = (self.head_pos + 1) & (PART_B - 1);
 
         // 2. Cauda pré-computada por FFT distribuída no período de 128 amostras
         let y_tail = self.tail_out[self.block_pos];
@@ -919,7 +959,7 @@ pub struct VirtualCabProcessor {
     resonance_smoother: crate::smoother::ParamSmoother,
     has_processed: bool,
     speaker_fir: [f32; SPEAKER_FIR_LEN],
-    speaker_hist: [f32; SPEAKER_FIR_LEN],
+    speaker_hist: [f32; SPEAKER_FIR_LEN * 2],
     speaker_hist_pos: usize,
     fir_model: SpeakerCabModel,
     fir_sr: f32,
@@ -980,7 +1020,7 @@ impl VirtualCabProcessor {
             resonance_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_res_hz),
             has_processed: false,
             speaker_fir: build_min_phase_speaker_fir(spk, 48000.0),
-            speaker_hist: [0.0; SPEAKER_FIR_LEN],
+            speaker_hist: [0.0; SPEAKER_FIR_LEN * 2],
             speaker_hist_pos: 0,
             fir_model: spk,
             fir_sr: 48000.0,
@@ -1203,14 +1243,21 @@ impl VirtualCabProcessor {
 
     #[inline(always)]
     fn step_speaker_fir(&mut self, x: f32) -> f32 {
-        self.speaker_hist[self.speaker_hist_pos] = x;
+        let pos = if self.speaker_hist_pos == 0 {
+            SPEAKER_FIR_LEN - 1
+        } else {
+            self.speaker_hist_pos - 1
+        };
+        self.speaker_hist_pos = pos;
+        self.speaker_hist[pos] = x;
+        self.speaker_hist[pos + SPEAKER_FIR_LEN] = x;
+
+        let hist = &self.speaker_hist[pos..pos + SPEAKER_FIR_LEN];
+        let fir = &self.speaker_fir[..SPEAKER_FIR_LEN];
         let mut acc = 0.0f32;
-        let mut idx = self.speaker_hist_pos;
-        for k in 0..SPEAKER_FIR_LEN {
-            acc += self.speaker_hist[idx] * self.speaker_fir[k];
-            idx = if idx == 0 { SPEAKER_FIR_LEN - 1 } else { idx - 1 };
+        for (&h, &f) in hist.iter().zip(fir.iter()) {
+            acc += h * f;
         }
-        self.speaker_hist_pos = (self.speaker_hist_pos + 1) % SPEAKER_FIR_LEN;
         crate::denormal::flush_f32(acc)
     }
 
