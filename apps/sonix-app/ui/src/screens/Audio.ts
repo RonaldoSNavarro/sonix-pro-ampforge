@@ -53,10 +53,10 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
   const body = document.createElement('div');
   body.style.cssText = 'flex:1;min-height:0;display:flex;overflow:hidden;';
 
-  // Left Sidebar (232px)
+  // Left Sidebar (210px matching Audio.dc.html)
   const sidebar = document.createElement('aside');
   sidebar.style.cssText =
-    'width:232px;flex:none;background:linear-gradient(180deg,#14171b,#0d0f12);border-right:1px solid #000;padding:14px 10px;display:flex;flex-direction:column;gap:4px;';
+    'width:210px;flex:none;background:linear-gradient(180deg,#14171b,#0d0f12);border-right:1px solid #000;padding:14px 10px;display:flex;flex-direction:column;gap:4px;';
 
   for (const [tabId, lbl] of [
     ['dev', 'Dispositivo e latência'],
@@ -78,8 +78,8 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     'margin-top:auto;padding:10px 12px;border-radius:4px;border:1px solid #000;background:radial-gradient(ellipse at 50% 0%,#0d2a20 0%,#05140f 75%);box-shadow:inset 0 2px 8px rgba(0,0,0,.9);display:flex;flex-direction:column;gap:4px;color:#57ffb0;text-shadow:0 0 6px rgba(87,255,176,.6);';
   crtMotor.innerHTML = `
     <span style="font-size:10px">MOTOR</span>
-    <span style="font-size:12px">${aud.mode === 'wasapi_exclusive' ? 'WASAPI exclusivo' : aud.backend.toUpperCase()} · ${srKhz} kHz</span>
-    <span style="font-size:12px">período ${frames} / ${driverMs} ms</span>
+    <span style="font-size:12px;white-space:nowrap">${aud.mode === 'wasapi_exclusive' ? 'WASAPI exclusivo' : aud.backend.toUpperCase()} · ${srKhz} kHz</span>
+    <span style="font-size:12px;white-space:nowrap">período ${frames} / ${driverMs} ms</span>
     <span style="font-size:12px">xruns ${aud.underruns ?? 0}</span>
   `;
   sidebar.appendChild(crtMotor);
@@ -87,28 +87,28 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
   // Right Content Pane
   const pane = document.createElement('div');
   pane.style.cssText =
-    'flex:1;min-width:0;padding:20px 22px;display:flex;flex-direction:column;gap:16px;overflow:hidden;background:radial-gradient(ellipse at 60% 0%,rgba(61,216,255,.05),transparent 50%);';
+    'flex:1;min-width:0;padding:18px 22px;display:flex;flex-direction:column;gap:16px;overflow:hidden;background:radial-gradient(ellipse at 60% 0%,rgba(61,216,255,.05),transparent 50%);';
   const aPanelCss =
     'border-radius:8px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.02) 0 1px,transparent 1px 3px),linear-gradient(180deg,#1d2025,#121418);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 4px 10px rgba(0,0,0,.5),0 0 0 1px #000;';
 
   if (store.audioTab === 'dev') {
     const devCard = document.createElement('div');
     devCard.style.cssText =
-      'border-radius:8px;background:#121417;border:1px solid #1f242b;padding:14px 16px;display:flex;flex-direction:column;gap:12px;';
-    devCard.innerHTML = '<span class="m-lbl" style="font-size:10px;letter-spacing:.12em">DISPOSITIVO DE ÁUDIO &amp; BUFFER</span>';
+      `${aPanelCss}padding:14px 16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;`;
 
-    const makeRow = (label: string, el: HTMLElement) => {
+    const makeField = (label: string, el: HTMLElement, span2 = false) => {
       const r = document.createElement('div');
-      r.style.cssText = 'display:grid;grid-template-columns:160px 1fr;align-items:center;gap:12px;';
+      r.style.cssText = `display:flex;flex-direction:column;gap:4px;min-width:0;${span2 ? 'grid-column:span 2;' : ''}`;
       const l = document.createElement('span');
-      l.style.cssText = 'font-size:11px;color:#aeb4bc;';
+      l.className = 'm-lbl';
+      l.style.cssText = 'font-size:10px;letter-spacing:.1em;color:#a3abb4;';
       l.textContent = label;
       r.append(l, el);
       return r;
     };
 
     const selStyle =
-      'height:30px;border-radius:5px;border:1px solid #2a2f37;background:#090b0d;color:#e6eaef;padding:0 10px;font-size:12px;';
+      'height:32px;border-radius:5px;border:1px solid #000;box-shadow:inset 0 1px 3px rgba(0,0,0,.9);background:#07090c;color:#e8eaed;padding:0 8px;font-size:12px;width:100%;';
 
     let bufSel: HTMLSelectElement | null = null;
     const driverSel = document.createElement('select');
@@ -141,7 +141,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
         if (bufSel) bufSel.value = '64';
       }
     });
-    devCard.appendChild(makeRow('Driver / Backend', driverSel));
+    devCard.appendChild(makeField('Driver / Backend', driverSel, true));
 
     // CA-38: Modo Instrument (Hi-Z -10 dBV) vs Line (+4 dBu) com aviso honesto
     const inModeSel = document.createElement('select');
@@ -161,13 +161,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     inModeSel.addEventListener('change', () => {
       void store.setControl('main.input_mode', inModeSel.value);
     });
-    devCard.appendChild(makeRow('Nível de Entrada', inModeSel));
-
-    const hizNote = document.createElement('div');
-    hizNote.style.cssText = 'font-size:11px;color:#8e96a0;line-height:1.35;';
-    hizNote.textContent =
-      'Hi-Z é uma propriedade elétrica da entrada da interface: o app não converte uma entrada de linha em Hi-Z por software. Para Reamp, normalmente é necessário um reamp box entre a saída de linha e a entrada do amplificador.';
-    devCard.appendChild(hizNote);
+    devCard.appendChild(makeField('Nível de Entrada', inModeSel));
 
     const inDevs = store.devices.filter((d) => d.is_input);
     const outDevs = store.devices.filter((d) => d.is_output);
@@ -195,7 +189,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     };
 
     devCard.appendChild(
-      makeRow(
+      makeField(
         'Dispositivo Entrada',
         buildDeviceSel(inDevs, pending.inputDevice, (v) => {
           pending.inputDevice = v;
@@ -203,7 +197,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       )
     );
     devCard.appendChild(
-      makeRow(
+      makeField(
         'Dispositivo Saída',
         buildDeviceSel(outDevs, pending.outputDevice, (v) => {
           pending.outputDevice = v;
@@ -224,7 +218,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     srSel.addEventListener('change', () => {
       pending.sampleRate = Number(srSel.value);
     });
-    devCard.appendChild(makeRow('Sample Rate', srSel));
+    devCard.appendChild(makeField('Sample Rate', srSel));
 
     const bufSelect = document.createElement('select');
     bufSel = bufSelect;
@@ -248,10 +242,10 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     bufSelect.addEventListener('change', () => {
       pending.bufferSize = Number(bufSelect.value);
     });
-    devCard.appendChild(makeRow('Tamanho de Buffer', bufSelect));
+    devCard.appendChild(makeField('Tamanho de Buffer', bufSelect));
 
     const midiWrap = document.createElement('div');
-    midiWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:0;';
+    midiWrap.style.cssText = 'display:flex;flex-direction:column;gap:2px;min-width:0;';
     const midiSel = document.createElement('select');
     midiSel.style.cssText = selStyle;
     midiSel.dataset.controlId = 'audio.midi_port';
@@ -277,35 +271,44 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     const midiStatus = document.createElement('span');
     midiStatus.setAttribute('data-midi-status', '');
     midiStatus.style.cssText = store.midiError
-      ? 'font-size:10.5px;color:#ff7b7b;'
+      ? 'font-size:10px;color:#ff7b7b;'
       : store.midiConnectedPort
-        ? 'font-size:10.5px;color:#57ffb0;'
-        : 'font-size:10.5px;color:#8e96a0;';
+        ? 'font-size:10px;color:#57ffb0;'
+        : 'font-size:10px;color:#8e96a0;';
     midiStatus.textContent = store.midiError
       ? `Erro MIDI: ${store.midiError}`
       : store.midiConnectedPort
         ? `Conectado: ${store.midiConnectedPort}`
         : 'Nenhuma porta MIDI ativa';
     midiWrap.append(midiSel, midiStatus);
-    devCard.appendChild(makeRow('Entrada MIDI', midiWrap));
+    devCard.appendChild(makeField('Entrada MIDI', midiWrap, true));
 
     if (store.devices.length === 0) {
       const emptyBanner = document.createElement('div');
       emptyBanner.style.cssText =
-        'padding:8px 12px;border-radius:6px;background:rgba(255,106,74,.12);border:1px solid rgba(255,106,74,.35);color:#ff9e8a;font-size:11px;';
+        'grid-column:span 2;padding:8px 12px;border-radius:6px;background:rgba(255,106,74,.12);border:1px solid rgba(255,106,74,.35);color:#ff9e8a;font-size:11px;';
       emptyBanner.textContent =
         'Nenhum dispositivo encontrado no host. Verifique cabo USB/driver ou clique em Reconectar Dispositivo.';
       devCard.appendChild(emptyBanner);
     }
+    pane.appendChild(devCard);
 
-    const actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;gap:8px;margin-top:4px;';
+    // Latência Panel matching Audio.dc.html
+    const latPanel = document.createElement('div');
+    latPanel.style.cssText = `${aPanelCss}padding:14px 16px;display:flex;flex-direction:column;gap:12px;`;
     const refreshAudio = async () => {
       const st = await store.transport.getAudioStatus();
       if (st && typeof st === 'object') Object.assign(store.audioStatus, st);
       store.emit('status');
     };
-    actions.append(
+    const latHdr = document.createElement('div');
+    latHdr.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const latLbl = document.createElement('span');
+    latLbl.className = 'm-lbl';
+    latLbl.style.cssText = 'flex:1;font-size:10px;letter-spacing:.1em;color:#a3abb4;';
+    latLbl.textContent = 'LATÊNCIA';
+    latHdr.append(
+      latLbl,
       makeChipButton('audio.measure_latency', 'Medir Latência Round-Trip', false, async () => {
         try {
           await store.transport.measureLatency();
@@ -316,12 +319,30 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       }),
       makeChipButton('ui.audio_reconnect', 'Reconectar Dispositivo', false, () => void store.reconnectAudioDevice())
     );
-    const rtlRow = document.createElement('div');
-    rtlRow.className = 'm-mono';
-    rtlRow.style.cssText = 'font-size:11px;color:#9aa3ad;';
-    rtlRow.textContent = `Ida-e-volta: ${rtLabel}`;
-    devCard.append(rtlRow, actions);
-    pane.appendChild(devCard);
+    latPanel.appendChild(latHdr);
+
+    const lcdGrid = document.createElement('div');
+    lcdGrid.style.cssText = 'display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;';
+    const lcdStyle =
+      'background:radial-gradient(ellipse at 50% 0%,#0d2a20 0%,#05140f 75%);border:1px solid #000;box-shadow:inset 0 2px 8px rgba(0,0,0,.9);border-radius:4px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;';
+    for (const [k, v] of [
+      ['DRIVER', `${driverMs} ms`],
+      ['PERÍODO', `${frames} samp`],
+      ['ESTIMADA', `${Number(aud.estimated_roundtrip_ms || 3.0).toFixed(2)} ms`],
+      ['MEDIDA', typeof aud.measured_roundtrip_ms === 'number' ? `${aud.measured_roundtrip_ms.toFixed(2)} ms` : '—'],
+    ]) {
+      const card = document.createElement('div');
+      card.style.cssText = lcdStyle;
+      card.innerHTML = `<span class="m-mono" style="font-size:9.5px;color:#57ffb0;opacity:.75">${k}</span><span class="m-mono" style="font-size:17px;font-weight:700;color:#57ffb0;text-shadow:0 0 6px rgba(87,255,176,.6)">${v}</span>`;
+      lcdGrid.appendChild(card);
+    }
+    latPanel.appendChild(lcdGrid);
+
+    const noteSpan = document.createElement('span');
+    noteSpan.style.cssText = 'font-size:11px;color:#a3abb4;line-height:1.4;';
+    noteSpan.textContent = `Ida-e-volta: ${rtLabel} — Fila de 1 período, sem alocação nem lock no callback (Specs 018 e 028).`;
+    latPanel.appendChild(noteSpan);
+    pane.appendChild(latPanel);
   } else if (store.audioTab === 'in') {
     const src = str(store, 'main.input_source', 'guitar');
     const boost = num(store, 'main.input_boost', 2.5);
@@ -330,7 +351,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
 
     // Top Card: Fonte do Motor + Boost + Nivel de Entrada
     const topCard = document.createElement('div');
-    topCard.style.cssText = `${aPanelCss}height:126px;flex:none;box-sizing:border-box;padding:14px 18px;display:flex;align-items:center;gap:22px;`;
+    topCard.style.cssText = `${aPanelCss}padding:14px 16px;display:flex;align-items:center;gap:22px;`;
 
     const srcCol = document.createElement('div');
     srcCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
@@ -349,7 +370,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     srcCol.appendChild(srcBtns);
 
     const boostCol = document.createElement('div');
-    boostCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;';
+    boostCol.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px;';
     const knob = createKnob({
       controlId: 'main.input_boost',
       label: 'Boost de Entrada',
@@ -359,7 +380,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       step: 0.1,
       defaultValue: 1.0,
       skinClass: 'k-audio',
-      sizePx: 60,
+      sizePx: 64,
       onChange: (v) => store.setControl('main.input_boost', v),
       onDragState: (d) => store.setDraggingKnob(d),
     });
@@ -400,10 +421,11 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     const wiz = store.calibrationWizard;
     const calCard = document.createElement('div');
     calCard.style.cssText = `${aPanelCss}padding:16px 18px;display:flex;flex-direction:column;gap:14px;`;
+    const hasResult = wiz.phase === 'done' && Boolean(wiz.result);
     const barOn = (n: number) =>
-      wiz.phase === 'done' || (wiz.phase === 'running' && wiz.step >= n) ? '#57ffb0' : '#1a1d22';
-    const stepTxt = (n: number) => (wiz.phase !== 'idle' && wiz.step === n ? '#e8eaed' : '#a3abb4');
-    const stepNow = wiz.phase === 'idle' ? 1 : wiz.step;
+      hasResult || (wiz.phase === 'running' && wiz.step >= n) ? '#57ffb0' : '#1a1d22';
+    const stepTxt = (n: number) => ((hasResult || wiz.phase === 'running') && wiz.step === n ? '#e8eaed' : '#a3abb4');
+    const stepNow = wiz.phase === 'idle' || !hasResult && wiz.phase === 'done' ? 1 : wiz.step;
     calCard.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px">
         <span class="m-osw" style="font-size:16px;font-weight:600;letter-spacing:.06em;flex:1">ASSISTENTE DE CALIBRAÇÃO</span>
@@ -412,7 +434,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       <div style="display:flex;gap:8px">
         <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:${barOn(1)}"></div><span style="font-size:11px;font-weight:600;color:${stepTxt(1)}">1 · Silêncio (3 s)</span></div>
         <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:${barOn(2)}"></div><span style="font-size:11px;font-weight:600;color:${stepTxt(2)}">2 · Tocar forte (5 s)</span></div>
-        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:${wiz.phase === 'done' ? '#57ffb0' : '#1a1d22'}"></div><span style="font-size:11px;font-weight:600;color:${wiz.phase === 'done' ? '#e8eaed' : '#a3abb4'}">3 · Resultado</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px"><div style="height:5px;border-radius:3px;background:${hasResult ? '#57ffb0' : '#1a1d22'}"></div><span style="font-size:11px;font-weight:600;color:${hasResult ? '#e8eaed' : '#a3abb4'}">3 · Resultado</span></div>
       </div>
     `;
 
@@ -444,7 +466,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     const calStepBox = document.createElement('div');
     calStepBox.style.cssText = 'display:flex;align-items:center;gap:18px;';
     calStepBox.innerHTML = `
-      <div style="width:92px;height:92px;border-radius:50%;background:conic-gradient(${wiz.error ? '#ff5e5e' : '#57ffb0'} ${wiz.phase === 'done' || wiz.error ? 360 : wiz.phase === 'running' ? (wiz.step === 1 ? 120 : 240) : 0}deg,#1a1d22 0);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <div style="width:92px;height:92px;border-radius:50%;background:conic-gradient(${wiz.error ? '#ff5e5e' : '#57ffb0'} ${hasResult || wiz.error ? 360 : wiz.phase === 'running' ? (wiz.step === 1 ? 120 : 240) : 0}deg,#1a1d22 0);display:flex;align-items:center;justify-content:center;flex-shrink:0">
         <div style="width:74px;height:74px;border-radius:50%;background:#0d0f12;display:flex;align-items:center;justify-content:center">
           <span class="m-mono" style="font-size:22px;font-weight:700;color:${wiz.error ? '#ff7b7b' : '#57ffb0'}">${ringBig}</span>
         </div>

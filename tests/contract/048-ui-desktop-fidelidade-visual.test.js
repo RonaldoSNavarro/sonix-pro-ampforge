@@ -378,6 +378,43 @@ test('Spec 048 CA-2..CA-10 & CA-12: fidelidade visual E2E em 1440x900 e estrutur
     const palcoSsim = computeSsim(palcoShot, palcoRef);
     if (palcoSsim < 0.80) writeDiffPng(palcoShot, palcoRef, path.join(DIFF_DIR, 'Palco-diff.png'));
     assert.ok(palcoSsim >= 0.80, `CA-10: Palco full SSIM=${palcoSsim.toFixed(4)} < 0.80`);
+
+    // AUD-37: Áudio (DOM + SSIM região e tela inteira em 1100x760, aba Entrada e calibração = Audio.png)
+    await page.setViewportSize({ width: 1100, height: 760 });
+    await page.keyboard.press('Control+,');
+    await page.waitForTimeout(150);
+    await page.click('button:has-text("Entrada e calibração")');
+    await page.waitForTimeout(150);
+    const audioDomOk = await page.evaluate(() => {
+      const txt = document.body.textContent ?? '';
+      return (
+        txt.includes('Configurações de áudio — SONIX PRO AMPFORGE') &&
+        txt.includes('ASSISTENTE DE CALIBRAÇÃO') &&
+        txt.includes('48 kHz')
+      );
+    });
+    assert.ok(audioDomOk, 'AUD-37: Tela Áudio deve renderizar título, assistente de calibração e taxa de amostragem');
+    const audioRef = PNG.sync.read(fs.readFileSync(path.join(REF_DIR, 'Audio.png')));
+    const audioShot = PNG.sync.read(await page.screenshot());
+    const audioFullSsim = computeSsim(audioShot, audioRef);
+    const audioRegions = [
+      ['Audio_title', 0, 0, audioRef.width, 32],
+      ['Audio_body', 0, 32, audioRef.width, audioRef.height - 32],
+    ];
+    const audioFailures = [];
+    for (const [rName, x, y, w, h] of audioRegions) {
+      const regScore = computeSsim(cropPng(audioShot, x, y, w, h), cropPng(audioRef, x, y, w, h));
+      console.log(`CA-10 Audio ${rName}: SSIM=${regScore.toFixed(4)}`);
+      if (regScore < 0.85) {
+        audioFailures.push(`${rName}=${regScore.toFixed(4)}`);
+      }
+    }
+    console.log(`CA-10 Audio FULL: SSIM=${audioFullSsim.toFixed(4)}`);
+    if (audioFailures.length > 0 || audioFullSsim < 0.80) {
+      writeDiffPng(audioShot, audioRef, path.join(DIFF_DIR, 'Audio-diff.png'));
+    }
+    assert.equal(audioFailures.length, 0, `AUD-37: Audio regiões abaixo de 0.85: ${audioFailures.join(', ')}`);
+    assert.ok(audioFullSsim >= 0.80, `AUD-37: Audio full SSIM=${audioFullSsim.toFixed(4)} < 0.80`);
   } finally {
     await browser.close();
     server.close();
