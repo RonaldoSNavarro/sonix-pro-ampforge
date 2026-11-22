@@ -109,7 +109,8 @@ pub fn resolved_fmv_components(
             c3: DECISAO_SONIX_RECTO_C3,
             t_pos: audio_taper(t),
             b_pos: audio_taper(b),
-            m_pos: audio_taper(m),
+            // Pot Mid 25k linear (Mesa part #593737 B25k); AUD-26 aplica taper 10% log somente nos Marshall.
+            m_pos: m,
         },
         ToneStackTopology::PassiveJamesBaxandall => FmvComponents {
             // James passive Baxandall style modeled on dual-shelf FMV-compatible bounds

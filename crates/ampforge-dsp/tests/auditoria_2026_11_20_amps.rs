@@ -1,4 +1,7 @@
-use ampforge_dsp::amp::{AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
+use ampforge_dsp::amp::{
+    AmpChannelMode, AmpInputJack, AmpModelId, Jcm800PeakingNetwork, PlexiBrightCapFilter,
+    WhiteBoxAmpProcessor,
+};
 use ampforge_dsp::modshop::ToneStackTopology;
 use ampforge_dsp::tonestack::{
     analog_tonestack_magnitude_db, analog_tonestack_magnitude_db_for_components,
@@ -489,4 +492,158 @@ fn aud_26_middle_10pct_log() {
             f, prod_db, yeh_db, err
         );
     }
+}
+
+#[test]
+fn aud_27_rede_jcm800() {
+    let sr = 48_000.0;
+    let r1 = 470_000.0f64;
+    let rl = 470_000.0f64;
+    let cp = 470e-12f64;
+
+    let mut net = Jcm800PeakingNetwork::new(sr);
+    for k in 0..=27 {
+        let freq = 20.0 * 2.0f64.powf((k as f64) / 3.0);
+        if freq > 10_000.5 {
+            break;
+        }
+        net.reset();
+        let n = 48_000usize;
+        let settle = 24_000usize;
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for i in 0..n {
+            let ph = 2.0 * PI * freq * (i as f64) / sr;
+            let y = net.process(ph.sin());
+            if i >= settle {
+                re += y * ph.cos();
+                im += y * ph.sin();
+            }
+        }
+        let mag_dig = 2.0 * (re * re + im * im).sqrt() / ((n - settle) as f64);
+        let dig_db = 20.0 * mag_dig.max(1e-12).log10();
+
+        // H(s) = Rl / (Rl + (R1 || 1/(s*Cp)))
+        let w = 2.0 * PI * freq;
+        let num = rl * (1.0f64).hypot(w * r1 * cp);
+        let den = (rl + r1).hypot(w * rl * r1 * cp);
+        let ana_db = 20.0 * (num / den).max(1e-12).log10();
+
+        let err = (dig_db - ana_db).abs();
+        assert!(
+            err <= 0.1,
+            "AUD-27 rede 470k||470pF @ {:.1} Hz: dig={:.4} vs ana={:.4} (erro={:.4} dB > 0.1)",
+            freq, dig_db, ana_db, err
+        );
+    }
+
+    // Sem biquads de voicing substitutos no JCM800
+    let (mut v1, mut v2) = WhiteBoxAmpProcessor::create_voicing_filters(AmpModelId::BritJcm800_2203, 96_000.0);
+    for &x in &[-0.73, 0.42, 1.0, -0.15] {
+        assert!((v1.process(x) - x).abs() < 1e-12, "AUD-27 JCM800 voicing 1 deve ser identidade");
+        assert!((v2.process(x) - x).abs() < 1e-12, "AUD-27 JCM800 voicing 2 deve ser identidade");
+    }
+}
+
+#[test]
+fn aud_27_bright_cap_plexi() {
+    let cb = 5_000e-12f64;
+    let r_pot = 1_000_000.0f64;
+    let ana_db = |vol: f64, freq: f64| -> f64 {
+        let u = (vol / 10.0).clamp(0.0, 1.0);
+        let t = (0.01 * 100.0f64.powf(u) - 0.01) / 0.99;
+        if t <= 1e-9 { return -120.0; }
+        if t >= 1.0 - 1e-9 { return 0.0; }
+        let ru = (1.0 - t) * r_pot;
+        let rd = t * r_pot;
+        let w = 2.0 * PI * freq;
+        let num = rd.hypot(w * rd * ru * cb);
+        let den = r_pot.hypot(w * rd * ru * cb);
+        20.0 * (num / den).max(1e-12).log10()
+    };
+
+    let measure_filter_db = |sr: f64, vol: f64, freq: f64| -> f64 {
+        let mut f = PlexiBrightCapFilter::new(sr);
+        f.update(vol, sr);
+        f.reset();
+        let n = (sr as usize).max(48_000);
+        let settle = n / 2;
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for i in 0..n {
+            let ph = 2.0 * PI * freq * (i as f64) / sr;
+            let y = f.process(ph.sin());
+            if i >= settle {
+                re += y * ph.cos();
+                im += y * ph.sin();
+            }
+        }
+        let mag = 2.0 * (re * re + im * im).sqrt() / ((n - settle) as f64);
+        20.0 * mag.max(1e-12).log10()
+    };
+
+    let mut prev_boost = f64::INFINITY;
+    for &vol in &[1.0f64, 2.0, 3.0, 5.0, 7.0, 9.0, 10.0] {
+        let dig_boost = measure_filter_db(96_000.0, vol, 5000.0) - measure_filter_db(96_000.0, vol, 100.0);
+        let ana_boost = ana_db(vol, 5000.0) - ana_db(vol, 100.0);
+        assert!(
+            (dig_boost - ana_boost).abs() <= 0.2,
+            "AUD-27 Plexi bright cap vol={} @ 96k: dig={:.3} vs ana={:.3}",
+            vol, dig_boost, ana_boost
+        );
+        assert!(
+            dig_boost < prev_boost,
+            "AUD-27 reforço deve cair monotonicamente: vol={} teve {:.3} vs anterior {:.3}",
+            vol, dig_boost, prev_boost
+        );
+        prev_boost = dig_boost;
+        if (vol - 10.0).abs() < 1e-6 {
+            assert!(dig_boost.abs() < 0.5, "AUD-27 em vol=10 reforço deve ser < 0.5 dB ({:.3})", dig_boost);
+        }
+    }
+    for &vol in &[2.0f64, 5.0, 10.0] {
+        let dig_48 = measure_filter_db(48_000.0, vol, 5000.0) - measure_filter_db(48_000.0, vol, 100.0);
+        let ana_48 = ana_db(vol, 5000.0) - ana_db(vol, 100.0);
+        assert!(
+            (dig_48 - ana_48).abs() <= 0.2,
+            "AUD-27 Plexi bright cap vol={} @ 48k: dig={:.3} vs ana={:.3}",
+            vol, dig_48, ana_48
+        );
+    }
+
+    // Integração no Plexi: Canal I segue a curva ±0.2 dB e Canal II não recebe bright cap
+    let measure_amp_tilt = |jack: AmpInputJack, vol1: f32, vol2: f32| -> f64 {
+        let sr = 48_000.0;
+        let run = |freq: f64| {
+            let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::BritPlexi1959);
+            amp.set_input_jack(jack);
+            amp.panel_mut().set_input_gain(vol1);
+            amp.panel_mut().set_volume_2(vol2);
+            measure_sine_gain_db(&mut amp, freq, 1e-5, sr)
+        };
+        run(5000.0) - run(100.0)
+    };
+    let ch1_v10 = measure_amp_tilt(AmpInputJack::High1, 10.0, 0.0);
+    let mut prev_rel = f64::INFINITY;
+    for &v in &[2.0f32, 5.0, 8.0, 10.0] {
+        let rel = measure_amp_tilt(AmpInputJack::High1, v, 0.0) - ch1_v10;
+        let expected = (ana_db(v as f64, 5000.0) - ana_db(v as f64, 100.0))
+            - (ana_db(10.0, 5000.0) - ana_db(10.0, 100.0));
+        assert!(
+            (rel - expected).abs() <= 0.2,
+            "AUD-27 Plexi integrado Vol I={}: obtido={:.3} vs esperado={:.3}",
+            v, rel, expected
+        );
+        assert!(rel <= prev_rel);
+        prev_rel = rel;
+    }
+
+    // Canal II (High2) é imune ao Volume I / bright cap do Canal I
+    let ch2_g2 = measure_amp_tilt(AmpInputJack::High2, 2.0, 5.0);
+    let ch2_g9 = measure_amp_tilt(AmpInputJack::High2, 9.0, 5.0);
+    assert!(
+        (ch2_g2 - ch2_g9).abs() < 0.05,
+        "AUD-27 Plexi Canal II deve ser imune ao bright cap de Vol I: diff={:.3} dB",
+        (ch2_g2 - ch2_g9).abs()
+    );
 }

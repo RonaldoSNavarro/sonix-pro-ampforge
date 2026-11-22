@@ -509,7 +509,10 @@ fn collect_aud_11_ramp_cases() -> Vec<(&'static str, bool, f32, Vec<f32>, Vec<f3
         ("amp.volume_2", 1000.0, AmpModelId::UkAc30TopBoost, |_| {}, |a, hi| {
             a.panel_mut().set_volume_2(if hi { 9.5 } else { 0.5 });
         }),
-        ("amp.cut", 4000.0, AmpModelId::UkAc30TopBoost, |_| {}, |a, hi| {
+        ("amp.cut", 4000.0, AmpModelId::UkAc30TopBoost, |a| {
+            // Desabilita sag da retificadora GZ34 (tau_rel = 80 ms) para isolar a rampa de 20 ms do controle Cut
+            a.set_sag_amount(0.0);
+        }, |a, hi| {
             a.panel_mut().set_cut(if hi { 10.0 } else { 0.0 });
         }),
         (

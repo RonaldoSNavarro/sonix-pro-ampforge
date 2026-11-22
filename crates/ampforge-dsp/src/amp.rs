@@ -468,6 +468,8 @@ struct AmpCore {
     miller_lp1: f64,
     miller_lp2: f64,
     ac30_cut_lp: f64,
+    jcm800_peaking: Jcm800PeakingNetwork,
+    plexi_bright_cap: PlexiBrightCapFilter,
     passive_tonestack: PassiveToneStack,
     presence_filter: BiquadFilter,
     voicing_filter1: BiquadFilter,
@@ -878,13 +880,172 @@ fn triode_stage_gain(ra_ohm: f64, rl_ohm: f64, rk_unbypassed_ohm: f64) -> f64 {
 // esquema primário RF-1F PENDENTE (em Modern, NFB global = 0, mantendo o controle de presence atuante em 4 kHz).
 const DECISAO_SONIX_RECTO_MODERN_PRESENCE: f64 = 1.0;
 
+// DECISAO_SONIX_AC30_BRILLIANT_HP_HZ (2026-11-22): capacitor de acoplamento 0,001 µF (1000 pF) em 1 MΩ (fc = 159,15 Hz)
+// no canal Brilliant do AC30/6; esquemas OS/056/OS/065 apresentam variantes de 500 pF a 1000 pF.
+const DECISAO_SONIX_AC30_BRILLIANT_HP_HZ: f64 = 159.15;
+
+// Fonte: Dr. Tube Marshall JMP/JCM800 2203 schematic (1981) & Rob Robinette
+// (https://robrobinette.com/How_the_Marshall_JCM800_Works.htm), Spec 055 §6.2/§7:
+// Divisor inter-estágio V1b -> V2a: R1 = 470 kΩ em paralelo com Cp = 470 pF, sobre Rl = 470 kΩ à terra.
+const JCM800_PEAKING_R1_OHM: f64 = 470_000.0;
+const JCM800_PEAKING_CP_F: f64 = 470e-12;
+const JCM800_PEAKING_RL_OHM: f64 = 470_000.0;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Jcm800PeakingNetwork {
+    b0: f64,
+    b1: f64,
+    a1: f64,
+    x1: f64,
+    y1: f64,
+    last_sr: f64,
+}
+
+impl Jcm800PeakingNetwork {
+    pub fn new(sr: f64) -> Self {
+        let mut s = Self {
+            b0: 1.0,
+            b1: 0.0,
+            a1: 0.0,
+            x1: 0.0,
+            y1: 0.0,
+            last_sr: -1.0,
+        };
+        s.update(sr);
+        s
+    }
+
+    pub fn update(&mut self, sr: f64) {
+        let fs = sr.max(8000.0);
+        if (fs - self.last_sr).abs() < 0.5 {
+            return;
+        }
+        self.last_sr = fs;
+        let r1 = JCM800_PEAKING_R1_OHM;
+        let rl = JCM800_PEAKING_RL_OHM;
+        let cp = JCM800_PEAKING_CP_F;
+        let rc = rl * r1 * cp;
+        let w_z = 1.0 / (r1 * cp);
+        let w_p = (rl + r1) / rc;
+        let w0 = (w_z * w_p).sqrt().min(0.45 * std::f64::consts::PI * fs);
+        let k = w0 / (w0 / (2.0 * fs)).tan();
+        let b0_s = rl;
+        let b1_s = rc;
+        let a0_s = rl + r1;
+        let a1_s = rc;
+        let den = a0_s + a1_s * k;
+        self.b0 = (b0_s + b1_s * k) / den;
+        self.b1 = (b0_s - b1_s * k) / den;
+        self.a1 = (a0_s - a1_s * k) / den;
+    }
+
+    pub fn reset(&mut self) {
+        self.x1 = 0.0;
+        self.y1 = 0.0;
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, x: f64) -> f64 {
+        let y = crate::denormal::flush_f64(self.b0 * x + self.b1 * self.x1 - self.a1 * self.y1);
+        self.x1 = crate::denormal::flush_f64(x);
+        self.y1 = y;
+        y
+    }
+}
+
+// Fonte: Marshall 1959HW Owners Manual (docs/ui-desktop/fontes/marshall-1959HW-owners-manual.pdf,
+// p. 5, Item 8 — Tonal Note 5, PRIMARY_OFFICIAL) & Dr. Tube 1969 SL/A:
+// Bright cap Cb = 0,005 µF (5000 pF) em paralelo ao segmento superior de Volume I (1 MΩ, taper 10% log).
+const PLEXI_VOLUME1_POT_OHM: f64 = 1_000_000.0;
+const PLEXI_BRIGHT_CAP_F: f64 = 5_000e-12;
+
+#[derive(Debug, Clone, Copy)]
+pub struct PlexiBrightCapFilter {
+    b0: f64,
+    b1: f64,
+    a1: f64,
+    x1: f64,
+    y1: f64,
+    last_vol: f64,
+    last_sr: f64,
+}
+
+impl PlexiBrightCapFilter {
+    pub fn new(sr: f64) -> Self {
+        let mut s = Self {
+            b0: 1.0,
+            b1: 0.0,
+            a1: 0.0,
+            x1: 0.0,
+            y1: 0.0,
+            last_vol: -1.0,
+            last_sr: -1.0,
+        };
+        s.update(5.0, sr);
+        s
+    }
+
+    pub fn update(&mut self, vol_0_to_10: f64, sr: f64) {
+        let fs = sr.max(8000.0);
+        let u_vol = vol_0_to_10.clamp(0.0, 10.0);
+        if (u_vol - self.last_vol).abs() < 1e-6 && (fs - self.last_sr).abs() < 0.5 {
+            return;
+        }
+        self.last_vol = u_vol;
+        self.last_sr = fs;
+
+        let u = u_vol / 10.0;
+        let t = (0.01 * 100.0f64.powf(u) - 0.01) / 0.99;
+        if t <= 1e-9 {
+            self.b0 = 0.0;
+            self.b1 = 0.0;
+            self.a1 = 0.0;
+            return;
+        }
+        if t >= 1.0 - 1e-9 {
+            self.b0 = 1.0;
+            self.b1 = 0.0;
+            self.a1 = 0.0;
+            return;
+        }
+        let r_u = (1.0 - t) * PLEXI_VOLUME1_POT_OHM;
+        let r_d = t * PLEXI_VOLUME1_POT_OHM;
+        let rc = r_d * r_u * PLEXI_BRIGHT_CAP_F;
+        let w_z = 1.0 / (r_u * PLEXI_BRIGHT_CAP_F);
+        let w_p = PLEXI_VOLUME1_POT_OHM / rc;
+        let w0 = (w_z * w_p).sqrt().min(0.45 * std::f64::consts::PI * fs);
+        let k = w0 / (w0 / (2.0 * fs)).tan();
+        let b0_s = r_d;
+        let b1_s = rc;
+        let a0_s = PLEXI_VOLUME1_POT_OHM;
+        let a1_s = rc;
+        let den = a0_s + a1_s * k;
+        self.b0 = (b0_s + b1_s * k) / den;
+        self.b1 = (b0_s - b1_s * k) / den;
+        self.a1 = (a0_s - a1_s * k) / den;
+    }
+
+    pub fn reset(&mut self) {
+        self.x1 = 0.0;
+        self.y1 = 0.0;
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, x: f64) -> f64 {
+        let y = crate::denormal::flush_f64(self.b0 * x + self.b1 * self.x1 - self.a1 * self.y1);
+        self.x1 = crate::denormal::flush_f64(x);
+        self.y1 = y;
+        y
+    }
+}
+
 impl AmpCore {
     pub fn create_voicing_filters(model: AmpModelId, sr: f64) -> (BiquadFilter, BiquadFilter) {
         // Curvas físicas documentadas em docs/amps/voicing-fontes.md e esquemas elétricos originais
         match model {
             AmpModelId::BritJcm800_2203 => (
-                BiquadFilter::peaking(1650.0, 3.8, 1.15, sr),
-                BiquadFilter::low_shelf(180.0, -4.2, sr),
+                BiquadFilter::identity(),
+                BiquadFilter::identity(),
             ),
             AmpModelId::BritPlexi1959 => (
                 BiquadFilter::peaking(2500.0, 2.6, 0.90, sr),
@@ -895,11 +1056,11 @@ impl AmpCore {
                 BiquadFilter::identity(),
             ),
             AmpModelId::CaliDualRectoRevF => (
-                BiquadFilter::peaking(85.0, 3.8, 1.4, sr),
-                BiquadFilter::peaking(750.0, -3.5, 1.1, sr),
+                BiquadFilter::peaking(100.0, 4.5, 1.0, sr),
+                BiquadFilter::peaking(550.0, -6.0, 0.8, sr),
             ),
             AmpModelId::UkAc30TopBoost => (
-                BiquadFilter::peaking(3300.0, 3.5, 1.1, sr),
+                BiquadFilter::peaking(950.0, 3.5, 1.0, sr),
                 BiquadFilter::low_shelf(150.0, -3.5, sr),
             ),
         }
@@ -922,6 +1083,8 @@ impl AmpCore {
             miller_lp1: 0.0,
             miller_lp2: 0.0,
             ac30_cut_lp: 0.0,
+            jcm800_peaking: Jcm800PeakingNetwork::new(sr as f64),
+            plexi_bright_cap: PlexiBrightCapFilter::new(sr as f64),
             passive_tonestack: PassiveToneStack::new(),
             presence_filter: BiquadFilter::default(),
             voicing_filter1: v1,
@@ -949,7 +1112,7 @@ impl AmpCore {
             sm_presence: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
             sm_master: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
             sm_volume_2: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
-            sm_cut: crate::smoother::ParamSmoother::new(48000.0, 0.020, 0.0),
+            sm_cut: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
             sm_speaker_res_hz: crate::smoother::ParamSmoother::new(48000.0, 0.020, 98.0),
             has_processed: false,
         };
@@ -978,9 +1141,13 @@ impl AmpCore {
         self.miller_lp1 = 0.0;
         self.miller_lp2 = 0.0;
         self.ac30_cut_lp = 0.0;
+        self.jcm800_peaking.reset();
+        self.plexi_bright_cap.reset();
         self.passive_tonestack = PassiveToneStack::new();
         self.presence_filter = BiquadFilter::default();
         let sr = (self.sample_rate as f64) * (self.oversampling_factor.max(2) as f64);
+        self.jcm800_peaking.update(sr);
+        self.plexi_bright_cap.update(self.panel.input_gain as f64, sr);
         let (v1, v2) = Self::create_voicing_filters(self.model_id, sr);
         self.voicing_filter1 = v1;
         self.voicing_filter2 = v2;
@@ -1127,7 +1294,8 @@ impl AmpCore {
             ToneStackTopology::MarshallCathodeFollower | ToneStackTopology::Model => 3.5,
             ToneStackTopology::FenderTmbMidScoop => 5.4,
             ToneStackTopology::VoxTopBoost => 4.2,
-            ToneStackTopology::RectoPostGain | ToneStackTopology::MesaMarkPreGain => 3.5,
+            ToneStackTopology::RectoPostGain => 1.2,
+            ToneStackTopology::MesaMarkPreGain => 3.5,
             ToneStackTopology::PassiveJamesBaxandall => 2.6,
         }
     }
@@ -1220,6 +1388,8 @@ impl AmpCore {
             sm_treble,
             sr,
         );
+        self.jcm800_peaking.update(sr);
+        self.plexi_bright_cap.update(self.panel.input_gain as f64, sr);
 
         // Effective NFB: Dual Rectifier Modern mode disconnects global NFB per Rev-F schematic
         let eff_nfb = if self.model_id == AmpModelId::CaliDualRectoRevF
@@ -1291,11 +1461,10 @@ impl AmpCore {
             AmpChannelVoicing::HighLead => 2.5,
         };
 
-        // Bright switch physical circuit + Plexi 5000pF bright cap on Vol I
-        let bright_effective_boost = if self.panel.bright_switch || self.model_id == AmpModelId::BritPlexi1959 {
+        // Bright switch físico (Twin AB763; o bright cap 5000 pF do Plexi atua exclusivamente no ramo Volume I)
+        let bright_effective_boost = if self.panel.bright_switch {
             let pot_ratio = (10.0 - self.panel.input_gain) / 10.0;
-            let base = if self.panel.bright_switch { 0.95 } else { 0.35 };
-            (pot_ratio as f64) * base
+            (pot_ratio as f64) * 0.95
         } else {
             0.0
         };
@@ -1325,11 +1494,17 @@ impl AmpCore {
             1.0
         };
 
+        let is_plexi_jumpered = self.panel.jumpered || self.panel.input_jack == AmpInputJack::Jumpered;
+        let plexi_ch1_on = is_plexi_jumpered || !self.panel.input_jack.is_normal_channel();
+        let plexi_ch2_on = is_plexi_jumpered || self.panel.input_jack.is_normal_channel();
+
         let calc_power_drive = |model: AmpModelId, gain: f32, vol2: f32, master: f32, ch_mode: AmpChannelMode| -> f64 {
             match model {
                 AmpModelId::BritPlexi1959 => {
-                    // Plexi 1959SLP has no Master Volume; power drive comes from Vol I & Vol II
-                    (1.0 + (gain as f64 / 10.0) * 18.0 + (vol2 as f64 / 10.0) * 6.0) / power_tube_headroom
+                    // Plexi 1959SLP has no Master Volume; power drive comes from Vol I & Vol II of active channel(s)
+                    let g1_drive = if plexi_ch1_on { (gain as f64 / 10.0) * 18.0 } else { 0.0 };
+                    let g2_drive = if plexi_ch2_on { (vol2 as f64 / 10.0) * 6.0 } else { 0.0 };
+                    (1.0 + g1_drive + g2_drive) / power_tube_headroom
                 }
                 AmpModelId::UsTwinBlackface65 => {
                     (0.55 + (gain as f64 / 10.0) * 1.65) / power_tube_headroom
@@ -1341,7 +1516,7 @@ impl AmpCore {
                         AmpChannelMode::Vintage => 1.35,
                         AmpChannelMode::Modern => 1.75,
                     };
-                    (0.02 + master_pot.powi(3) * 21.3 * m_mult) / power_tube_headroom
+                    (0.02 + master_pot.powi(3) * 3.0 * m_mult) / power_tube_headroom
                 }
                 AmpModelId::UkAc30TopBoost => {
                     // AC30 Top Boost clássico (JMI OS/010 / OS/056) não possui Master Volume:
@@ -1507,14 +1682,16 @@ impl AmpCore {
 
                 let v_pre_out = match self.model_id {
                     AmpModelId::BritPlexi1959 => {
-                        let is_jumpered = self.panel.jumpered || self.panel.input_jack == AmpInputJack::Jumpered;
-                        let ch1_on = is_jumpered || !self.panel.input_jack.is_normal_channel();
-                        let ch2_on = is_jumpered || self.panel.input_jack.is_normal_channel();
+                        let ch1_on = plexi_ch1_on;
+                        let ch2_on = plexi_ch2_on;
 
                         let ch1_sig = if ch1_on {
-                            let g1 = (s * pre_gain_lin * lead_mult * tube_gain) / v1_headroom;
-                            // Canal I High Treble do Super Lead mantem corpo nos graves ao somar no V2a
-                            triode_adaa1(g1, &mut self.adaa_pre_prev, kp_base, kn_base) * v1_headroom
+                            let v1b_drive = triode_stage_gain(100_000.0, 1_000_000.0, 0.0)
+                                / DECISAO_SONIX_PREAMP_STAGE_NORM;
+                            let g1 = (s * v1b_drive * lead_mult * tube_gain) / v1_headroom;
+                            // Canal I High Treble do Super Lead soma após Volume I (1 MΩ) || bright cap 5000 pF (AUD-27)
+                            let v1b_out = triode_adaa1(g1, &mut self.adaa_pre_prev, kp_base, kn_base) * v1_headroom;
+                            self.plexi_bright_cap.process(v1b_out)
                         } else {
                             0.0
                         };
@@ -1528,7 +1705,8 @@ impl AmpCore {
                         // resistor de mixagem de 470k do Canal I é bypassado por 470pF acima de ~720 Hz + V2a (Ra=100k, Rl=1M, Rk=820Ω -> gain/norm = 3.848)
                         let v2a_gain = triode_stage_gain(100_000.0, 1_000_000.0, 820.0)
                             / DECISAO_SONIX_PREAMP_STAGE_NORM;
-                        let sum_v2 = one_pole_hpf(&mut self.interstage_hp1, ch1_sig + ch2_sig, alpha_hp_loose);
+                        // Divisor passivo de mistura 470 kΩ / 470 kΩ entre Canal I e Canal II antes de V2a (Spec 054 §7)
+                        let sum_v2 = one_pole_hpf(&mut self.interstage_hp1, 0.5 * (ch1_sig + ch2_sig), alpha_hp_loose);
                         triode_adaa1((sum_v2 * v2a_gain) / v1_headroom, &mut self.adaa_s3_prev, kp_base, kn_base)
                             * v1_headroom
                     }
@@ -1562,10 +1740,12 @@ impl AmpCore {
                         let kn_cold = ((1.0 - 2.6 * asym) * ef86_knee).max(0.35);
                         let v1b = triode_adaa1((v1b_in * v1b_gain) / v1_headroom, &mut self.adaa_s2_prev, kp_cold, kn_cold)
                             * v1_headroom;
-                        // Divisor 470k + capacitância de Miller entre V1b e V2a (~7.0 kHz) antes do cathode follower
+                        // Rede inter-estágio 470k||470pF sobre 470k à terra antes de V2a (AUD-27)
+                        let v1b_peaked = self.jcm800_peaking.process(v1b);
+                        // Capacitância de Miller entre V1b e V2a (~7.0 kHz) antes do cathode follower
                         let alpha_miller_jcm = (2.0 * std::f64::consts::PI * 7000.0 / sr).clamp(0.01, 0.85);
                         self.miller_lp1 = crate::denormal::flush_f64(
-                            self.miller_lp1 + alpha_miller_jcm * (v1b - self.miller_lp1),
+                            self.miller_lp1 + alpha_miller_jcm * (v1b_peaked - self.miller_lp1),
                         );
                         // V2a + V2b Cathode Follower
                         let v2_in = one_pole_hpf(&mut self.interstage_hp2, self.miller_lp1, alpha_hp_loose);
@@ -1583,12 +1763,12 @@ impl AmpCore {
                         triode_adaa1(g_v1b, &mut self.adaa_s2_prev, kp_base * 0.82, kn_base * 0.90) * twin_headroom
                     }
                     AmpModelId::CaliDualRectoRevF => {
-                        let (stage_drive, n_stages, use_tight_hp) = match self.panel.channel_mode {
-                            AmpChannelMode::Clean => (0.65, 2usize, false),
-                            AmpChannelMode::Vintage => (2.15, 4usize, false),
-                            AmpChannelMode::Modern => (3.10, 4usize, true),
+                        let (stage_drive, n_stages) = match self.panel.channel_mode {
+                            AmpChannelMode::Clean => (0.65, 2usize),
+                            AmpChannelMode::Vintage => (2.15, 4usize),
+                            AmpChannelMode::Modern => (3.10, 4usize),
                         };
-                        let hp_a = if use_tight_hp { alpha_hp_tight } else { alpha_hp_loose };
+                        let hp_a = alpha_hp_loose;
                         let g1 = (s * pre_gain_lin * lead_mult * stage_drive * tube_gain) / v1_headroom;
                         let s1 = triode_adaa1(g1, &mut self.adaa_pre_prev, kp_base, kn_base) * v1_headroom;
                         let hp1 = one_pole_hpf(&mut self.interstage_hp1, s1, hp_a);
@@ -1634,7 +1814,10 @@ impl AmpCore {
                             // Fonte: JMI AC30 Top Boost OS/010 & OS/056 (V2a: Ra=100k, Rl=220k, Rk=1.5k -> gain/norm = 2.431)
                             let tb_v2_gain = triode_stage_gain(100_000.0, 220_000.0, 1_500.0)
                                 / DECISAO_SONIX_PREAMP_STAGE_NORM;
-                            let hp1 = one_pole_hpf(&mut self.interstage_hp1, v1, alpha_hp_loose);
+                            let alpha_ac30_brilliant = (1.0
+                                - (-2.0 * std::f64::consts::PI * DECISAO_SONIX_AC30_BRILLIANT_HP_HZ / sr).exp())
+                            .clamp(0.0001, 0.5);
+                            let hp1 = one_pole_hpf(&mut self.interstage_hp1, v1, alpha_ac30_brilliant);
                             triode_adaa1((hp1 * tb_v2_gain) / v1_headroom, &mut self.adaa_s2_prev, kp_base * 1.1, kn_base * 0.88)
                                 * v1_headroom
                         }
@@ -1702,8 +1885,8 @@ impl AmpCore {
 
                 // NFB Linearization on power stage distortion (Modern Dual Rect / AC30 use eff_nfb=0)
                 let nfb_linearization = 1.0 / (1.0 + (eff_nfb / 10.0) * 1.15);
-                let power_stage_dist = power_sat_raw - power_in_raw;
-                let power_sat = power_in_raw + power_stage_dist * nfb_linearization;
+                let soft_rail = power_in_raw / (1.0 + power_in_raw.powi(4)).powf(0.25);
+                let power_sat = soft_rail + (power_sat_raw - soft_rail) * nfb_linearization;
 
                 // 5. Speaker Resonance (NFB + Secondary Impedance) + Presence
                 let mut power_out = self.speaker_res_filter.process(power_sat * 0.30 * spongy_power_atten);
