@@ -121,6 +121,29 @@ impl AmpInputJack {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ac30VibTremMode {
+    Vibrato,
+    Tremolo,
+}
+
+impl Ac30VibTremMode {
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s {
+            "vibrato" => Some(Self::Vibrato),
+            "tremolo" => Some(Self::Tremolo),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vibrato => "vibrato",
+            Self::Tremolo => "tremolo",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AmpChannelMode {
     Clean,
     Vintage,
@@ -183,6 +206,7 @@ pub struct AmpFrontPanel {
     pub reverb: f32,
     pub vibrato_speed: f32,
     pub vibrato_depth: f32,
+    pub ac30_vib_trem_mode: Ac30VibTremMode,
     pub power: bool,
     pub standby: bool,
     pub jumpered: bool,
@@ -209,6 +233,7 @@ impl Default for AmpFrontPanel {
             reverb: 0.0,
             vibrato_speed: 4.0,
             vibrato_depth: 0.0,
+            ac30_vib_trem_mode: Ac30VibTremMode::Vibrato,
             power: true,
             standby: false,
             jumpered: false,
@@ -275,6 +300,14 @@ impl AmpFrontPanel {
 
     pub fn set_vibrato_depth(&mut self, val: f32) {
         self.vibrato_depth = Self::sanitize_val(val, 0.0, 10.0, 0.0);
+    }
+
+    pub fn set_ac30_vib_trem_mode(&mut self, mode: Ac30VibTremMode) {
+        self.ac30_vib_trem_mode = mode;
+    }
+
+    pub fn ac30_vib_trem_mode(&self) -> Ac30VibTremMode {
+        self.ac30_vib_trem_mode
     }
 }
 
@@ -491,6 +524,8 @@ struct AmpCore {
     standby_env: f64,
     smooth_tube_gain: f64,
     spring_reverb: SpringReverbTank,
+    ac30_vib_buf: [f64; 512],
+    ac30_vib_pos: usize,
     sm_bass: crate::smoother::ParamSmoother,
     sm_middle: crate::smoother::ParamSmoother,
     sm_treble: crate::smoother::ParamSmoother,
@@ -1106,6 +1141,8 @@ impl AmpCore {
             standby_env: 1.0,
             smooth_tube_gain: 1.0,
             spring_reverb: SpringReverbTank::default(),
+            ac30_vib_buf: [0.0; 512],
+            ac30_vib_pos: 0,
             sm_bass: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
             sm_middle: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
             sm_treble: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
@@ -1165,6 +1202,8 @@ impl AmpCore {
         self.smooth_tube_gain = 1.0;
         self.spring_reverb.reset();
         self.spring_reverb.set_sample_rate(self.sample_rate);
+        self.ac30_vib_buf.fill(0.0);
+        self.ac30_vib_pos = 0;
         self.set_smoother_sample_rate(self.sample_rate);
         self.sm_bass.reset(self.panel.bass as f64);
         self.sm_middle.reset(self.panel.middle as f64);
@@ -1594,10 +1633,16 @@ impl AmpCore {
         let lfo_inc = (2.0 * std::f64::consts::PI * lfo_hz) / fs_base.max(1.0);
         let is_twin_vibrato_ch = self.model_id == AmpModelId::UsTwinBlackface65
             && !self.panel.input_jack.is_normal_channel();
-        let is_ac30_vibrato = self.model_id == AmpModelId::UkAc30TopBoost
+        let is_ac30_vibtrem_ch = self.model_id == AmpModelId::UkAc30TopBoost
+            && self.panel.input_jack == AmpInputJack::Vibrato;
+        let is_ac30_trem = is_ac30_vibtrem_ch
+            && self.panel.ac30_vib_trem_mode == Ac30VibTremMode::Tremolo
             && self.panel.vibrato_depth > 0.01;
-        let trem_depth = if is_twin_vibrato_ch || is_ac30_vibrato {
-            (self.panel.vibrato_depth as f64 / 10.0).clamp(0.0, 1.0) * 0.65
+        let is_ac30_vib = is_ac30_vibtrem_ch
+            && self.panel.ac30_vib_trem_mode == Ac30VibTremMode::Vibrato
+            && self.panel.vibrato_depth > 0.01;
+        let trem_depth = if is_twin_vibrato_ch || is_ac30_trem {
+            (self.panel.vibrato_depth as f64 / 10.0).clamp(0.0, 1.0) * 0.70
         } else {
             0.0
         };
@@ -1885,7 +1930,7 @@ impl AmpCore {
 
                 // NFB Linearization on power stage distortion (Modern Dual Rect / AC30 use eff_nfb=0)
                 let nfb_linearization = 1.0 / (1.0 + (eff_nfb / 10.0) * 1.15);
-                let soft_rail = power_in_raw / (1.0 + power_in_raw.powi(4)).powf(0.25);
+                let soft_rail = (power_in_raw * 0.6).tanh() / 0.6;
                 let power_sat = soft_rail + (power_sat_raw - soft_rail) * nfb_linearization;
 
                 // 5. Speaker Resonance (NFB + Secondary Impedance) + Presence
@@ -1944,6 +1989,19 @@ impl AmpCore {
 
             if sub_count > 0 {
                 self.interstage_hp3 = crate::denormal::flush_f64(rev_feed_acc / (sub_count as f64));
+            }
+
+            if is_ac30_vib {
+                self.ac30_vib_buf[self.ac30_vib_pos] = crate::denormal::flush_f64(last_sample);
+                let depth_norm = (self.panel.vibrato_depth as f64 / 10.0).clamp(0.0, 1.0);
+                let d_ms = 1.5 + 0.5 * depth_norm * self.lfo_phase.sin();
+                let d_samp = (d_ms * 0.001 * fs_base).clamp(0.0, 510.0);
+                let r_pos = (self.ac30_vib_pos as f64 + 512.0 - d_samp) % 512.0;
+                let idx0 = (r_pos.floor() as usize) & 511;
+                let idx1 = (idx0 + 1) & 511;
+                let frac = r_pos - r_pos.floor();
+                last_sample = self.ac30_vib_buf[idx0] * (1.0 - frac) + self.ac30_vib_buf[idx1] * frac;
+                self.ac30_vib_pos = (self.ac30_vib_pos + 1) & 511;
             }
 
             let out_sample = (last_sample.clamp(-0.999, 0.999) * out_lin * self.standby_env).clamp(-1.0, 1.0);

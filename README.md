@@ -54,7 +54,7 @@ Modelagem rigorosa dos esquemas elétricos originais:
 - **Noise Gate de Estúdio:** Histerese anti-chatter, tempo de Hold, filtragem de sidechain e chaveamento com detecção direta no sinal limpo (DI).
 - **Roland RE-201 Space Echo:** Simulação fiel do mecanismo de fita de 3 cabeças de reprodução, saturação analógica de fita, mola interna e 12 modos de chaveamento originais.
 - **Reverbs Analógicos e Digitais:** Tube Spring (mola valvulada), Studio Vintage Plate, Chamber, Concert Hall e Shimmer granular (+12 semitons).
-- **Modulações:** Boss CE-2 BBD Chorus, MXR Phase 90, Flanger clássico com feedback, Tremolo e Rotary Speaker.
+- **Modulações:** Boss CE-2 BBD Chorus, Chorus 3 vozes (mono), MXR Phase 90, Through-Zero Flanger com feedback, Tremolo Óptico LDR (ataque 5 ms / soltura 60 ms) e Rotary Speaker dual-rotor (LR4 800 Hz).
 - **Pitch & Afinador:** Afinador estroboscópico e polifônico de alta precisão (algoritmo YIN 40 Hz – 1,4 kHz) e bloco de Harmonizador Diatônico inteligente.
 
 ### 5. Gabinete Virtual & Convolução de IR

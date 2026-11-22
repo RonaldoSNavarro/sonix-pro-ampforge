@@ -73,6 +73,13 @@
       ]
     },
     {
+      "key": "amp_1.vib_trem_mode",
+      "options": [
+        "vibrato",
+        "tremolo"
+      ]
+    },
+    {
       "key": "amp_1.preamp_tube",
       "options": [
         "12ax7",

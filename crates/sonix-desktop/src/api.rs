@@ -724,7 +724,7 @@ pub fn dispatch(
                                 {"id": "comp_2", "col": 2, "name": "FET 1176 Comp", "enabled": comp_en},
                                 {"id": "amp_2", "col": 3, "name": amp_display_name(&amp2_model), "enabled": amp2_en},
                                 {"id": "cab_2", "col": 4, "name": cab_display_name(&cab2_speaker), "enabled": cab2_en},
-                                {"id": "mod_2", "col": 5, "name": "Tri-Chorus", "enabled": mod_en}
+                                {"id": "mod_2", "col": 5, "name": "Chorus 3 vozes (mono)", "enabled": mod_en}
                             ]
                         }
                     ]

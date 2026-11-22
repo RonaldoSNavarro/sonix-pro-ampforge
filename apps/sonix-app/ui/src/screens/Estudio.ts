@@ -43,7 +43,7 @@ const AMP2_MINI_TITLES: Record<string, string> = {
 
 const MOD_MODEL_MAP: Record<string, { pedal: PedalModelId; label: string }> = {
   AnalogBbdChorus: { pedal: 'ce2', label: 'Chorus-2' },
-  StereoTriChorus: { pedal: 'trichorus', label: 'Tri-Chorus' },
+  StereoTriChorus: { pedal: 'trichorus', label: 'Chorus 3 vozes (mono)' },
   ThroughZeroFlanger: { pedal: 'flanger', label: 'TZ Flanger' },
   Orange90Phaser: { pedal: 'phaser90', label: 'Phaser 90' },
   OpticalBiasTremolo: { pedal: 'tremolo', label: 'Tremolo' },
@@ -297,7 +297,7 @@ function renderInspectorBody(store: AppStore, container: HTMLElement): void {
   if (blk === 'chorus') {
     const modModels: [string, string][] = [
       ['AnalogBbdChorus', 'CE-2 Chorus'],
-      ['StereoTriChorus', 'Tri-Chorus'],
+      ['StereoTriChorus', 'Chorus 3 vozes (mono)'],
       ['ThroughZeroFlanger', 'TZ Flanger'],
       ['Orange90Phaser', 'Phaser 90'],
       ['OpticalBiasTremolo', 'Tremolo'],

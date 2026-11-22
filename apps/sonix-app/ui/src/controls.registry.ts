@@ -457,7 +457,17 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     kind: 'knob',
     ...paramMeta('amp_1.vibrato_depth'),
     uiMappingFrom: 'AmpHead vibInt / vibDepth -> amp_1.vibrato_depth',
-    hardwareBehavior: 'Profundidade da modulação LFO no estágio de saída/cátodo.',
+    hardwareBehavior: 'Profundidade da modulação LFO no canal Vib-Trem (Twin Vibrato / AC30 Vib-Trem).',
+    pendingSpec: null,
+  },
+  {
+    id: 'amp.vib_trem_mode',
+    screen: 'main',
+    group: 'amp_ac30_tb',
+    label: 'Modo Vib/Trem (AC30)',
+    kind: 'select',
+    ...paramMeta('amp_1.vib_trem_mode'),
+    hardwareBehavior: 'Alterna entre Vibrato (modulação de altura por atraso) e Tremolo (AM) no canal Vib-Trem do AC30.',
     pendingSpec: null,
   },
 
@@ -778,7 +788,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     label: 'Modelo Modulação',
     kind: 'select',
     ...paramMeta('mod_2.model'),
-    hardwareBehavior: 'Seleciona entre Chorus BBD, Tri-Chorus, Flanger TZ, Phaser 90, Tremolo Óptico, Univibe e Rotary.',
+    hardwareBehavior: 'Seleciona entre Chorus BBD, Chorus 3 vozes (mono), Flanger TZ, Phaser 90, Tremolo Óptico, Univibe e Rotary.',
     pendingSpec: null,
   },
   {

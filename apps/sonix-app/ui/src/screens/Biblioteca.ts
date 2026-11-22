@@ -109,10 +109,10 @@ const PEDAL_CATALOG: CatalogEntry<PedalModelId | RackModelId>[] = [
   },
   {
     id: 'trichorus',
-    name: 'Tri-Chorus Estéreo 3 Vozes',
-    specRef: '3 Linhas BBD Defasadas (120°)',
+    name: 'Chorus 3 vozes (mono)',
+    specRef: '3 Linhas BBD Defasadas (120°) em Mono',
     sourceStatus: 'fonte: verificada',
-    notes: 'Modulação tridimensional clássica de rack de estúdio dos anos 80.',
+    notes: 'Modulação de 3 vozes somadas em mono no barramento atual do motor DSP.',
   },
   {
     id: 'flanger',

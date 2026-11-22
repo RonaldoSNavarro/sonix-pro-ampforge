@@ -712,6 +712,19 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
     pushKnob('amp.vibrato_speed', 'amp_1.vibrato_speed', 'VIB SPEED', 4.0);
     pushKnob('amp.vibrato_depth', 'amp_1.vibrato_depth', 'VIB DEPTH', 3.5);
 
+    const vibMode = strParam(store, 'amp_1.vib_trem_mode', 'vibrato');
+    const vtBtn = document.createElement('button');
+    vtBtn.type = 'button';
+    vtBtn.className = 'm-chip';
+    vtBtn.dataset.controlId = 'amp.vib_trem_mode';
+    vtBtn.setAttribute('aria-pressed', vibMode === 'vibrato' ? 'true' : 'false');
+    vtBtn.textContent = vibMode === 'vibrato' ? 'VIB' : 'TREM';
+    vtBtn.title = 'Alternar Vibrato (altura) / Tremolo (AM) no canal Vib-Trem';
+    vtBtn.addEventListener('click', () => {
+      void store.setControl('amp.vib_trem_mode', vibMode === 'vibrato' ? 'tremolo' : 'vibrato');
+    });
+    panel.appendChild(vtBtn);
+
     panel.appendChild(createJewelLight(isLit, 'Pilot Lamp AC30'));
     panel.appendChild(
       createRockerSwitch('amp.power', 'POWER', power, '#ff3a28', () => {

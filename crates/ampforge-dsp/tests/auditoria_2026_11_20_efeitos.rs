@@ -1,7 +1,13 @@
 //! Testes de contrato da auditoria 2026-11-20 (Fase 5 — Efeitos).
 
+use ampforge_dsp::amp::{Ac30VibTremMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
 use ampforge_dsp::fx::delay::{DelayModel, DelayProcessor};
 use ampforge_dsp::fx::drive::{DECISAO_SONIX_LM308_GBW, DriveModel, DriveProcessor};
+use ampforge_dsp::fx::modulation::{
+    DECISAO_SONIX_LDR_ATTACK_MS, DECISAO_SONIX_LDR_RELEASE_MS, DECISAO_SONIX_ROTARY_DRUM_FAST_HZ,
+    DECISAO_SONIX_ROTARY_DRUM_SLOW_HZ, DECISAO_SONIX_ROTARY_HORN_FAST_HZ,
+    DECISAO_SONIX_ROTARY_HORN_SLOW_HZ, ModModel, ModulationProcessor,
+};
 use ampforge_dsp::regua::{cents, ganho_db};
 use ampforge_dsp::unidades::VOLTS_POR_FS;
 
@@ -472,5 +478,313 @@ fn aud_29_limiar_em_volts() {
     assert!(
         err_db.abs() <= 2.0,
         "AUD-29: início do clip (THD=1%) em D=0 esperado a ±2 dB de {target_amp:.5} FS, medido {measured_amp:.5} FS ({err_db:+.2} dB)"
+    );
+}
+
+fn measure_am_rate_hz(buf: &[f32], sr: f32) -> f32 {
+    let win = (0.015 * sr) as usize; // 15 ms RMS window
+    let step = (0.002 * sr) as usize; // 2 ms hop
+    let mut env = Vec::new();
+    let mut i = 0;
+    while i + win <= buf.len() {
+        env.push(rms(&buf[i..i + win]));
+        i += step;
+    }
+    let min_e = env.iter().copied().fold(f32::MAX, f32::min);
+    let max_e = env.iter().copied().fold(0.0f32, f32::max);
+    let mid = 0.5 * (min_e + max_e);
+    let mut crossings = Vec::new();
+    for k in 1..env.len() {
+        if env[k - 1] < mid && env[k] >= mid {
+            let frac = (mid - env[k - 1]) / (env[k] - env[k - 1]).max(1e-9);
+            crossings.push((k as f32 - 1.0 + frac) * (step as f32 / sr));
+        }
+    }
+    assert!(
+        crossings.len() >= 2,
+        "AUD-30: cruzamentos insuficientes para medir taxa AM ({})",
+        crossings.len()
+    );
+    let mut periods = Vec::new();
+    for w in crossings.windows(2) {
+        periods.push(w[1] - w[0]);
+    }
+    let avg_period = periods.iter().sum::<f32>() / periods.len() as f32;
+    1.0 / avg_period
+}
+
+fn measure_freq_zero_crossings_hz(buf: &[f32], sr: f32, win_samples: usize) -> Vec<f64> {
+    let mut freqs = Vec::new();
+    let mut start = 0usize;
+    while start + win_samples <= buf.len() {
+        let seg = &buf[start..start + win_samples];
+        let mut times = Vec::new();
+        for k in 1..seg.len() {
+            if seg[k - 1] <= 0.0 && seg[k] > 0.0 {
+                let frac = -seg[k - 1] as f64 / (seg[k] as f64 - seg[k - 1] as f64).max(1e-12);
+                times.push((k as f64 - 1.0 + frac) / sr as f64);
+            }
+        }
+        if times.len() >= 3 {
+            let total_t = times[times.len() - 1] - times[0];
+            let cycles = (times.len() - 1) as f64;
+            freqs.push(cycles / total_t);
+        }
+        start += win_samples / 2;
+    }
+    freqs
+}
+
+#[test]
+fn aud_30_tzf_cancela_no_cruzamento() {
+    let sr = 48_000.0f32;
+    let total = (sr * 11.0) as usize; // cruza 1,0 ms em t = 10 s (LFO 0,05 Hz)
+    let mut seed: u64 = 0x1234_5678_9ABC_DEF0;
+    let mut noise = Vec::with_capacity(total);
+    for _ in 0..total {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let u = (((seed >> 33) as f32) / (u32::MAX as f32)) * 2.0 - 1.0;
+        noise.push(u * 0.4);
+    }
+
+    let mut m = ModulationProcessor::new(ModModel::ThroughZeroFlanger);
+    m.set_sample_rate(sr);
+    m.set_rate_hz(0.05);
+    m.set_depth(10.0);
+    m.set_mix_pct(50.0);
+    m.set_feedback(0.0);
+    m.set_tzf_inverted_polarity(true);
+
+    let mut out = vec![0.0f32; total];
+    m.process(&noise, &mut out);
+
+    let win = (0.002 * sr) as usize; // 2 ms = 96 amostras
+    let mut min_ratio_db = f32::INFINITY;
+    for s in (4_800..total - win).step_by(24) {
+        let r_in = rms(&noise[s..s + win]).max(1e-9);
+        let r_out = rms(&out[s..s + win]).max(1e-12);
+        let db = 20.0 * (r_out / r_in).log10();
+        if db < min_ratio_db {
+            min_ratio_db = db;
+        }
+    }
+    assert!(
+        min_ratio_db <= -30.0,
+        "AUD-30 TZF: janela de 2 ms com menor RMS deveria cancelar <= -30 dB, obtido {min_ratio_db:.2} dB"
+    );
+}
+
+#[test]
+fn aud_30_rotary_dois_rotores() {
+    let sr = 48_000.0f32;
+    let len = (sr * 6.0) as usize;
+    let sine_200: Vec<f32> = (0..len)
+        .map(|i| 0.4 * (2.0 * std::f32::consts::PI * 200.0 * i as f32 / sr).sin())
+        .collect();
+    let sine_3k: Vec<f32> = (0..len)
+        .map(|i| 0.4 * (2.0 * std::f32::consts::PI * 3000.0 * i as f32 / sr).sin())
+        .collect();
+
+    // Velocidade lenta
+    let mut r_drum = ModulationProcessor::new(ModModel::RotarySpeaker);
+    r_drum.set_sample_rate(sr);
+    r_drum.set_depth(10.0);
+    r_drum.set_mix_pct(100.0);
+    r_drum.set_rotary_fast(false);
+    let mut out_200 = vec![0.0f32; len];
+    r_drum.process(&sine_200, &mut out_200);
+    let am_200_slow = measure_am_rate_hz(&out_200[24_000..], sr);
+    let err_drum_slow = ((am_200_slow - DECISAO_SONIX_ROTARY_DRUM_SLOW_HZ)
+        / DECISAO_SONIX_ROTARY_DRUM_SLOW_HZ)
+        .abs();
+    assert!(
+        err_drum_slow <= 0.05,
+        "AUD-30 Rotary: taxa AM em 200 Hz ({am_200_slow:.3} Hz) deve igualar tambor lento ({DECISAO_SONIX_ROTARY_DRUM_SLOW_HZ:.3} Hz ± 5%)"
+    );
+
+    let mut r_horn = ModulationProcessor::new(ModModel::RotarySpeaker);
+    r_horn.set_sample_rate(sr);
+    r_horn.set_depth(10.0);
+    r_horn.set_mix_pct(100.0);
+    r_horn.set_rotary_fast(false);
+    let mut out_3k = vec![0.0f32; len];
+    r_horn.process(&sine_3k, &mut out_3k);
+    let am_3k_slow = measure_am_rate_hz(&out_3k[24_000..], sr);
+    let err_horn_slow = ((am_3k_slow - DECISAO_SONIX_ROTARY_HORN_SLOW_HZ)
+        / DECISAO_SONIX_ROTARY_HORN_SLOW_HZ)
+        .abs();
+    assert!(
+        err_horn_slow <= 0.05,
+        "AUD-30 Rotary: taxa AM em 3 kHz ({am_3k_slow:.3} Hz) deve igualar corneta lenta ({DECISAO_SONIX_ROTARY_HORN_SLOW_HZ:.3} Hz ± 5%)"
+    );
+
+    // Transição lenta -> rápida: corneta atinge 90% da nova velocidade antes do tambor
+    let mut r_trans = ModulationProcessor::new(ModModel::RotarySpeaker);
+    r_trans.set_sample_rate(sr);
+    r_trans.set_depth(10.0);
+    r_trans.set_mix_pct(100.0);
+    r_trans.set_rotary_fast(false);
+    r_trans.set_rotary_fast(true);
+
+    let horn_target_90 = DECISAO_SONIX_ROTARY_HORN_SLOW_HZ
+        + 0.90 * (DECISAO_SONIX_ROTARY_HORN_FAST_HZ - DECISAO_SONIX_ROTARY_HORN_SLOW_HZ);
+    let drum_target_90 = DECISAO_SONIX_ROTARY_DRUM_SLOW_HZ
+        + 0.90 * (DECISAO_SONIX_ROTARY_DRUM_FAST_HZ - DECISAO_SONIX_ROTARY_DRUM_SLOW_HZ);
+
+    let step_blk = 480usize; // 10 ms
+    let inp_blk = vec![0.1f32; step_blk];
+    let mut out_blk = vec![0.0f32; step_blk];
+    let mut t_horn_90: Option<f32> = None;
+    let mut t_drum_90: Option<f32> = None;
+    for b in 0..1200 {
+        r_trans.process(&inp_blk, &mut out_blk);
+        let t_s = (b + 1) as f32 * (step_blk as f32 / sr);
+        if t_horn_90.is_none() && r_trans.rotary_horn_hz() >= horn_target_90 {
+            t_horn_90 = Some(t_s);
+        }
+        if t_drum_90.is_none() && r_trans.rotary_drum_hz() >= drum_target_90 {
+            t_drum_90 = Some(t_s);
+        }
+    }
+    let th = t_horn_90.expect("AUD-30 Rotary: corneta não atingiu 90% da velocidade rápida");
+    let td = t_drum_90.expect("AUD-30 Rotary: tambor não atingiu 90% da velocidade rápida");
+    assert!(
+        th < td,
+        "AUD-30 Rotary: corneta ({th:.2}s) deveria atingir 90% antes do tambor ({td:.2}s)"
+    );
+}
+
+#[test]
+fn aud_30_optico_assimetrico() {
+    let _ = (DECISAO_SONIX_LDR_ATTACK_MS, DECISAO_SONIX_LDR_RELEASE_MS);
+    let sr = 48_000.0f32;
+    let len = (sr * 3.0) as usize;
+    let inp: Vec<f32> = (0..len)
+        .map(|i| 0.5 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr).sin())
+        .collect();
+
+    let mut m = ModulationProcessor::new(ModModel::OpticalBiasTremolo);
+    m.set_sample_rate(sr);
+    m.set_rate_hz(5.0);
+    m.set_depth(10.0);
+    m.set_mix_pct(100.0);
+
+    let mut out = vec![0.0f32; len];
+    m.process(&inp, &mut out);
+
+    // Envoltória nos últimos 2 ciclos (2.6s..3.0s) em janelas de 2 ms
+    let step = (0.002 * sr) as usize;
+    let tail = &out[len - (0.4 * sr) as usize..];
+    let env: Vec<f32> = tail.chunks(step).map(rms).collect();
+    let e_min = env.iter().copied().fold(f32::MAX, f32::min);
+    let e_max = env.iter().copied().fold(0.0f32, f32::max);
+    let lo = e_min + 0.10 * (e_max - e_min);
+    let hi = e_min + 0.90 * (e_max - e_min);
+
+    let mut rise_steps = 0usize;
+    let mut fall_steps = 0usize;
+    for &e in &env {
+        if e > lo && e < hi {
+            // Distinguir subida vs descida pela tendência local
+        }
+    }
+    for k in 1..env.len() {
+        if env[k] > lo && env[k] < hi {
+            if env[k] >= env[k - 1] {
+                rise_steps += 1;
+            } else {
+                fall_steps += 1;
+            }
+        }
+    }
+    let ratio = (rise_steps.max(fall_steps) as f32) / (rise_steps.min(fall_steps).max(1) as f32);
+    assert!(
+        ratio >= 2.0,
+        "AUD-30 Óptico: subida ({rise_steps}x4ms) e descida ({fall_steps}x4ms) devem diferir por fator >= 2 (ratio={ratio:.2})"
+    );
+}
+
+#[test]
+fn aud_30_ac30_vibtrem() {
+    let sr = 48_000.0f32;
+    let len = (sr * 1.5) as usize;
+    let amp_in = 10.0f32.powf(-24.0 / 20.0);
+    let inp: Vec<f32> = (0..len)
+        .map(|i| amp_in * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr).sin())
+        .collect();
+
+    // 1. Canal Brilliant com depth máximo -> saída idêntica à de depth 0
+    let mut ac_b0 = WhiteBoxAmpProcessor::new(AmpModelId::UkAc30TopBoost);
+    ac_b0.set_sample_rate(sr);
+    ac_b0.set_input_jack(AmpInputJack::BrilliantHigh);
+    ac_b0.panel_mut().set_vibrato_speed(5.0);
+    ac_b0.panel_mut().set_vibrato_depth(0.0);
+    let mut out_b0 = vec![0.0f32; len];
+    ac_b0.process(&inp, &mut out_b0);
+
+    let mut ac_b10 = WhiteBoxAmpProcessor::new(AmpModelId::UkAc30TopBoost);
+    ac_b10.set_sample_rate(sr);
+    ac_b10.set_input_jack(AmpInputJack::BrilliantHigh);
+    ac_b10.panel_mut().set_vibrato_speed(5.0);
+    ac_b10.panel_mut().set_vibrato_depth(10.0);
+    let mut out_b10 = vec![0.0f32; len];
+    ac_b10.process(&inp, &mut out_b10);
+
+    let max_diff_brill = out_b0
+        .iter()
+        .zip(out_b10.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_diff_brill <= 1e-6,
+        "AUD-30 AC30: canal Brilliant não deve modular com vibrato_depth=10 (max_diff={max_diff_brill})"
+    );
+
+    // 2. Canal Vib-Trem em modo Vibrato: desvio >= 5 cents, envoltória <= 0,5 dB
+    let mut ac_vib = WhiteBoxAmpProcessor::new(AmpModelId::UkAc30TopBoost);
+    ac_vib.set_sample_rate(sr);
+    ac_vib.set_input_jack(AmpInputJack::Vibrato);
+    ac_vib.panel_mut().set_ac30_vib_trem_mode(Ac30VibTremMode::Vibrato);
+    ac_vib.panel_mut().set_vibrato_speed(5.0);
+    ac_vib.panel_mut().set_vibrato_depth(10.0);
+    let mut out_vib = vec![0.0f32; len];
+    ac_vib.process(&inp, &mut out_vib);
+
+    let freqs_vib = measure_freq_zero_crossings_hz(&out_vib[12_000..], sr, 1024);
+    let f_min = freqs_vib.iter().copied().fold(f64::MAX, f64::min);
+    let f_max = freqs_vib.iter().copied().fold(0.0f64, f64::max);
+    let dev_vib_cents = cents(f_max, f_min) * 0.5;
+    let envs_vib: Vec<f32> = out_vib[12_000..].chunks(960).map(rms).collect();
+    let env_db_vib = 20.0
+        * (envs_vib.iter().copied().fold(0.0f32, f32::max).max(1e-9)
+            / envs_vib.iter().copied().fold(f32::MAX, f32::min).max(1e-9))
+        .log10();
+    assert!(
+        dev_vib_cents >= 5.0 && env_db_vib <= 0.5,
+        "AUD-30 AC30 Vibrato: esperado desvio >= 5 cents (foi {dev_vib_cents:.2}) e envoltória <= 0.5 dB (foi {env_db_vib:.2} dB)"
+    );
+
+    // 3. Canal Vib-Trem em modo Tremolo: AM >= 6 dB, desvio <= 0,5 cent
+    let mut ac_trem = WhiteBoxAmpProcessor::new(AmpModelId::UkAc30TopBoost);
+    ac_trem.set_sample_rate(sr);
+    ac_trem.set_input_jack(AmpInputJack::Vibrato);
+    ac_trem.panel_mut().set_ac30_vib_trem_mode(Ac30VibTremMode::Tremolo);
+    ac_trem.panel_mut().set_vibrato_speed(5.0);
+    ac_trem.panel_mut().set_vibrato_depth(10.0);
+    let mut out_trem = vec![0.0f32; len];
+    ac_trem.process(&inp, &mut out_trem);
+
+    let envs_trem: Vec<f32> = out_trem[12_000..].chunks(960).map(rms).collect();
+    let am_db_trem = 20.0
+        * (envs_trem.iter().copied().fold(0.0f32, f32::max).max(1e-9)
+            / envs_trem.iter().copied().fold(f32::MAX, f32::min).max(1e-9))
+        .log10();
+    let freqs_trem = measure_freq_zero_crossings_hz(&out_trem[12_000..], sr, 1024);
+    let ft_min = freqs_trem.iter().copied().fold(f64::MAX, f64::min);
+    let ft_max = freqs_trem.iter().copied().fold(0.0f64, f64::max);
+    let dev_trem_cents = cents(ft_max, ft_min) * 0.5;
+    assert!(
+        am_db_trem >= 6.0 && dev_trem_cents <= 0.5,
+        "AUD-30 AC30 Tremolo: esperado AM >= 6 dB (foi {am_db_trem:.2} dB) e desvio <= 0.5 cent (foi {dev_trem_cents:.2})"
     );
 }

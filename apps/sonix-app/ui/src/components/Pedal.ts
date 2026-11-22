@@ -89,7 +89,7 @@ export function createPedalElement(model: PedalModelId, store: AppStore): HTMLEl
     ds1: { w: 104, h: 184, bg: 'linear-gradient(180deg,#f47a2a 0%,#d65a10 100%)', rad: '8px', name: 'DS-ONE', sub: 'DISTORTION' },
     ns2: { w: 104, h: 184, bg: 'linear-gradient(180deg,#f1f0ea 0%,#cfcec7 100%)', rad: '8px', name: 'GATE-2', sub: 'Noise Gate' },
     ce2: { w: 104, h: 184, bg: 'linear-gradient(180deg,#86c3e6 0%,#5ba3cf 100%)', rad: '8px', name: 'CHORUS-2', sub: 'Chorus' },
-    trichorus: { w: 140, h: 196, bg: 'repeating-linear-gradient(90deg,rgba(255,255,255,.06) 0 1px,transparent 1px 3px),linear-gradient(180deg,#2d5ca8 0%,#1d3d78 52%,#112650 100%)', rad: '9px', name: 'TRI-CHORUS', sub: 'STEREO 3-VOICE BBD' },
+    trichorus: { w: 140, h: 196, bg: 'repeating-linear-gradient(90deg,rgba(255,255,255,.06) 0 1px,transparent 1px 3px),linear-gradient(180deg,#2d5ca8 0%,#1d3d78 52%,#112650 100%)', rad: '9px', name: 'CHORUS 3 VOZES', sub: 'MONO 3-VOICE BBD' },
     flanger: { w: 116, h: 190, bg: 'linear-gradient(180deg,#594078 0%,#3a2654 55%,#231538 100%)', rad: '8px', name: 'TZ FLANGER', sub: 'THROUGH-ZERO' },
     phaser90: { w: 104, h: 184, bg: 'linear-gradient(180deg,#f57e20 0%,#d96008 60%,#b04802 100%)', rad: '8px', name: 'PHASER 90', sub: '4-STAGE FET' },
     tremolo: { w: 104, h: 184, bg: 'linear-gradient(180deg,#4f7c58 0%,#33573b 100%)', rad: '8px', name: 'TREMOLO', sub: 'Optical/Bias' },

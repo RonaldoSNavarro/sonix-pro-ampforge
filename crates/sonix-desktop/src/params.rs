@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use ampforge_dsp::amp::{find_model_by_name, AmpChannelMode, AmpInputJack, AmpModelId};
+use ampforge_dsp::amp::{find_model_by_name, Ac30VibTremMode, AmpChannelMode, AmpInputJack, AmpModelId};
 use ampforge_dsp::cab::{MicModel, SpeakerCabModel};
 use ampforge_dsp::fx::drive::DriveModel;
 use ampforge_dsp::fx::eq::EqMode;
@@ -120,6 +120,7 @@ fn default_input_mode() -> String { "instrument".to_string() }
 fn default_amp_jack() -> String { "high".to_string() }
 fn default_amp_channel_mode() -> String { "modern".to_string() }
 fn default_amp_impedance() -> String { "16".to_string() }
+fn default_vib_trem_mode() -> String { "vibrato".to_string() }
 fn default_curve_slope() -> f32 { 0.5 }
 fn default_footswitch_mode() -> String { "HYBRID_STOMP_SCENE".to_string() }
 fn default_split_dyn_thresh() -> f32 { -30.0 }
@@ -221,6 +222,8 @@ pub struct AppState {
     pub amp_vibrato_speed: f32,
     #[serde(default, rename = "amp_1.vibrato_depth")]
     pub amp_vibrato_depth: f32,
+    #[serde(default = "default_vib_trem_mode", rename = "amp_1.vib_trem_mode")]
+    pub amp_vib_trem_mode: String,
     #[serde(default = "default_amp_impedance", rename = "amp_1.impedance_ohms")]
     pub amp_impedance_ohms: String,
     #[serde(rename = "drive.enabled")]
@@ -593,6 +596,7 @@ impl Default for AppState {
             amp_reverb: 0.0,
             amp_vibrato_speed: 4.0,
             amp_vibrato_depth: 0.0,
+            amp_vib_trem_mode: default_vib_trem_mode(),
             amp_impedance_ohms: "16".to_string(),
             drive_enabled: false,
             drive_model: "ts808".to_string(),
@@ -1092,6 +1096,7 @@ const MODELS_VOLUME_2: &[AmpModelId] = &[AmpModelId::BritPlexi1959, AmpModelId::
 const MODELS_CUT: &[AmpModelId] = &[AmpModelId::UkAc30TopBoost];
 const MODELS_REVERB: &[AmpModelId] = &[AmpModelId::UsTwinBlackface65];
 const MODELS_VIBRATO: &[AmpModelId] = &[AmpModelId::UsTwinBlackface65, AmpModelId::UkAc30TopBoost];
+const MODELS_AC30_ONLY: &[AmpModelId] = &[AmpModelId::UkAc30TopBoost];
 const MODELS_JUMPERED: &[AmpModelId] = &[AmpModelId::BritPlexi1959];
 const MODELS_SPONGY: &[AmpModelId] = &[AmpModelId::CaliDualRectoRevF];
 
@@ -1288,6 +1293,24 @@ pub static PARAMS: &[ParamDesc] = &[
         DspParamUpdate::AmpVibratoDepth,
         amp_vibrato_depth
     ),
+    ParamDesc {
+        key: "amp_1.vib_trem_mode",
+        aliases: &[],
+        kind: ParamKind::Enum(&["vibrato", "tremolo"]),
+        default: ParamDefault::Enum("vibrato"),
+        models: Some(MODELS_AC30_ONLY),
+        to_dsp: |v| {
+            v.as_str()
+                .and_then(Ac30VibTremMode::from_str_name)
+                .map(DspParamUpdate::AmpVibTremMode)
+        },
+        read_state: |st| json_str(&st.amp_vib_trem_mode),
+        write_state: |st, v| {
+            if let Some(s) = v.as_str() {
+                st.amp_vib_trem_mode = s.to_string();
+            }
+        },
+    },
     ParamDesc {
         key: "amp_1.preamp_tube",
         aliases: &[],

@@ -169,7 +169,7 @@ test('CA-3: Pedal.ts e Biblioteca.ts renderizam todos os modelos de Modulação,
   const bib = renderBibliotecaScreen(store);
   document.body.appendChild(bib);
   const bibTxt = bib.textContent || '';
-  for (const title of ['TRI-CHORUS', 'TZ FLANGER', 'PHASER 90', 'TREMOLO', 'UNI-VIBE', 'ROTARY 147', 'WHAMMY', 'DROP CAPO', 'HARMONIZER', 'MICRO DETUNE', 'CRY WAH']) {
+  for (const title of ['CHORUS 3 VOZES (MONO)', 'TZ FLANGER', 'PHASER 90', 'TREMOLO', 'UNI-VIBE', 'ROTARY 147', 'WHAMMY', 'DROP CAPO', 'HARMONIZER', 'MICRO DETUNE', 'CRY WAH']) {
     assert.ok(bibTxt.toUpperCase().includes(title), `CA-3: Biblioteca deve listar '${title}'`);
   }
   bib.remove();

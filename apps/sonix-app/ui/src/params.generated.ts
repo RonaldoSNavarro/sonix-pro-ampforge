@@ -56,6 +56,7 @@ export const PARAMS_SCHEMA = {
   'amp_1.reverb': { type: 'number', range: [0, 10], step: 0.1, defaultValue: 0, models: ['twin_ab763'] },
   'amp_1.vibrato_speed': { type: 'number', range: [0, 10], step: 0.1, defaultValue: 4, models: ['twin_ab763', 'ac30_tb'] },
   'amp_1.vibrato_depth': { type: 'number', range: [0, 10], step: 0.1, defaultValue: 0, models: ['twin_ab763', 'ac30_tb'] },
+  'amp_1.vib_trem_mode': { type: 'enum', options: ['vibrato', 'tremolo'], defaultValue: 'vibrato', models: ['ac30_tb'] },
   'amp_1.preamp_tube': { type: 'enum', options: ['12ax7', 'ecc83', '12at7', '12ay7', 'ef86', 'ef86_variant'], defaultValue: '12ax7' },
   'amp_1.power_tube': { type: 'enum', options: ['el34', '6l6gc', 'kt88', 'el84_variant'], defaultValue: 'el34' },
   'amp_1.rectifier': { type: 'enum', options: ['diode', 'gz34', '5u4gb'], defaultValue: 'diode' },
