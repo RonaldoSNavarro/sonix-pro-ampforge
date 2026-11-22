@@ -146,6 +146,7 @@ Planejados (red → green): `crates/sonix-desktop/tests/contract_018_low_latency
 CA-9, CA-11…CA-13, com host simulado) e
 `tests/contract/018-latencia-minima-host-audio-placa-onboard.test.js` (CA-8). CA-10 é manual com
 hardware, documentado no PR.
+- **CA-6:** NÃO ATENDIDO — depende do modo exclusivo, não implementado (Spec 028 parcial, AUD-39).
 
 ## Notas
 - Para a medição do CA-10 o usuário precisa de um cabo P2 macho-macho (saída de fone → entrada de

@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('Spec 018: Latência Mínima e Host de Áudio Robusto em Placa Onboard', () => {
-  test('Execução de testes de contrato Rust (CA-1 a CA-7, CA-9, CA-11 a CA-13)', () => {
+  test('Execução de testes de contrato Rust (CA-1 a CA-5, CA-7, CA-9, CA-11 a CA-13)', () => {
     try {
       const mingwPath = 'C:\\ProgramData\\mingw64\\mingw64\\bin';
       const pathEnv = process.env.PATH ? `${mingwPath};${process.env.PATH}` : mingwPath;
@@ -21,9 +21,8 @@ describe('Spec 018: Latência Mínima e Host de Áudio Robusto em Placa Onboard'
       assert.match(output, /test_ca_01_queue_occupancy_within_half_to_two_periods \.\.\. ok/);
       assert.match(output, /test_ca_02_drift_correction_and_waveform_continuity \.\.\. ok/);
       assert.match(output, /test_ca_03_zero_alloc_and_zero_lock_during_callbacks \.\.\. ok/);
-      assert.match(output, /test_ca_04_negotiated_sample_rate_and_graceful_mismatch_fallback \.\.\. ok/);
+      assert.match(output, /test_ca_04_negotiated_sample_rate_prepares_chain \.\.\. ok/);
       assert.match(output, /test_ca_05_stereo_to_mono_channel_selection_accuracy \.\.\. ok/);
-      assert.match(output, /test_ca_06_backend_fallback_cascade_without_panic \.\.\. ok/);
       assert.match(output, /test_ca_07_api_audio_status_telemetry_schema \.\.\. ok/);
       assert.match(output, /test_ca_09_offline_loopback_latency_measurement \.\.\. ok/);
       assert.match(output, /test_ca_11_dsp_panic_catch_and_stream_resilience \.\.\. ok/);
