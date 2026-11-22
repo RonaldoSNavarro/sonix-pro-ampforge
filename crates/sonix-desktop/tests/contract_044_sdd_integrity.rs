@@ -424,3 +424,97 @@ fn test_ca_08_spec_012_and_readme_do_not_claim_delivered_vst3_clap() {
         spec12_row
     );
 }
+
+#[test]
+fn ca4_suavizacao_014_atinge_63_porcento_entre_5_e_20ms() {
+    // AUD-36: Spec 044 CA-4
+    let sr = 48_000.0_f32;
+    let mut chain = RealtimeDspChain::new(sr);
+    chain.prepare(sr, 64);
+    chain.set_gate_enabled(false);
+    chain.set_cab_enabled(false);
+    chain.set_amp_enabled(true);
+    chain.set_amp_model("twin_ab763");
+    chain.set_amp_gain(2.0);
+
+    let blk = 64usize;
+    let mut phase = 0usize;
+    let mut next_sine = |buf: &mut [f32]| {
+        for s in buf.iter_mut() {
+            *s = 0.02 * (2.0 * std::f32::consts::PI * 1000.0 * (phase as f32) / sr).sin();
+            phase += 1;
+        }
+    };
+    let mut inp = vec![0.0f32; blk];
+    let mut out = vec![0.0f32; blk];
+    let rms_of = |s: &[f32]| -> f64 {
+        let sum: f64 = s.iter().map(|&v| (v as f64) * (v as f64)).sum();
+        (sum / s.len().max(1) as f64).sqrt()
+    };
+
+    for _ in 0..40 {
+        next_sine(&mut inp);
+        chain.process(&inp, &mut out);
+    }
+    let level_low = rms_of(&out);
+
+    let q = chain.param_queue();
+    let _ = q.push(DspParamUpdate::AmpGain(8.0));
+
+    let mut env_at_3ms = 0.0_f64;
+    let mut env_at_18ms = 0.0_f64;
+    for b in 0..80 {
+        next_sine(&mut inp);
+        chain.process(&inp, &mut out);
+        let lvl = rms_of(&out);
+        if b == 2 {
+            // ~4 ms
+            env_at_3ms = lvl;
+        }
+        if b == 13 {
+            // ~18.7 ms
+            env_at_18ms = lvl;
+        }
+    }
+    let level_high = rms_of(&out);
+    let span = (level_high - level_low).abs().max(1e-6);
+    let pct_4ms = (env_at_3ms - level_low) / span;
+    let pct_18ms = (env_at_18ms - level_low) / span;
+
+    assert!(
+        pct_4ms < 0.63 && pct_18ms >= 0.63,
+        "CA-4 (AUD-36): Suavização deve estar < 63% em <5ms ({:.2}%) e >= 63% em <=20ms ({:.2}%)",
+        pct_4ms * 100.0,
+        pct_18ms * 100.0
+    );
+}
+
+#[test]
+fn ca15_inventario_sem_pendencia_de_spec_implementada() {
+    // AUD-36: Spec 049 CA-15
+    let root = workspace_root();
+    let index = fs::read_to_string(root.join("specs/README.md")).unwrap();
+    let inv = fs::read_to_string(root.join("docs/ui-desktop/inventario-controles.md")).unwrap();
+
+    let mut implemented_specs = BTreeSet::new();
+    for line in index.lines() {
+        if line.starts_with("| [") && line.to_lowercase().contains("implementada") {
+            if let Some(id) = line.split('[').nth(1).and_then(|s| s.split(']').next()) {
+                implemented_specs.insert(id.trim().to_string());
+            }
+        }
+    }
+    for line in inv.lines() {
+        if !line.starts_with('|') {
+            continue;
+        }
+        if line.to_lowercase().contains("pendente") {
+            for spec_id in &implemented_specs {
+                assert!(
+                    !line.contains(&format!("Spec {spec_id}")),
+                    "CA-15 (AUD-36): Inventário marca como pendente item da spec implementada {spec_id}: {line}"
+                );
+            }
+        }
+    }
+}

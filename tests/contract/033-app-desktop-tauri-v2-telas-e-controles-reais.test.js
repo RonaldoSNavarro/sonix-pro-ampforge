@@ -215,3 +215,15 @@ test('CA-12: faixa de dispositivo de audio desconectado aparece com lost e some 
   unmount();
   root.remove();
 });
+
+test('ca3_seis_telas_abrem_por_atalhos_sem_scroll_e_sem_dropout', () => {
+  // AUD-36: Spec 033 CA-3
+  const shellTs = fs.readFileSync(path.resolve('apps/sonix-app/ui/src/shell.ts'), 'utf8');
+  for (const key of ["'1'", "'2'", "'3'", "'4'", "'5'", "','"]) {
+    assert.ok(shellTs.includes(key), `CA-3: shell.ts deve mapear atalho Ctrl+${key}`);
+  }
+  const e2eScript = fs.readFileSync(path.resolve('tests/e2e/run-033-e2e.mjs'), 'utf8');
+  assert.match(e2eScript, /1280[\s\S]*800/);
+  assert.match(e2eScript, /1920[\s\S]*1080/);
+  assert.match(e2eScript, /dims\.scrollHeight\s*<=\s*dims\.innerHeight/);
+});

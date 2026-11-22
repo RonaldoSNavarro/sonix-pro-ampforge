@@ -726,3 +726,32 @@ fn test_ca_10_mxr_10_band_eq_selective_q_reduces_adjacent_octave_overlap() {
         g_250, g_500
     );
 }
+
+#[test]
+fn ca5_stack_fender_ab763_coincide_com_yeh() {
+    // AUD-36: Spec 039 CA-5 (B=M=T=5 => 0.5, 0.5, 0.5, diferença <= 0.5 dB de 20 Hz a 10 kHz)
+    let mut comps = resolved_fmv_components(ToneStackTopology::FenderTmbMidScoop, 5.0, 5.0, 5.0);
+    comps.r_load = f64::INFINITY;
+    let freqs = [20.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
+    for &freq in &freqs {
+        let yeh_db = yeh_smith_magnitude_db(
+            comps.r_treble,
+            comps.r_bass,
+            comps.r_mid,
+            comps.r_slope,
+            comps.c1,
+            comps.c2,
+            comps.c3,
+            comps.t_pos,
+            comps.b_pos,
+            comps.m_pos,
+            freq,
+        );
+        let prod_db = analog_tonestack_magnitude_db_for_components(comps, freq);
+        let err = (prod_db - yeh_db).abs();
+        assert!(
+            err <= 0.5,
+            "CA-5: Stack Fender B=M=T=5 @ {freq} Hz deve coincidir com AB763 Yeh/Smith <= 0.5 dB (prod={prod_db:.4}, yeh={yeh_db:.4}, err={err:.4})"
+        );
+    }
+}

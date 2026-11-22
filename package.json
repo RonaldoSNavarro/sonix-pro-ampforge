@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test tests/contract/",
     "test:contract": "node --test tests/contract/",
+    "test:e2e": "node tests/e2e/run-033-e2e.mjs",
     "cargo:test": "cargo test --workspace",
     "cargo:check": "cargo check --workspace"
   },

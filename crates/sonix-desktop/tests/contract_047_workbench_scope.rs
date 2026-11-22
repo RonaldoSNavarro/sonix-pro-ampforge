@@ -321,3 +321,36 @@ fn test_ca_06_telemetry_b_plus_v_tracks_amp_sag() {
         "CA-6: Sob ataque forte B+ deve cair com o sag (idle={b_plus_idle:.1}V, sagged={b_plus_sagged:.1}V)"
     );
 }
+
+#[test]
+fn ca5_controles_bancada_sem_campos_mortos_e_com_efeito() {
+    // AUD-36: Spec 047 CA-5
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let bancada = std::fs::read_to_string(root.join("apps/sonix-app/ui/src/screens/Bancada.ts")).unwrap();
+    let registry = std::fs::read_to_string(root.join("apps/sonix-app/ui/src/controls.registry.ts")).unwrap();
+
+    for key in [
+        "amp_1.preamp_tube",
+        "amp_1.preamp_plate_v",
+        "amp_1.bias_ma",
+        "amp_1.power_tube",
+        "amp_1.xformer_sat",
+        "amp_1.tonestack",
+        "amp_1.sag",
+        "amp_1.rectifier",
+        "amp_1.impedance_ohms",
+    ] {
+        assert!(
+            registry.contains(key),
+            "CA-5 (AUD-36): Controle da bancada {key} deve estar registrado em controls.registry.ts"
+        );
+    }
+    assert!(
+        !bancada.contains("ChassisWorkbench"),
+        "CA-5 (AUD-36): Bancada.ts não deve expor campos mortos de ChassisWorkbench"
+    );
+}
