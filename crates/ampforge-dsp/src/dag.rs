@@ -148,21 +148,7 @@ pub enum SplitMode {
     },
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct BiquadState {
-    z1: f64,
-    z2: f64,
-}
-
-impl BiquadState {
-    #[inline]
-    fn process(&mut self, x: f64, b0: f64, b1: f64, b2: f64, a1: f64, a2: f64) -> f64 {
-        let y = b0 * x + self.z1;
-        self.z1 = b1 * x - a1 * y + self.z2;
-        self.z2 = b2 * x - a2 * y;
-        y
-    }
-}
+use crate::biquad::BiquadTdf2State as BiquadState;
 
 #[derive(Debug, Clone)]
 pub struct SplitNode {

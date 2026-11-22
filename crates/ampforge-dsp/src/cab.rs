@@ -3,163 +3,7 @@
 
 use std::f32::consts::PI;
 
-#[derive(Debug, Clone, Copy)]
-pub struct BiquadFilter {
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a1: f64,
-    a2: f64,
-    x1: f64,
-    x2: f64,
-    y1: f64,
-    y2: f64,
-}
-
-impl Default for BiquadFilter {
-    fn default() -> Self {
-        Self {
-            b0: 1.0,
-            b1: 0.0,
-            b2: 0.0,
-            a1: 0.0,
-            a2: 0.0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-}
-
-impl BiquadFilter {
-    pub fn lowpass(fc: f64, q: f64, sr: f64) -> Self {
-        let k = (std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499)).tan();
-        let k2 = k * k;
-        let inv_q = 1.0 / q.max(0.1);
-        let a0 = 1.0 + inv_q * k + k2;
-        let b0 = k2 / a0;
-        let b1 = 2.0 * b0;
-        let b2 = b0;
-        let a1 = 2.0 * (k2 - 1.0) / a0;
-        let a2 = (1.0 - inv_q * k + k2) / a0;
-
-        Self {
-            b0,
-            b1,
-            b2,
-            a1,
-            a2,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
-    pub fn high_shelf(fc: f64, gain_db: f64, sr: f64) -> Self {
-        let a = 10.0f64.powf(gain_db / 40.0);
-        let w0 = 2.0 * std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499);
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let alpha = sin_w0 / std::f64::consts::SQRT_2;
-        let sqrt_a_2_alpha = 2.0 * a.sqrt() * alpha;
-
-        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + sqrt_a_2_alpha);
-        let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - sqrt_a_2_alpha);
-        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + sqrt_a_2_alpha;
-        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - sqrt_a_2_alpha;
-
-        Self {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
-    pub fn peaking(fc: f64, gain_db: f64, q: f64, sr: f64) -> Self {
-        let a = 10.0f64.powf(gain_db / 40.0);
-        let w0 = 2.0 * std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499);
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let alpha = sin_w0 / (2.0 * q.max(0.1));
-
-        let b0 = 1.0 + alpha * a;
-        let b1 = -2.0 * cos_w0;
-        let b2 = 1.0 - alpha * a;
-        let a0 = 1.0 + alpha / a;
-        let a1 = -2.0 * cos_w0;
-        let a2 = 1.0 - alpha / a;
-
-        Self {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
-    pub fn low_shelf(fc: f64, gain_db: f64, sr: f64) -> Self {
-        let a = 10.0f64.powf(gain_db / 40.0);
-        let w0 = 2.0 * std::f64::consts::PI * (fc / sr).clamp(0.0001, 0.499);
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let alpha = sin_w0 / std::f64::consts::SQRT_2;
-        let sqrt_a_2_alpha = 2.0 * a.sqrt() * alpha;
-
-        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + sqrt_a_2_alpha);
-        let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - sqrt_a_2_alpha);
-        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + sqrt_a_2_alpha;
-        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - sqrt_a_2_alpha;
-
-        Self {
-            b0: b0 / a0,
-            b1: b1 / a0,
-            b2: b2 / a0,
-            a1: a1 / a0,
-            a2: a2 / a0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
-    pub fn update_coeffs(&mut self, other: Self) {
-        self.b0 = other.b0;
-        self.b1 = other.b1;
-        self.b2 = other.b2;
-        self.a1 = other.a1;
-        self.a2 = other.a2;
-    }
-
-    #[inline(always)]
-    pub fn process(&mut self, x: f64) -> f64 {
-        let y = crate::denormal::flush_f64(
-            self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2,
-        );
-        self.x2 = self.x1;
-        self.x1 = crate::denormal::flush_f64(x);
-        self.y2 = self.y1;
-        self.y1 = y;
-        y
-    }
-}
+pub use crate::biquad::BiquadFilter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SpeakerCabModel {
@@ -1330,8 +1174,8 @@ impl VirtualCabProcessor {
         let sr = self.sample_rate as f64;
         let fc = hicut_hz.clamp(1000.0, (sr * 0.45).max(1001.0));
         // Butterworth 4ª ordem passa-baixas (2 estágios em cascata) para corte exato de -3 dB na fc (-24 dB/oct)
-        let b1 = BiquadFilter::lowpass(fc, 0.5411961, sr);
-        let b2 = BiquadFilter::lowpass(fc, 1.3065630, sr);
+        let b1 = BiquadFilter::lowpass_bilinear(fc, 0.5411961, sr);
+        let b2 = BiquadFilter::lowpass_bilinear(fc, 1.3065630, sr);
         self.hicut_filter1.update_coeffs(b1);
         self.hicut_filter2.update_coeffs(b2);
     }
@@ -1343,7 +1187,7 @@ impl VirtualCabProcessor {
 
         // Open back dipole cancelamento em graves (< 120 Hz)
         if self.speaker_model.is_open_back() {
-            self.open_back_hp.update_coeffs(BiquadFilter::low_shelf(120.0, -6.0, sr));
+            self.open_back_hp.update_coeffs(BiquadFilter::low_shelf_sqrt2(120.0, -6.0, sr));
         } else {
             self.open_back_hp.update_coeffs(BiquadFilter::default());
         }
@@ -1379,8 +1223,8 @@ impl VirtualCabProcessor {
             self.update_hicut_coeffs(fc);
             for s in output.iter_mut() {
                 let mut v = *s as f64;
-                v = self.hicut_filter1.process(v);
-                v = self.hicut_filter2.process(v);
+                v = self.hicut_filter1.process_flushed(v);
+                v = self.hicut_filter2.process_flushed(v);
                 *s = v as f32;
             }
         } else {
@@ -1391,8 +1235,8 @@ impl VirtualCabProcessor {
                 self.update_hicut_coeffs(fc);
                 for s in &mut output[offset..offset + chunk] {
                     let mut v = *s as f64;
-                    v = self.hicut_filter1.process(v);
-                    v = self.hicut_filter2.process(v);
+                    v = self.hicut_filter1.process_flushed(v);
+                    v = self.hicut_filter2.process_flushed(v);
                     *s = v as f32;
                 }
                 offset += chunk;
@@ -1434,10 +1278,10 @@ impl VirtualCabProcessor {
             let pos = mic.position_cap_to_edge.clamp(0.0, 1.0);
             let pos_cut_db = -8.5 * pos as f64;
             let pos_filter = if slot_idx == 0 {
-                self.mic1_pos_filter.update_coeffs(BiquadFilter::high_shelf(3500.0, pos_cut_db, sr));
+                self.mic1_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
                 &mut self.mic1_pos_filter
             } else {
-                self.mic2_pos_filter.update_coeffs(BiquadFilter::high_shelf(3500.0, pos_cut_db, sr));
+                self.mic2_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
                 &mut self.mic2_pos_filter
             };
 
@@ -1445,10 +1289,10 @@ impl VirtualCabProcessor {
             let dist_cm = mic.distance_cm.clamp(0.0, 30.0) as f64;
             let prox_boost_db = 9.0 * (1.0 - (dist_cm / 20.0).clamp(0.0, 1.0));
             let prox_filter = if slot_idx == 0 {
-                self.mic1_prox_filter.update_coeffs(BiquadFilter::low_shelf(150.0, prox_boost_db, sr));
+                self.mic1_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
                 &mut self.mic1_prox_filter
             } else {
-                self.mic2_prox_filter.update_coeffs(BiquadFilter::low_shelf(150.0, prox_boost_db, sr));
+                self.mic2_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
                 &mut self.mic2_prox_filter
             };
 
@@ -1457,11 +1301,11 @@ impl VirtualCabProcessor {
             let angle_cut_db = -6.0 * angle_norm;
             let angle_filter = if slot_idx == 0 {
                 self.mic1_angle_filter
-                    .update_coeffs(BiquadFilter::high_shelf(3200.0, angle_cut_db, sr));
+                    .update_coeffs(BiquadFilter::high_shelf_sqrt2(3200.0, angle_cut_db, sr));
                 &mut self.mic1_angle_filter
             } else {
                 self.mic2_angle_filter
-                    .update_coeffs(BiquadFilter::high_shelf(3200.0, angle_cut_db, sr));
+                    .update_coeffs(BiquadFilter::high_shelf_sqrt2(3200.0, angle_cut_db, sr));
                 &mut self.mic2_angle_filter
             };
 
@@ -1473,31 +1317,31 @@ impl VirtualCabProcessor {
             match mic.model {
                 MicModel::Sm57 => {
                     model_f1.update_coeffs(BiquadFilter::peaking(5600.0, 4.0, 2.5, sr));
-                    model_f2.update_coeffs(BiquadFilter::low_shelf(160.0, -3.5, sr));
+                    model_f2.update_coeffs(BiquadFilter::low_shelf_sqrt2(160.0, -3.5, sr));
                 }
                 MicModel::Md421 => {
                     model_f1.update_coeffs(BiquadFilter::peaking(280.0, -2.5, 1.2, sr));
                     model_f2.update_coeffs(BiquadFilter::peaking(4500.0, 3.5, 1.3, sr));
                 }
                 MicModel::M88 => {
-                    model_f1.update_coeffs(BiquadFilter::low_shelf(110.0, 2.5, sr));
+                    model_f1.update_coeffs(BiquadFilter::low_shelf_sqrt2(110.0, 2.5, sr));
                     model_f2.update_coeffs(BiquadFilter::peaking(4000.0, 3.0, 1.5, sr));
                 }
                 MicModel::R121 => {
-                    model_f1.update_coeffs(BiquadFilter::low_shelf(130.0, 2.0, sr));
-                    model_f2.update_coeffs(BiquadFilter::high_shelf(3800.0, -7.5, sr));
+                    model_f1.update_coeffs(BiquadFilter::low_shelf_sqrt2(130.0, 2.0, sr));
+                    model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(3800.0, -7.5, sr));
                 }
                 MicModel::M160 => {
                     model_f1.update_coeffs(BiquadFilter::peaking(1800.0, 1.5, 1.0, sr));
-                    model_f2.update_coeffs(BiquadFilter::high_shelf(5500.0, -5.0, sr));
+                    model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(5500.0, -5.0, sr));
                 }
                 MicModel::U87 => {
-                    model_f1.update_coeffs(BiquadFilter::high_shelf(8000.0, 2.5, sr));
+                    model_f1.update_coeffs(BiquadFilter::high_shelf_sqrt2(8000.0, 2.5, sr));
                     model_f2.update_coeffs(BiquadFilter::peaking(250.0, 0.5, 0.9, sr));
                 }
                 MicModel::C414 => {
                     model_f1.update_coeffs(BiquadFilter::peaking(3500.0, 3.0, 1.2, sr));
-                    model_f2.update_coeffs(BiquadFilter::high_shelf(9500.0, 4.0, sr));
+                    model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(9500.0, 4.0, sr));
                 }
             }
 
@@ -1528,9 +1372,9 @@ impl VirtualCabProcessor {
 
                 // Passa pelos filtros acústicos do microfone e resposta do modelo
                 let mut s = delayed as f64;
-                s = pos_filter.process(s);
-                s = prox_filter.process(s);
-                s = angle_filter.process(s);
+                s = pos_filter.process_flushed(s);
+                s = prox_filter.process_flushed(s);
+                s = angle_filter.process_flushed(s);
                 s = model_f1.process(s);
                 s = model_f2.process(s);
 
@@ -1544,8 +1388,8 @@ impl VirtualCabProcessor {
                 let fir_out = self.step_speaker_fir(*s);
                 let mut v = fir_out as f64;
                 v = self.open_back_hp.process(v);
-                v = self.hicut_filter1.process(v);
-                v = self.hicut_filter2.process(v);
+                v = self.hicut_filter1.process_flushed(v);
+                v = self.hicut_filter2.process_flushed(v);
                 *s = v as f32;
             }
         } else {
@@ -1559,8 +1403,8 @@ impl VirtualCabProcessor {
                     let fir_out = self.step_speaker_fir(*s);
                     let mut v = fir_out as f64;
                     v = self.open_back_hp.process(v);
-                    v = self.hicut_filter1.process(v);
-                    v = self.hicut_filter2.process(v);
+                    v = self.hicut_filter1.process_flushed(v);
+                    v = self.hicut_filter2.process_flushed(v);
                     *s = v as f32;
                 }
                 offset += chunk;

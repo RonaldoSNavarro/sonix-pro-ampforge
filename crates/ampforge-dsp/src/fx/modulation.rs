@@ -10,65 +10,7 @@ pub const DECISAO_SONIX_ROTARY_DRUM_FAST_HZ: f32 = 5.70;
 pub const DECISAO_SONIX_ROTARY_HORN_ACCEL_S: f32 = 0.85;
 pub const DECISAO_SONIX_ROTARY_DRUM_ACCEL_S: f32 = 3.50;
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ModBiquad {
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
-    z1: f32,
-    z2: f32,
-}
-
-impl ModBiquad {
-    fn reset(&mut self) {
-        self.z1 = 0.0;
-        self.z2 = 0.0;
-    }
-
-    fn butterworth_lp(fc: f32, sr: f32) -> Self {
-        let w0 = 2.0 * std::f32::consts::PI * (fc / sr.max(1.0)).clamp(0.0001, 0.45);
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let alpha = sin_w0 / std::f32::consts::SQRT_2;
-        let a0 = 1.0 + alpha;
-        Self {
-            b0: ((1.0 - cos_w0) * 0.5) / a0,
-            b1: (1.0 - cos_w0) / a0,
-            b2: ((1.0 - cos_w0) * 0.5) / a0,
-            a1: (-2.0 * cos_w0) / a0,
-            a2: (1.0 - alpha) / a0,
-            z1: 0.0,
-            z2: 0.0,
-        }
-    }
-
-    fn butterworth_hp(fc: f32, sr: f32) -> Self {
-        let w0 = 2.0 * std::f32::consts::PI * (fc / sr.max(1.0)).clamp(0.0001, 0.45);
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let alpha = sin_w0 / std::f32::consts::SQRT_2;
-        let a0 = 1.0 + alpha;
-        Self {
-            b0: ((1.0 + cos_w0) * 0.5) / a0,
-            b1: -(1.0 + cos_w0) / a0,
-            b2: ((1.0 + cos_w0) * 0.5) / a0,
-            a1: (-2.0 * cos_w0) / a0,
-            a2: (1.0 - alpha) / a0,
-            z1: 0.0,
-            z2: 0.0,
-        }
-    }
-
-    #[inline(always)]
-    fn process(&mut self, x: f32) -> f32 {
-        let y = crate::denormal::flush_f32(self.b0 * x + self.z1);
-        self.z1 = crate::denormal::flush_f32(self.b1 * x - self.a1 * y + self.z2);
-        self.z2 = crate::denormal::flush_f32(self.b2 * x - self.a2 * y);
-        y
-    }
-}
+use crate::biquad::BiquadTdf2F32 as ModBiquad;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModModel {

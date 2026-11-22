@@ -11,6 +11,7 @@ pub mod smoother;
 pub mod oversampling;
 pub(crate) mod os_filters;
 pub mod precision;
+pub mod biquad;
 pub mod cpu;
 pub mod engine;
 pub mod dag;

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize,
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use thiserror::Error;
+#[cfg(feature = "host-audio")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use ampforge_dsp::amp::{AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpProcessor};
@@ -24,6 +25,7 @@ use ampforge_dsp::looper::{LooperPosition, LooperProcessor};
 use ampforge_dsp::modshop::{PowerTube, PreampTube, RectifierType, ToneStackTopology};
 use ampforge_dsp::queue::SpscOwnedQueue;
 use ampforge_dsp::tuner::{TunerOutputMode, TunerPitchResult, TunerProcessor};
+#[cfg(feature = "host-audio")]
 pub use cpal::{Error as CpalError, ErrorKind as CpalErrorKind};
 
 pub const STREAM_ERR_OK: u8 = 0;
@@ -654,9 +656,29 @@ pub trait AudioDeviceEnumerator: Send + Sync {
     fn enumerate_devices(&self) -> Vec<DesktopAudioDevice>;
 }
 
+#[cfg(not(feature = "host-audio"))]
 #[derive(Debug, Default)]
 pub struct CpalAudioEnumerator;
 
+#[cfg(not(feature = "host-audio"))]
+impl CpalAudioEnumerator {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(not(feature = "host-audio"))]
+impl AudioDeviceEnumerator for CpalAudioEnumerator {
+    fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
+        Vec::new()
+    }
+}
+
+#[cfg(feature = "host-audio")]
+#[derive(Debug, Default)]
+pub struct CpalAudioEnumerator;
+
+#[cfg(feature = "host-audio")]
 impl CpalAudioEnumerator {
     pub fn new() -> Self {
         Self
@@ -774,6 +796,7 @@ impl CpalAudioEnumerator {
     }
 }
 
+#[cfg(feature = "host-audio")]
 impl AudioDeviceEnumerator for CpalAudioEnumerator {
     fn enumerate_devices(&self) -> Vec<DesktopAudioDevice> {
         let host = cpal::default_host();
@@ -1225,6 +1248,7 @@ impl DesktopAudioHost {
     }
 
     /// Inicia streaming duplex real-time com hardware nativo WASAPI via CPAL
+    #[cfg(feature = "host-audio")]
     pub fn start_realtime_wasapi_duplex(
         duplex: Arc<RealtimeDuplexEngine>,
         dsp_chain: Arc<Mutex<RealtimeDspChain>>,
@@ -1234,6 +1258,7 @@ impl DesktopAudioHost {
     }
 
     /// Inicia streaming duplex real-time selecionando modo (WASAPI ou ASIO quando feature `asio` está ativa — Spec 049 CA-36/CA-37).
+    #[cfg(feature = "host-audio")]
     pub fn start_realtime_duplex_with_mode(
         duplex: Arc<RealtimeDuplexEngine>,
         dsp_chain: Arc<Mutex<RealtimeDspChain>>,
@@ -1296,6 +1321,7 @@ impl DesktopAudioHost {
     }
 
     /// Inicia streaming duplex real-time com dispositivos/taxa/buffer explícitos (Spec 034, CA-3, CA-4, CA-9).
+    #[cfg(feature = "host-audio")]
     pub fn start_realtime_wasapi_duplex_with_config(
         duplex: Arc<RealtimeDuplexEngine>,
         dsp_chain: Arc<Mutex<RealtimeDspChain>>,
@@ -1322,6 +1348,7 @@ impl DesktopAudioHost {
 
     /// Grava código de erro do callback CPAL sem alocar e sem locks (AUD-05).
     /// Prioriza `ErrorKind::DeviceNotAvailable` (1) sobre outros erros (2).
+    #[cfg(feature = "host-audio")]
     #[inline]
     pub fn record_cpal_stream_error(slot: &AtomicU8, err: cpal::Error) {
         let code = match err.kind() {
@@ -1337,6 +1364,7 @@ impl DesktopAudioHost {
         });
     }
 
+    #[cfg(feature = "host-audio")]
     fn start_realtime_duplex_on_host(
         host: &cpal::Host,
         backend_name: &str,
@@ -1700,6 +1728,7 @@ impl DesktopAudioHost {
     }
 }
 
+#[cfg(feature = "host-audio")]
 pub struct RealtimeDuplexAudioStreams {
     pub input_stream: cpal::Stream,
     pub output_stream: cpal::Stream,

@@ -14,73 +14,7 @@ pub enum GateState {
     Closed,
 }
 
-/// Biquad escalar TDF-II para filtragem de sidechain e envelope sem alocações na heap.
-#[derive(Debug, Clone, Copy)]
-struct SidechainBiquad {
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
-    z1: f32,
-    z2: f32,
-}
-
-impl SidechainBiquad {
-    fn identity() -> Self {
-        Self {
-            b0: 1.0,
-            b1: 0.0,
-            b2: 0.0,
-            a1: 0.0,
-            a2: 0.0,
-            z1: 0.0,
-            z2: 0.0,
-        }
-    }
-
-    fn set_hpf(&mut self, sample_rate: f32, cutoff_hz: f32, q: f32) {
-        let sr = sample_rate.max(1000.0);
-        let fc = cutoff_hz.clamp(10.0, sr * 0.45);
-        let w0 = 2.0 * std::f32::consts::PI * fc / sr;
-        let cos_w0 = w0.cos();
-        let alpha = w0.sin() / (2.0 * q.max(0.1));
-        let a0 = 1.0 + alpha;
-        self.b0 = ((1.0 + cos_w0) * 0.5) / a0;
-        self.b1 = (-(1.0 + cos_w0)) / a0;
-        self.b2 = ((1.0 + cos_w0) * 0.5) / a0;
-        self.a1 = (-2.0 * cos_w0) / a0;
-        self.a2 = (1.0 - alpha) / a0;
-    }
-
-    fn set_lpf(&mut self, sample_rate: f32, cutoff_hz: f32, q: f32) {
-        let sr = sample_rate.max(1000.0);
-        let fc = cutoff_hz.clamp(10.0, sr * 0.45);
-        let w0 = 2.0 * std::f32::consts::PI * fc / sr;
-        let cos_w0 = w0.cos();
-        let alpha = w0.sin() / (2.0 * q.max(0.1));
-        let a0 = 1.0 + alpha;
-        self.b0 = ((1.0 - cos_w0) * 0.5) / a0;
-        self.b1 = (1.0 - cos_w0) / a0;
-        self.b2 = ((1.0 - cos_w0) * 0.5) / a0;
-        self.a1 = (-2.0 * cos_w0) / a0;
-        self.a2 = (1.0 - alpha) / a0;
-    }
-
-    #[inline]
-    fn process(&mut self, x: f32) -> f32 {
-        let x = if x.is_finite() { x } else { 0.0 };
-        let y = crate::denormal::flush_f32(self.b0 * x + self.z1);
-        self.z1 = crate::denormal::flush_f32(self.b1 * x - self.a1 * y + self.z2);
-        self.z2 = crate::denormal::flush_f32(self.b2 * x - self.a2 * y);
-        if !y.is_finite() {
-            self.z1 = 0.0;
-            self.z2 = 0.0;
-            return 0.0;
-        }
-        y
-    }
-}
+use crate::biquad::BiquadTdf2F32 as SidechainBiquad;
 
 pub struct NoiseGateProcessor {
     mode: NoiseGateMode,
