@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 ampforge-dsp = { path = "../ampforge-dsp" }
 sonix-core = { path = "../sonix-core" }
 sonix-desktop = { path = "../sonix-desktop", default-features = false }
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
