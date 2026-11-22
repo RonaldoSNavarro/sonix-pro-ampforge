@@ -153,13 +153,13 @@ fn test_ca_03_frequency_range_c2_to_e6_and_rejection_below_60_hz() {
     assert_eq!(res_e6.note_name, "E6");
     assert!(res_e6.cents_deviation.abs() <= 1.0);
 
-    // 3. Abaixo de 60 Hz (ex: 50 Hz de zumbido) não deve reportar nota
+    // 3. Abaixo de 38 Hz (ex: 30 Hz abaixo de E1=41.2 Hz, AUD-33) não deve reportar nota
     let mut low_buf = vec![0.0f32; n];
     for (i, s) in low_buf.iter_mut().enumerate() {
-        *s = (2.0 * std::f32::consts::PI * 50.0 * (i as f32 / 48000.0)).sin() * 0.5;
+        *s = (2.0 * std::f32::consts::PI * 30.0 * (i as f32 / 48000.0)).sin() * 0.5;
     }
     let res_low = tuner.detect_pitch(&low_buf);
-    assert_eq!(res_low.note_name, "---", "Sinal abaixo de 60 Hz não deve reportar nota");
+    assert_eq!(res_low.note_name, "---", "Sinal abaixo de 38 Hz não deve reportar nota");
 }
 
 #[test]

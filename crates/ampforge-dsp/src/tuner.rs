@@ -1,5 +1,13 @@
 //! crates/ampforge-dsp/src/tuner.rs
-//! Afinador Estroboscópico de Alta Precisão (±0.1 cent) e Polifônico de 6 Cordas
+//! Afinador com Visual Estroboscópico (detecção YIN, ±0.1 cent, 38–1400 Hz; B0 30,9 Hz fora da faixa)
+//! e Polifônico de 6 Cordas.
+
+pub const DECISAO_SONIX_TEMPERAMENTO_E2: f32 = -2.4;
+pub const DECISAO_SONIX_TEMPERAMENTO_A2: f32 = -2.0;
+pub const DECISAO_SONIX_TEMPERAMENTO_D3: f32 = -1.6;
+pub const DECISAO_SONIX_TEMPERAMENTO_G3: f32 = -3.2;
+pub const DECISAO_SONIX_TEMPERAMENTO_B3: f32 = -1.0;
+pub const DECISAO_SONIX_TEMPERAMENTO_E4: f32 = -2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TunerMode {
@@ -79,8 +87,8 @@ impl TunerProcessor {
             a4_ref: 440.0,
             sample_rate: 48000.0,
             mute_gain: 1.0,
-            d_scratch: vec![0.0; 4096],
-            d_prime_scratch: vec![0.0; 4096],
+            d_scratch: vec![0.0; 8192],
+            d_prime_scratch: vec![0.0; 8192],
             last_poly_cents: [0.0; 6],
         }
     }
@@ -179,9 +187,9 @@ impl TunerProcessor {
         }
 
         // YIN Algorithm:
-        // Cobre de 58 Hz a 1450 Hz (Spec 026: 60 Hz a 1.4 kHz)
-        let max_lag = (n / 2).min((self.sample_rate / 58.0).ceil() as usize);
-        let min_lag = (self.sample_rate / 1450.0).floor() as usize;
+        // Cobre de 38 Hz a 1400 Hz (inclui E1 = 41,2 Hz; B0 = 30,9 Hz fica fora da faixa)
+        let max_lag = (n / 2).min((self.sample_rate / 38.0).ceil() as usize);
+        let min_lag = (self.sample_rate / 1450.0).floor().max(1.0) as usize;
 
         if max_lag <= min_lag {
             return TunerPitchResult {
@@ -285,9 +293,59 @@ impl TunerProcessor {
             center_tau as f32
         };
 
-        let freq = self.sample_rate / tau_sub;
+        let freq_init = self.sample_rate / tau_sub;
+        let freq = if freq_init > 330.0 {
+            let max_m = (n * 3 / 4).min(n.saturating_sub(6));
+            let k = ((max_m as f64) / (tau_sub as f64)).floor().max(1.0) as usize;
+            if k >= 2 {
+                let m_est = ((k as f64) * (tau_sub as f64)).round() as usize;
+                let half_win = ((tau_sub * 0.4).floor() as usize).max(4);
+                let m_lo = m_est.saturating_sub(half_win).max(2);
+                let m_hi = (m_est + half_win).min(n.saturating_sub(3));
+                let win_len = n - (m_hi + 1);
+                if win_len >= 64 && m_hi > m_lo + 1 {
+                    let mut best_m = m_est.clamp(m_lo, m_hi);
+                    let mut best_d = f64::INFINITY;
+                    let diff_sq = |m: usize| -> f64 {
+                        let mut sum = 0.0f64;
+                        for j in 0..win_len {
+                            let d = (signal[j] as f64) - (signal[j + m] as f64);
+                            sum += d * d;
+                        }
+                        sum
+                    };
+                    for m in m_lo..=m_hi {
+                        let d = diff_sq(m);
+                        if d < best_d {
+                            best_d = d;
+                            best_m = m;
+                        }
+                    }
+                    let m_sub = if best_m > m_lo && best_m < m_hi {
+                        let d0 = diff_sq(best_m - 1);
+                        let d1 = best_d;
+                        let d2 = diff_sq(best_m + 1);
+                        let denom = 2.0 * (d0 - 2.0 * d1 + d2);
+                        if denom.abs() > 1e-12 && (d0 - 2.0 * d1 + d2) > 0.0 {
+                            best_m as f64 + ((d0 - d2) / denom).clamp(-0.5, 0.5)
+                        } else {
+                            best_m as f64
+                        }
+                    } else {
+                        best_m as f64
+                    };
+                    (self.sample_rate as f64 / (m_sub / k as f64)) as f32
+                } else {
+                    freq_init
+                }
+            } else {
+                freq_init
+            }
+        } else {
+            freq_init
+        };
 
-        if freq < 60.0 || freq > 1400.0 {
+        if freq < 38.0 || freq > 1405.0 {
             return TunerPitchResult {
                 note_name: "---".to_string(),
                 cents_deviation: 0.0,
@@ -316,22 +374,22 @@ impl TunerProcessor {
         }
     }
 
-    /// Peterson StroboStomp "GTR" Sweetened Guitar Tuning offsets (cents relative to Equal Temperament):
+    /// Temperamento suavizado SONIX (cents relativos ao temperamento igual):
     /// E2 (-2.4), A2 (-2.0), D3 (-1.6), G3 (-3.2), B3 (-1.0), E4 (-2.0).
     fn sweetened_offset_cents(midi: i32) -> f32 {
         match midi {
-            40 => -2.4, // E2
-            45 => -2.0, // A2
-            50 => -1.6, // D3
-            55 => -3.2, // G3
-            59 => -1.0, // B3
-            64 => -2.0, // E4
+            40 => DECISAO_SONIX_TEMPERAMENTO_E2,
+            45 => DECISAO_SONIX_TEMPERAMENTO_A2,
+            50 => DECISAO_SONIX_TEMPERAMENTO_D3,
+            55 => DECISAO_SONIX_TEMPERAMENTO_G3,
+            59 => DECISAO_SONIX_TEMPERAMENTO_B3,
+            64 => DECISAO_SONIX_TEMPERAMENTO_E4,
             _ => match ((midi % 12) + 12) % 12 {
-                4 => -2.2,  // E
-                9 => -2.0,  // A
-                2 => -1.6,  // D
-                7 => -3.2,  // G
-                11 => -1.0, // B
+                4 => -2.2,                               // E
+                9 => DECISAO_SONIX_TEMPERAMENTO_A2,      // A
+                2 => DECISAO_SONIX_TEMPERAMENTO_D3,      // D
+                7 => DECISAO_SONIX_TEMPERAMENTO_G3,      // G
+                11 => DECISAO_SONIX_TEMPERAMENTO_B3,     // B
                 _ => 0.0,
             },
         }

@@ -1511,7 +1511,7 @@ export const CONTROLS_REGISTRY: ControlDescriptor[] = [
     id: 'tuner.view',
     screen: 'palco',
     group: 'palco_tuner',
-    label: 'Visão Estroboscópica / Polifônica',
+    label: 'Visual estroboscópico (detecção YIN) / Polifônico',
     kind: 'select',
     backendKey: null,
     visualOnly: true,

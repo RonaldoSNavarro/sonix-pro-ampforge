@@ -42,7 +42,7 @@ impl Default for CalibrationSession {
             cursor_pos: 0,
             tuner_enabled_at: 0,
             tuner_processor: TunerProcessor::new(),
-            tuner_scratch: vec![0.0; 4096],
+            tuner_scratch: vec![0.0; 8192],
         }
     }
 }

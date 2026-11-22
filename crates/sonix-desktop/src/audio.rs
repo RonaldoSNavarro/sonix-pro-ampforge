@@ -3162,7 +3162,7 @@ impl RealtimeDspChain {
             clean_input_ring: Arc::new(CleanInputRing::new(sample_rate)),
             scope_output_ring: Arc::new(CleanInputRing::new(sample_rate)),
             tuner_start_pos: 0,
-            tuner_scratch_read: if with_runtime_resources { vec![0.0; 4096] } else { Vec::new() },
+            tuner_scratch_read: if with_runtime_resources { vec![0.0; 8192] } else { Vec::new() },
             tuner_mute_gain: 1.0,
 
             param_queue: Arc::new(LockFreeParamQueue::new()),
@@ -5366,7 +5366,7 @@ impl RealtimeDspChain {
         chain.shared_topology_id = handles.shared_topology_id.clone();
         chain.test_riff_buffer =
             crate::calibration::generate_karplus_strong_riff(handles.sample_rate, 12345);
-        chain.tuner_scratch_read = vec![0.0; 4096];
+        chain.tuner_scratch_read = vec![0.0; 8192];
         chain.retired_reaper = RetiredReaper::with_queue(
             handles.resource_queue.retired_queue(),
             handles.resource_queue.retired_reclaimed(),

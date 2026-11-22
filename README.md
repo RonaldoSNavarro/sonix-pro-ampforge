@@ -55,7 +55,7 @@ Modelagem rigorosa dos esquemas elétricos originais:
 - **Roland RE-201 Space Echo:** Simulação fiel do mecanismo de fita de 3 cabeças de reprodução, saturação analógica de fita, mola interna e 12 modos de chaveamento originais.
 - **Reverbs:** Tube Spring (mola valvulada com dispersão all-pass) e algoritmo Freeverb (Jezar) — voicing Plate, Hall, Chamber e Shimmer granular (+12 semitons).
 - **Modulações:** Boss CE-2 BBD Chorus, Chorus 3 vozes (mono), MXR Phase 90, Through-Zero Flanger com feedback, Tremolo Óptico LDR (ataque 5 ms / soltura 60 ms) e Rotary Speaker dual-rotor (LR4 800 Hz).
-- **Pitch & Afinador:** Afinador estroboscópico e polifônico de alta precisão (algoritmo YIN 40 Hz – 1,4 kHz) e bloco de Harmonizador Diatônico inteligente.
+- **Pitch & Afinador:** Afinador com visual estroboscópico (detecção YIN 38 Hz – 1,4 kHz, cobre E1 = 41,2 Hz; B0 = 30,9 Hz fora da faixa) e modo polifônico de 6 cordas, além de bloco de Harmonizador Diatônico.
 
 ### 5. Gabinete Virtual & Convolução de IR
 - **Convolução de IR Zero-Latency:** Convolução particionada no domínio do tempo e da frequência para carregamento de Impulse Responses WAV (.wav) sem adição de latência.
