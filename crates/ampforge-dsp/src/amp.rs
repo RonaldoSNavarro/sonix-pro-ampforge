@@ -513,7 +513,7 @@ struct AmpCore {
     adaa_s4_prev: f64,
     adaa_power_prev: f64,
     interp_hist: [f64; 8],
-    aa_filters: [BiquadFilter; 14],
+    aa_filters: [BiquadFilter; 4],
     ai_filters: [BiquadFilter; 4],
     oversampling_factor: usize,
     sag_state: f64,
@@ -967,7 +967,7 @@ impl AmpCore {
             adaa_s4_prev: 0.0,
             adaa_power_prev: 0.0,
             interp_hist: [0.0; 8],
-            aa_filters: [BiquadFilter::default(); 14],
+            aa_filters: [BiquadFilter::default(); 4],
             ai_filters: [BiquadFilter::default(); 4],
             oversampling_factor: default_os,
             sag_state: 0.0,
@@ -1092,7 +1092,7 @@ impl AmpCore {
             y2: 0.0,
         };
         if self.oversampling_factor <= 1 {
-            self.aa_filters = [identity; 14];
+            self.aa_filters = [identity; 4];
             self.ai_filters = [identity; 4];
             return;
         }
@@ -1111,9 +1111,6 @@ impl AmpCore {
             };
             self.aa_filters[k] = b;
             self.ai_filters[k] = b;
-        }
-        for k in 4..14 {
-            self.aa_filters[k] = identity;
         }
     }
 
