@@ -1945,8 +1945,12 @@ impl AmpCore {
                 let soft_rail = (power_in_raw * 0.6).tanh() / 0.6;
                 let power_sat = soft_rail + (power_sat_raw - soft_rail) * nfb_linearization;
 
-                // 5. Speaker Resonance (NFB + Secondary Impedance) + Presence
-                let mut power_out = self.speaker_res_filter.process(power_sat * 0.30 * spongy_power_atten);
+                // 5. Speaker Resonance (NFB + Secondary Impedance) + Presence + Power Tube Headroom/Bias
+                let tube_out_scale = (0.65 + 0.35 * power_tube_headroom)
+                    * (0.93 + 0.07 * ((bias_ma_f - 20.0) / 35.0).clamp(0.0, 1.0));
+                let mut power_out = self
+                    .speaker_res_filter
+                    .process(power_sat * 0.30 * tube_out_scale * spongy_power_atten);
                 if self.model_id.has_presence() {
                     power_out = self.presence_filter.process(power_out);
                 }

@@ -52,6 +52,9 @@ fn test_ca_00_every_enum_option_in_registry_is_accepted_by_backend() {
         }
         for opt in ent["options"].as_array().unwrap() {
             let ctx = make_ctx();
+            if key == "amp_1.vib_trem_mode" {
+                let _ = post_params(&ctx, "amp_1.model", &json!("ac30_tb"));
+            }
             let (code, body) = post_params(&ctx, key, opt);
             if code != 200 {
                 rejeitados.push(format!("{key}={opt} -> {code} {body}"));

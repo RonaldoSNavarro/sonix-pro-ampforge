@@ -928,6 +928,7 @@ fn aud_15_saida_igual_a_convolucao_direta() {
     cab.set_sample_rate(48_000.0);
     cab.set_custom_ir(ImpulseResponse::from_samples(48_000.0, ir_samples.clone()));
     cab.set_ir_enabled(true);
+    cab.set_hicut_khz(18.0);
 
     let sig_len = 4096usize;
     let mut input = vec![0.0_f32; sig_len];
