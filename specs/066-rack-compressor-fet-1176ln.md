@@ -87,10 +87,10 @@ De acordo com o manual oficial de operação e serviço da UREI (`F-01`, Seçõe
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| Tempo de Attack continuamente variável de `20 µs` (`0,02 ms`) a `800 µs` (`0,8 ms`) | `F-01` | UREI 1176LN Rev C/D/E | Section I, p. 1-2 §1.5 "Specifications — Attack Time" | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Tempo de Release continuamente variável de `50 ms` a `1,1 s` (`1100 ms`) | `F-01` | UREI 1176LN Rev C/D/E | Section I, p. 1-2 §1.5 "Specifications — Release Time" | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Ratios selecionáveis por pushbutton: `4:1`, `8:1`, `12:1` e `20:1` alterando simultaneamente ganho do amplificador de controle e limiar de threshold | `F-01` | UREI 1176LN Rev C/D/E | Section I §1.5 & Section III "Theory of Operation" pp. 3-1 a 3-3 | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Atenuador JFET `Q1` (`2N5457`) com resistor série $R_5 = 27\text{ k}\Omega$, circuito `LN` dreno-porta e topologia *feedback* lida antes do pot `OUTPUT` | `F-01` | UREI 1176LN Rev C/D/E | Section III p. 3-1 Fig. 3-1 Block Diagram & Schematic | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| Tempo de Attack continuamente variável de `20 µs` (`0,02 ms`) a `800 µs` (`0,8 ms`) | `F-01` | UREI 1176LN Rev C/D/E | Section I, p. 1-2 §1.5 "Specifications — Attack Time" | `UNKNOWN` | `CONFIRMED` |
+| Tempo de Release continuamente variável de `50 ms` a `1,1 s` (`1100 ms`) | `F-01` | UREI 1176LN Rev C/D/E | Section I, p. 1-2 §1.5 "Specifications — Release Time" | `UNKNOWN` | `CONFIRMED` |
+| Ratios selecionáveis por pushbutton: `4:1`, `8:1`, `12:1` e `20:1` alterando simultaneamente ganho do amplificador de controle e limiar de threshold | `F-01` | UREI 1176LN Rev C/D/E | Section I §1.5 & Section III "Theory of Operation" pp. 3-1 a 3-3 | `UNKNOWN` | `CONFIRMED` |
+| Atenuador JFET `Q1` (`2N5457`) com resistor série $R_5 = 27\text{ k}\Omega$, circuito `LN` dreno-porta e topologia *feedback* lida antes do pot `OUTPUT` | `F-01` | UREI 1176LN Rev C/D/E | Section III p. 3-1 Fig. 3-1 Block Diagram & Schematic | `UNKNOWN` | `CONFIRMED` |
 
 ---
 

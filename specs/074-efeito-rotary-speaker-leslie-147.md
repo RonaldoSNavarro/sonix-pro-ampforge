@@ -92,15 +92,15 @@ De acordo com o *Leslie Model 147 Service Manual* (`F-01`) e a literatura acadê
 
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
-| `F-01` | Electro Music / CBS Musical Instruments — *Leslie Speaker Model 147 / 147RV Service Manual & Schematic* | Manual de serviço oficial Leslie 147 (`800 Hz` crossover, `Jensen V21`, `15"` woofer, `2× 6550` 40W amp, velocidades `Chorale/Tremolo` dos motores) | `PRIMARY_OFFICIAL` | Especificações eletromecânicas, crossover `800 Hz`, amplificador `6550` e velocidades dos rotores Horn e Drum. |
+| `F-01` | Electro Music / CBS Musical Instruments — *Leslie Speaker Model 147 / 147RV Service Manual & Schematic* | Manual de serviço oficial Leslie 147 (`800 Hz` crossover, `Jensen V21`, `15"` woofer, `2× 6550` 40W amp, velocidades `Chorale/Tremolo` dos motores) | `UNKNOWN` | Especificações eletromecânicas, crossover `800 Hz`, amplificador `6550` e velocidades dos rotores Horn e Drum. |
 | `F-02` | Julius O. Smith III, Stefania Serafin, Jonathan Abel, David Berners — *Doppler Simulation and the Leslie* (DAFx-02, Hamburg, 2002) & CCRMA PASP | `https://ccrma.stanford.edu/~jos/pasp/` (HTTP 200 verificado) | `ACADEMIC` | Equações físicas exatas do atraso Doppler, diretividade dependente do ângulo, frequências de rotação (`~0,8/6,7 Hz` Horn vs `~0,67/5,7 Hz` Drum) e constantes de inércia de aceleração/desaceleração. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| Crossover passivo de `800 Hz` dividindo o sinal entre corneta `Jensen V21` e tambor de graves `15"` | `F-01`, `F-02` | Leslie 147 | `F-01` Schematic; `F-02` §2 | `PRIMARY_OFFICIAL` / `ACADEMIC` | `CONFIRMED` |
-| Velocidades distintas de Horn (`~48 / 400 RPM` $\approx 0,80 / 6,67\text{ Hz}$) e Drum (`~40 / 342 RPM` $\approx 0,67 / 5,70\text{ Hz}$) com inércias mecânicas independentes (`~1 s` Horn vs `~5 s` Drum) | `F-01`, `F-02` | Leslie 147 | `F-02` §2–3 Table 1 | `PRIMARY_OFFICIAL` / `ACADEMIC` | `CONFIRMED` |
+| Crossover passivo de `800 Hz` dividindo o sinal entre corneta `Jensen V21` e tambor de graves `15"` | `F-01`, `F-02` | Leslie 147 | `F-01` Schematic; `F-02` §2 | `UNKNOWN` / `ACADEMIC` | `CONFIRMED` |
+| Velocidades distintas de Horn (`~48 / 400 RPM` $\approx 0,80 / 6,67\text{ Hz}$) e Drum (`~40 / 342 RPM` $\approx 0,67 / 5,70\text{ Hz}$) com inércias mecânicas independentes (`~1 s` Horn vs `~5 s` Drum) | `F-01`, `F-02` | Leslie 147 | `F-02` §2–3 Table 1 | `UNKNOWN` / `ACADEMIC` | `CONFIRMED` |
 | Modulação simultânea de Doppler ($\Delta\tau_h \approx \pm 0,525\text{ ms}$) e filtro direcional *off-axis* (AM + LPF dependente de $\theta$) | `F-02` | DAFx-02 / PASP | `F-02` §3–4 | `ACADEMIC` | `CONFIRMED` |
 
 ---

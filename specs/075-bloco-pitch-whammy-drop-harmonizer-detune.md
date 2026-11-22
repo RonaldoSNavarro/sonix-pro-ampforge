@@ -81,7 +81,7 @@ Preserva-se rastreabilidade completa à Spec anterior [042](042-bloco-de-pitch-s
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| Intervalos Whammy até `±24 semitons` (`±2 oitavas`) controlados continuamente pelo pedal de expressão (`heel = 0 st`, `toe = S`) | `F-01` | Whammy 5th Gen | `F-01` §"Whammy Settings & Specifications" | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| Intervalos Whammy até `±24 semitons` (`±2 oitavas`) controlados continuamente pelo pedal de expressão (`heel = 0 st`, `toe = S`) | `F-01` | Whammy 5th Gen | `F-01` §"Whammy Settings & Specifications" | `UNKNOWN` | `CONFIRMED` |
 | Razão de frequência $r = 2^{(S \cdot e)/12}$ e transposição em tempo real via dupla cabeça com janelamento complementar | `F-02` | DAFX 2nd ed. | Cap. 6 §6.2 | `ACADEMIC` | `CONFIRMED` |
 
 ---

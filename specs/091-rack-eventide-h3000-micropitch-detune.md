@@ -70,13 +70,13 @@ Especificar o contrato técnico, algorítmico e de verificação do efeito de es
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
 | `F-01` | Eventide Audio — *MicroPitch / H3000 MicroPitchShift Official Product Documentation* | `https://www.eventideaudio.com/pedals/micropitch/` (HTTP 200 oficial verificado) | `PRIMARY_OFFICIAL` | Arquitetura oficial dual-voice micro-pitch (`Pitch A`, `Pitch B`, `Delay A`, `Delay B`, `Mix`, `Tone`, `Feedback`) derivada diretamente do H3000 Preset 231. |
-| `F-02` | Eventide Inc. — *H3000 Ultra-Harmonizer Operating Manual (Preset 231 MicroPitchShift: -9/+9 cents, 12 ms / 20 ms)* | Manual de fábrica H3000 | `PRIMARY_OFFICIAL` | Valores clássicos de referência do algoritmo MicroPitchShift. |
+| `F-02` | Eventide Inc. — *H3000 Ultra-Harmonizer Operating Manual (Preset 231 MicroPitchShift: -9/+9 cents, 12 ms / 20 ms)* | Manual de fábrica H3000 | `UNKNOWN` | Valores clássicos de referência do algoritmo MicroPitchShift. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| Duas vozes estéreo independentes (`Pitch A < 0`, `Pitch B > 0`, padrão `-9 / +9 cents`) com pré-atrasos assimétricos (`~12 ms L` / `~20 ms R`) | `F-01`, `F-02` | H3000 / MicroPitch | `F-01` §"Features"; `F-02` Preset 231 | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| Duas vozes estéreo independentes (`Pitch A < 0`, `Pitch B > 0`, padrão `-9 / +9 cents`) com pré-atrasos assimétricos (`~12 ms L` / `~20 ms R`) | `F-01`, `F-02` | H3000 / MicroPitch | `F-01` §"Features"; `F-02` Preset 231 | `UNKNOWN` | `CONFIRMED` |
 
 ---
 

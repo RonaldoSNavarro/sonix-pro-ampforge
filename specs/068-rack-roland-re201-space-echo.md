@@ -96,16 +96,16 @@ Especificar o contrato técnico, físico, mecânico e de verificação da unidad
 
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
-| `F-01` | Roland Corporation — *Roland RE-201 Space Echo Official Product Reference & Panel Layout* | `https://www.roland.com/global/products/rc_re-201_space_echo/` (HTTP 200 oficial verificado) | `PRIMARY_OFFICIAL` | Arquitetura oficial das 3 cabeças de reprodução, motor capstan, tanque de mola integrado, equalizador de eco `Bass/Treble` e tabela das 12 posições do `MODE SELECTOR`. |
-| `F-02` | Roland Corporation — *RE-201 Space Echo Owner's Manual & Service Notes (1974/1977)* | Documentação técnica de serviço Roland (`Mode Selector Chart 1–12`, `Tape Speed 1.85 to 7.4 ips`, distâncias entre cabeças `H1/H2/H3`) | `PRIMARY_OFFICIAL` | Diagrama de chaveamento da chave rotativa de 12 posições e relações de tempo entre `H1`, `H2` e `H3`. |
+| `F-01` | Roland Corporation — *Roland RE-201 Space Echo Official Product Reference & Panel Layout* | `https://www.roland.com/global/products/rc_re-201_space_echo/` (HTTP 200 oficial verificado) | `SECONDARY` | Arquitetura oficial das 3 cabeças de reprodução, motor capstan, tanque de mola integrado, equalizador de eco `Bass/Treble` e tabela das 12 posições do `MODE SELECTOR`. |
+| `F-02` | Roland Corporation — *RE-201 Space Echo Owner's Manual & Service Notes (1974/1977)* | Documentação técnica de serviço Roland (`Mode Selector Chart 1–12`, `Tape Speed 1.85 to 7.4 ips`, distâncias entre cabeças `H1/H2/H3`) | `UNKNOWN` | Diagrama de chaveamento da chave rotativa de 12 posições e relações de tempo entre `H1`, `H2` e `H3`. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| 3 cabeças de reprodução (`H1`, `H2`, `H3`) com razões espaciais nominais $1 : 1,895 : 2,845$ | `F-01`, `F-02` | Roland RE-201 (1974) | Service Notes §"Head Block & Delay Time" | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Tabela oficial dos 12 modos (`1–4` Echo Only: `H1`, `H2`, `H3`, `H2+H3`; `5–11` Reverb+Echo: `H1`, `H2`, `H3`, `H1+H2`, `H2+H3`, `H1+H3`, `H1+H2+H3`; `12` Reverb Only) | `F-01`, `F-02` | Roland RE-201 (1974) | Painel frontal e `Mode Selector Chart` | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Controles de tom `BASS` e `TREBLE` aplicados exclusivamente ao canal de eco (`ECHO`), além de `REPEAT RATE`, `INTENSITY`, `ECHO VOLUME` e `REVERB VOLUME` | `F-01`, `F-02` | Roland RE-201 (1974) | Schematic & Front Panel | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| 3 cabeças de reprodução (`H1`, `H2`, `H3`) com razões espaciais nominais $1 : 1,895 : 2,845$ | `F-01`, `F-02` | Roland RE-201 (1974) | Service Notes §"Head Block & Delay Time" | `UNKNOWN` | `CONFIRMED` |
+| Tabela oficial dos 12 modos (`1–4` Echo Only: `H1`, `H2`, `H3`, `H2+H3`; `5–11` Reverb+Echo: `H1`, `H2`, `H3`, `H1+H2`, `H2+H3`, `H1+H3`, `H1+H2+H3`; `12` Reverb Only) | `F-01`, `F-02` | Roland RE-201 (1974) | Painel frontal e `Mode Selector Chart` | `UNKNOWN` | `CONFIRMED` |
+| Controles de tom `BASS` e `TREBLE` aplicados exclusivamente ao canal de eco (`ECHO`), além de `REPEAT RATE`, `INTENSITY`, `ECHO VOLUME` e `REVERB VOLUME` | `F-01`, `F-02` | Roland RE-201 (1974) | Schematic & Front Panel | `UNKNOWN` | `CONFIRMED` |
 
 ---
 

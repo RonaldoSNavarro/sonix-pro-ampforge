@@ -118,7 +118,7 @@ Conforme demonstrado na análise clássica de R. G. Keen (`F-01`, *The Technolog
      `let ratios = [1.0, 1.41, 2.0, 2.83];`
      com $f_{\text{base}} \in [120\text{ Hz},\; 1920\text{ Hz}]$.
    - Esses números (`1.0, √2, 2.0, 2√2`) representam um espaçamento arbitrário de meia-oitava (razão total de `2,83 : 1`), que **não tem nenhuma relação com os capacitores reais do Shin-ei Uni-Vibe** (`220 nF, 15 nF, 4.7 nF, 470 pF`), cujas frequências de polo guardam a razão física documentada **`[1.0, 14.667, 46.809, 468.085]`**!
-2. **`SOURCE_INVALID` (corrigido nesta revisão):** A URL anterior `http://www.geofex.com/article_folders/univibe/uvtech.htm` retornava HTTP 404 por dois motivos: o diretório no servidor Apache Unix do GEOFEX é case-sensitive (`Article_Folders`) e o nome real do arquivo é `univtech.htm` (`http://www.geofex.com/Article_Folders/univibe/univtech.htm`, verificado com HTTP 200).
+2. **`SOURCE_INVALID` (corrigido nesta revisão):** A URL anterior `[link 404 removido — AUD-41] retornava HTTP 404 por dois motivos: o diretório no servidor Apache Unix do GEOFEX é case-sensitive (`Article_Folders`) e o nome real do arquivo é `univtech.htm` (`http://www.geofex.com/Article_Folders/univibe/univtech.htm`, verificado com HTTP 200).
 
 ---
 

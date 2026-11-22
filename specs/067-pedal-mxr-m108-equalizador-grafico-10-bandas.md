@@ -68,7 +68,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 
 ## 6. Fontes técnicas autoritativas
 
-> **Honestidade documental (§4 / §11):** Os manuais oficiais da Dunlop para o **MXR M108** (`F-01`) e **MXR M108S** (`F-02`) são fontes `PRIMARY_OFFICIAL` que comprovam 100% das frequências centrais (`31,25 Hz` a `16 kHz`), a faixa de `±12 dB` das 10 bandas, a faixa de `±12 dB` dos faders `GAIN` e `VOLUME`, as impedâncias e o piso de ruído. Contudo, a Dunlop **não publica o esquema elétrico interno no manual do proprietário**; os detalhes internos do circuito girador (`MC33179` e a implementação da banda de `16 kHz` como girador vs capacitor shelf) provêm de levantamentos técnicos secundários (`SECONDARY_TECHNICAL`). Portanto, a validação circuit-level exata dos resistores/capacitores internos dos 10 giradores é declarada como `PENDING` / `bloqueio parcial documental` até obtenção do *MXR M108 Factory Service Schematic*.
+> **Honestidade documental (§4 / §11):** Os manuais oficiais da Dunlop para o **MXR M108** (`F-01`) e **MXR M108S** (`F-02`) são fontes `UNKNOWN` que comprovam 100% das frequências centrais (`31,25 Hz` a `16 kHz`), a faixa de `±12 dB` das 10 bandas, a faixa de `±12 dB` dos faders `GAIN` e `VOLUME`, as impedâncias e o piso de ruído. Contudo, a Dunlop **não publica o esquema elétrico interno no manual do proprietário**; os detalhes internos do circuito girador (`MC33179` e a implementação da banda de `16 kHz` como girador vs capacitor shelf) provêm de levantamentos técnicos secundários (`SECONDARY_TECHNICAL`). Portanto, a validação circuit-level exata dos resistores/capacitores internos dos 10 giradores é declarada como `PENDING` / `bloqueio parcial documental` até obtenção do *MXR M108 Factory Service Schematic*.
 
 ### 6.1. Classificação das fontes
 
@@ -82,9 +82,9 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| 10 frequências centrais: `31.25, 62.5, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz` | `F-01`, `F-02` | MXR M108 / M108S | `F-01` p. 1–2 "Controls & Specifications"; `F-02` p. 2 | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Faixa de Cut/Boost de **`±12 dB`** para todas as 10 bandas, `GAIN` (`±12 dB`) e `VOLUME` (`±12 dB`) | `F-01`, `F-02` | MXR M108 / M108S | `F-01` p. 2 "Specifications"; `F-02` p. 2 "Filter Specs" | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Alimentação de `18 V` DC para alto headroom (`+14 dBV` max input/output) | `F-01`, `F-02` | MXR M108 / M108S | `F-01` p. 2 "Power"; `F-02` p. 2 | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| 10 frequências centrais: `31.25, 62.5, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz` | `F-01`, `F-02` | MXR M108 / M108S | `F-01` p. 1–2 "Controls & Specifications"; `F-02` p. 2 | `UNKNOWN` | `CONFIRMED` |
+| Faixa de Cut/Boost de **`±12 dB`** para todas as 10 bandas, `GAIN` (`±12 dB`) e `VOLUME` (`±12 dB`) | `F-01`, `F-02` | MXR M108 / M108S | `F-01` p. 2 "Specifications"; `F-02` p. 2 "Filter Specs" | `UNKNOWN` | `CONFIRMED` |
+| Alimentação de `18 V` DC para alto headroom (`+14 dBV` max input/output) | `F-01`, `F-02` | MXR M108 / M108S | `F-01` p. 2 "Power"; `F-02` p. 2 | `UNKNOWN` | `CONFIRMED` |
 | Valores exatos dos resistores e capacitores internos de cada um dos 10 giradores na PCB da Dunlop | Esquema de serviço não incluído no manual público `M108.pdf` | MXR M108 | N/A | `UNKNOWN` | `PENDING` (`BLOCKED` para modelagem component-level dos 10 giradores; modelado analiticamente via banco Proportional-Q calibrado nas 10 frequências e `±12 dB` oficiais) |
 
 ---

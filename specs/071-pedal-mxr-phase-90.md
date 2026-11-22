@@ -85,7 +85,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 |---|---|---|---|---|---|
 | 4 estágios All-Pass idênticos ($C = 47\text{ nF}$, $R_p = 24\text{ k}\Omega \parallel \text{2N5952}$) gerando 2 notches em $0,4142\,f_b$ e $2,4142\,f_b$ | `F-01` | 1974 Script / 1977 Block | `F-01` §"All-Pass Filters & Frequency Response" | `SECONDARY_TECHNICAL` | `CONFIRMED` |
 | Ausência de realimentação (`feedback = 0.0`) na versão `1974 Script Logo` vs resistor $R_{28}$ na versão `Block Logo` | `F-01` | Script vs Block Logo | `F-01` §"Script vs Block Logo (R28 Feedback)" | `SECONDARY_TECHNICAL` | `CONFIRMED` |
-| Apenas 1 knob físico (`SPEED`) e soma fixa 50/50 ($150\text{ k}\Omega / 150\text{ k}\Omega$) no hardware original | `F-01`, `F-02` | M101 / CSP-026 | `F-02` p. 1; `F-01` §"Output Stage" | `PRIMARY_OFFICIAL` / `SECONDARY_TECHNICAL` | `CONFIRMED` |
+| Apenas 1 knob físico (`SPEED`) e soma fixa 50/50 ($150\text{ k}\Omega / 150\text{ k}\Omega$) no hardware original | `F-01`, `F-02` | M101 / CSP-026 | `F-02` p. 1; `F-01` §"Output Stage" | `UNKNOWN` / `SECONDARY_TECHNICAL` | `CONFIRMED` |
 
 ---
 

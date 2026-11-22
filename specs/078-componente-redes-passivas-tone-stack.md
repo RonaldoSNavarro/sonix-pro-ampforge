@@ -85,8 +85,8 @@ Conforme derivado simbolicamente por David T. Yeh & Julius O. Smith III (`F-01`,
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
 | Equação simbólica de 3ª ordem $H_{\text{FMV}}(s)$ incluindo $R_{\text{src}}$ e discretização Tustin exata | `F-01` | DAFx-06 | `F-01` §2–4 Eq. (2)–(13), pp. 2–5 | `ACADEMIC` | `CONFIRMED` |
-| Parâmetros exatos Marshall 1959/JCM800 (`33k / 470p–500p / 22n / 22n`, $R_{\text{src}} \approx 1,3\text{ k}\Omega$) e Fender AB763 (`100k / 250p / 100n / 47n`, $R_{\text{src}} \approx 38\text{ k}\Omega$) | `F-01`, `F-02`, Specs 054–056 | 1959 / 2203 / AB763 | `F-01` & Esquemas de fábrica | `PRIMARY_OFFICIAL` / `ACADEMIC` | `CONFIRMED` |
-| Parâmetros exatos Vox Top Boost `OS/010` (`100k / 50p / 22n / 22n`, `1M Bass/Treble`, `10k` fixo sem pot `Mid`) | `F-02`, Spec 058 | Vox `OS/010` | Esquema `OS/010` | `PRIMARY_OFFICIAL` / `SECONDARY_TECHNICAL` | `CONFIRMED` |
+| Parâmetros exatos Marshall 1959/JCM800 (`33k / 470p–500p / 22n / 22n`, $R_{\text{src}} \approx 1,3\text{ k}\Omega$) e Fender AB763 (`100k / 250p / 100n / 47n`, $R_{\text{src}} \approx 38\text{ k}\Omega$) | `F-01`, `F-02`, Specs 054–056 | 1959 / 2203 / AB763 | `F-01` & Esquemas de fábrica | `UNKNOWN` / `ACADEMIC` | `CONFIRMED` |
+| Parâmetros exatos Vox Top Boost `OS/010` (`100k / 50p / 22n / 22n`, `1M Bass/Treble`, `10k` fixo sem pot `Mid`) | `F-02`, Spec 058 | Vox `OS/010` | Esquema `OS/010` | `UNKNOWN` / `SECONDARY_TECHNICAL` | `CONFIRMED` |
 | Valores internos do Tone Stack da revisão exata **Mesa Dual Rectifier Rev F** (`C1`, `R_slope`, `R_bass`) | Spec 057 §6.2 | Dual Rectifier Rev F | Pendente esquema oficial Rev F | `UNKNOWN` | `PENDING` (`BLOCKED` para validação component-level exata de Rev F) |
 
 ---

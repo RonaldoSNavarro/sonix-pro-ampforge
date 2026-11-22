@@ -76,7 +76,7 @@ Especificar o contrato técnico, algorítmico e de verificação do pedal de afi
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| 9 posições oficiais: `-1` a `-7 semitons`, `-1 Oitava (100% Wet)` e `-1 Oitava + Dry` | `F-01` | DigiTech Drop | `F-01` §"Controls & Specifications" | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| 9 posições oficiais: `-1` a `-7 semitons`, `-1 Oitava (100% Wet)` e `-1 Oitava + Dry` | `F-01` | DigiTech Drop | `F-01` §"Controls & Specifications" | `UNKNOWN` | `CONFIRMED` |
 | Preservação de coerência de fase em sinais polifônicos e transientes via *Phase-Locking* / *WSOLA* | `F-02` | IEEE TSAP 1999 | §III–IV | `ACADEMIC` | `CONFIRMED` |
 
 ---

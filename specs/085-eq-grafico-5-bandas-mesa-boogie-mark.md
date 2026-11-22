@@ -70,15 +70,15 @@ Nos amplificadores Mesa/Boogie Mark Series, o Tone Stack passivo rotativo (`Bass
 
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
-| `F-01` | Mesa/Boogie — *Mark IV / Mark V / Five-Band Graphic EQ Owner's Manuals* | Manuais oficiais do fabricante (`80 Hz, 240 Hz, 750 Hz, 2200 Hz, 6600 Hz`, posicionamento pós-pré-amp, ±12 dB nominal) | `PRIMARY_OFFICIAL` | Frequências centrais oficiais das 5 bandas e papel na cadeia do amplificador. |
+| `F-01` | Mesa/Boogie — *Mark IV / Mark V / Five-Band Graphic EQ Owner's Manuals* | Manuais oficiais do fabricante (`80 Hz, 240 Hz, 750 Hz, 2200 Hz, 6600 Hz`, posicionamento pós-pré-amp, ±12 dB nominal) | `UNKNOWN` | Frequências centrais oficiais das 5 bandas e papel na cadeia do amplificador. |
 | `F-02` | Análises técnicas de circuitos LC da série Mark (comunidade técnica / engenharia reversa de PCB) | Referência secundária para fatores $Q$ e acoplamento entre bandas | `SECONDARY_TECHNICAL` | Fator de qualidade aproximado ($Q \approx 1,0..1,9$) e curva em V. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| 5 frequências centrais: `80 Hz, 240 Hz, 750 Hz, 2200 Hz, 6600 Hz` | `F-01` | Mark IIC+ / Mark IV / Mark V | Seção "5-Band Graphic EQ" | `PRIMARY_OFFICIAL` | `CONFIRMED` |
-| Posicionamento pós-pré-amplificador (moldagem espectral pós-distorção) | `F-01` | Mark Series | Diagrama de blocos do manual | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| 5 frequências centrais: `80 Hz, 240 Hz, 750 Hz, 2200 Hz, 6600 Hz` | `F-01` | Mark IIC+ / Mark IV / Mark V | Seção "5-Band Graphic EQ" | `UNKNOWN` | `CONFIRMED` |
+| Posicionamento pós-pré-amplificador (moldagem espectral pós-distorção) | `F-01` | Mark Series | Diagrama de blocos do manual | `UNKNOWN` | `CONFIRMED` |
 | Valores nominais exatos das 5 bobinas indutoras ($L_1..L_5$) e capacitores de tanque na PCB de fábrica `Mark IIC+` vs `Mark IV` | Esquema de serviço de fábrica não verificado em fonte primária local | Mark IIC+ / IV | N/A | `UNKNOWN` | `PENDING` (`BLOCKED` para modelagem component-level dos 5 indutores; modelado via banco Proportional-Q calibrado nas 5 frequências oficiais) |
 
 ---

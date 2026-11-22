@@ -67,7 +67,7 @@ Em cadeias de guitarra de alto ganho (como JCM800 + TS808 ou Dual Rectifier Red 
 | `F-01` | Udo Zölzer — *DAFX: Digital Audio Effects* (2nd ed., Wiley, 2011), Cap. 4 (*Dynamic Range Control — Noise Gates & Expanders with Hysteresis*) | Literatura acadêmica de referência em processamento dinâmico digital | `ACADEMIC` | Equações de detecção de envoltória recursiva, curva estática de noise gate com histerese dupla ($\theta_{\text{open}}, \theta_{\text{close}}$), `Hold` e suavização de ganho (`Attack`/`Release`). |
 | `F-02` | Siegfried Linkwitz — *Active Crossover Networks for Noncoincident Drivers* (JAES, Vol. 24, No. 1, 1976) | Literatura acadêmica de referência para filtros Linkwitz-Riley (`LR4`) | `ACADEMIC` | Topologia em cascata de dois filtros Butterworth de 2ª ordem ($Q = 0,7071$) totalizando `-6,02 dB` em $f_c$ e inclinação assintótica de `24 dB/oitava`. |
 | `F-03` | Boss Corporation — *NS-2 Noise Suppressor Owner's Manual* | `https://www.boss.info/global/support/by_product/ns-2/owners_manuals/` (HTTP 200 verificado) | `PRIMARY_OFFICIAL` | Referência de contraste: comprova que o NS-2 real possui apenas `Threshold`, `Decay` e `Mode`, justificando a classificação deste processador de 6 controles como `modulo-dsp`. |
-| `F-04` | Buck Waller (ISP Technologies) — *US Patent 6,944,305 / 7,035,413: Dynamic Adaptive Time Constant Circuit for Noise Reduction* | USPTO Patent Archive | `PRIMARY_OFFICIAL` | Referência de contraste: documenta a topologia analógica de vetor de tempo do Decimator, distinta da arquitetura digital `LR4 + Hysteresis + Hold` deste módulo. |
+| `F-04` | Buck Waller (ISP Technologies) — *US Patent 6,944,305 / 7,035,413: Dynamic Adaptive Time Constant Circuit for Noise Reduction* | USPTO Patent Archive | `UNKNOWN` | Referência de contraste: documenta a topologia analógica de vetor de tempo do Decimator, distinta da arquitetura digital `LR4 + Hysteresis + Hold` deste módulo. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
@@ -75,7 +75,7 @@ Em cadeias de guitarra de alto ganho (como JCM800 + TS808 ou Dual Rectifier Red 
 |---|---|---|---|---|---|
 | Cascata de dois filtros Butterworth de 2ª ordem ($Q = 1/\sqrt{2}$) forma um filtro Linkwitz-Riley de 4ª ordem (`24 dB/oitava`, `-6 dB` em $f_c$) | `F-02` | JAES 1976 | §2–3 | `ACADEMIC` | `CONFIRMED` |
 | Histerese dupla ($\theta_{\text{close}} = \theta_{\text{open}} - H_{\text{dB}}$) previne *chattering* quando a envoltória oscila próximo ao limiar | `F-01` | DAFX 2nd ed. | Cap. 4 §4.2 | `ACADEMIC` | `CONFIRMED` |
-| Distinção entre o módulo algorítmico de 6 parâmetros do AMPFORGE e os pedais comerciais NS-2 / ISP Decimator | `F-03`, `F-04` | Manuais/Patentes oficiais | Especificações gerais | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| Distinção entre o módulo algorítmico de 6 parâmetros do AMPFORGE e os pedais comerciais NS-2 / ISP Decimator | `F-03`, `F-04` | Manuais/Patentes oficiais | Especificações gerais | `UNKNOWN` | `CONFIRMED` |
 
 ---
 

@@ -71,16 +71,16 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
-| `F-01` | Fender Electric Instrument Co. — *Twin Reverb Model AB763 Schematic Diagram (1963)* (referenciado via Spec 056) | Esquema oficial `AB763` (`V5B` Phase-Shift Oscillator, Optocoupler Neon/LDR, $R_s = 220\text{ k}\Omega$, `Intensity 50kΩ RA`, `Speed 3MΩ RA`) | `PRIMARY_OFFICIAL` | Topologia do divisor resistivo shunt-LDR e estágio oscilador do circuito `AB763`. |
+| `F-01` | Fender Electric Instrument Co. — *Twin Reverb Model AB763 Schematic Diagram (1963)* (referenciado via Spec 056) | Esquema oficial `AB763` (`V5B` Phase-Shift Oscillator, Optocoupler Neon/LDR, $R_s = 220\text{ k}\Omega$, `Intensity 50kΩ RA`, `Speed 3MΩ RA`) | `UNKNOWN` | Topologia do divisor resistivo shunt-LDR e estágio oscilador do circuito `AB763`. |
 | `F-02` | R. G. Keen (GEOFEX) — *Analysis of Fender Optocoupler Tremolo Circuits* & *VTL5C / CdS Optocoupler Datasheets (PerkinElmer / Excelitas)* | Datasheets oficiais de células CdS (`Rise Time ~5–10 ms`, `Decay Time ~35–50 ms`, relação log-log $R_{\text{LDR}}(I)$) | `PRIMARY_COMPONENT` / `SECONDARY_TECHNICAL` | Constantes de tempo assimétricas de ataque/recuperação do fotoresistor CdS. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| Divisor resistivo passivo shunt-LDR com $R_s = 220\text{ k}\Omega$ na saída do pré-amplificador | `F-01` | Fender `AB763` (1963) | Esquema `AB763` (bloco Vibrato) | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| Divisor resistivo passivo shunt-LDR com $R_s = 220\text{ k}\Omega$ na saída do pré-amplificador | `F-01` | Fender `AB763` (1963) | Esquema `AB763` (bloco Vibrato) | `UNKNOWN` | `CONFIRMED` |
 | Constantes de tempo fotoquímicas assimétricas do CdS ($\tau_{\text{att}} < \tau_{\text{rel}}$: `~8 ms` vs `~40 ms`) | `F-02` | CdS LDR Datasheets | Curvas de resposta temporal CdS | `PRIMARY_COMPONENT` | `CONFIRMED` |
-| Linearidade do elemento resistivo CdS (modulação de amplitude limpa sem alteração de bias de válvula de potência) | `F-01`, `F-02` | `AB763` | Análise de circuito | `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| Linearidade do elemento resistivo CdS (modulação de amplitude limpa sem alteração de bias de válvula de potência) | `F-01`, `F-02` | `AB763` | Análise de circuito | `UNKNOWN` | `CONFIRMED` |
 
 ---
 

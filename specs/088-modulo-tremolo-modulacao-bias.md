@@ -69,14 +69,14 @@ Em um estágio push-pull `2× 6V6GT` com bias negativo $V_{\text{bias}}(t) = V_{
 
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
-| `F-01` | Fender Electric Instrument Co. — *Princeton Reverb Model AA1164 & Deluxe 6G3 Schematic Diagrams (1961–1964)* | Esquemas oficiais de fábrica Fender (injeção do oscilador de vibrato diretamente no barramento `-V_bias` das grades de `2× 6V6GT`) | `PRIMARY_OFFICIAL` | Topologia de modulação de bias em modo comum sobre par push-pull `6V6GT`. |
+| `F-01` | Fender Electric Instrument Co. — *Princeton Reverb Model AA1164 & Deluxe 6G3 Schematic Diagrams (1961–1964)* | Esquemas oficiais de fábrica Fender (injeção do oscilador de vibrato diretamente no barramento `-V_bias` das grades de `2× 6V6GT`) | `UNKNOWN` | Topologia de modulação de bias em modo comum sobre par push-pull `6V6GT`. |
 | `F-02` | Pakarinen & Yeh (2009) — *A Review of Digital Techniques for Modeling Vacuum-Tube Guitar Amplifiers* | Literatura acadêmica de referência (CMJ 2009) | `ACADEMIC` | Equação diferencial push-pull $i_+(V_b + x) - i_-(V_b - x)$ e lei de Child-Langmuir $3/2$. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
-| Modulação em modo comum de $V_{\text{bias}}(t)$ em par push-pull cancela o LFO DC e varia simultaneamente $g_m$ e distorção harmônica | `F-01`, `F-02` | `AA1164` / `6G3` | Esquema de fábrica / §Power Stage | `PRIMARY_OFFICIAL` / `ACADEMIC` | `CONFIRMED` |
+| Modulação em modo comum de $V_{\text{bias}}(t)$ em par push-pull cancela o LFO DC e varia simultaneamente $g_m$ e distorção harmônica | `F-01`, `F-02` | `AA1164` / `6G3` | Esquema de fábrica / §Power Stage | `UNKNOWN` / `ACADEMIC` | `CONFIRMED` |
 
 ---
 

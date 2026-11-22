@@ -21,7 +21,7 @@ Este documento registra as referências documentais auditadas para a modelagem d
 
 ## 2. Marshall JCM800 2203 (`BritJcm800_2203` — Spec 055)
 - **Fontes de referência:**
-  - Painel e controles (`PRIMARY_OFFICIAL`): *Marshall JCM800 2203 Owners Manual* (`BOOK-00067-00 / 2 / 02`, `docs/ui-desktop/fontes/marshall-jcm800-2203-owners-manual-de.pdf`, pp. 17–18; nota: manual da reedição 2203X com FX Loop traseiro bypassável; o 2203 de 1981 não possui FX loop).
+  - Painel e controles (`SECONDARY`): *Marshall JCM800 2203 Owners Manual* (`BOOK-00067-00 / 2 / 02`, `docs/ui-desktop/fontes/marshall-jcm800-2203-owners-manual-de.pdf`, pp. 17–18; nota: manual da reedição 2203X com FX Loop traseiro bypassável; o 2203 de 1981 não possui FX loop).
   - Circuito interno 1981 (`SECONDARY_TECHNICAL`): arquivo de esquemas Marshall JMP/JCM800 2203 (`https://drtube.com/marshall/`) e análise técnica de Rob Robinette (`https://robrobinette.com/How_the_Marshall_JCM800_Works.htm`).
 - **Tone Stack (`MarshallCathodeFollower`, acionado por V2b Cathode Follower):**
   - `R_slope = 33 kΩ`, `R_treble = 220 kΩ`, `R_bass = 1 MΩ`, `R_mid = 22 kΩ`, `C1 = 470 pF`, `C2 = 22 nF`, `C3 = 22 nF`.
@@ -45,7 +45,7 @@ Este documento registra as referências documentais auditadas para a modelagem d
 
 ## 4. Mesa/Boogie Dual Rectifier Rev F (`CaliDualRectoRevF` — Spec 057)
 - **Fontes de referência e limitações documentais:**
-  - Manual de operação (`PRIMARY_OFFICIAL`): *Mesa/Boogie Dual Rectifier Solo Head Owner's Manual* (confirma chaves `Bold/Spongy` variac, `Silicon Diodes / 5U4G`, modos `Orange` e `Red Modern` sem NFB global).
+  - Manual de operação (`UNKNOWN`): *Mesa/Boogie Dual Rectifier Solo Head Owner's Manual* (confirma chaves `Bold/Spongy` variac, `Silicon Diodes / 5U4G`, modos `Orange` e `Red Modern` sem NFB global).
   - Esquema `RF-1F` (`SECONDARY_TECHNICAL` / `UNKNOWN`): reconstruções comunitárias da revisão F de 2 canais (1992) apresentam divergências nos valores do tone stack entre os canais Orange e Red (`R_slope = 39 kΩ` vs `47 kΩ`, `C1 = 250 pF` vs `470 pF` vs `500–680 pF`, `R_bass = 250 kΩ` vs `1 MΩ` vs `25 kΩ`). Os requisitos que dependem desses valores permanecem classificados como `PENDING` / `BLOCKED` na Spec 057 até verificação em esquema primário `RF-1F` autenticado.
 - **Tone Stack atual no código (`tonestack.rs:94–107`, variante `MesaMarkPreGain`):** `39 kΩ` slope, `C1 = 470 pF`, `C2 = 22 nF`, `C3 = 22 nF`, `R_treble = 250 kΩ`, `R_bass = 250 kΩ`, `R_mid = 25 kΩ` (`INTERNAL_REFERENCE`).
 - **Voicing físico e divergências registradas (`amp.rs:824–827, 1151–1164`):**

@@ -88,7 +88,7 @@ De acordo com a análise esquemática do Boss CE-2 (`F-01`) e o manual oficial d
 |---|---|---|---|---|---|
 | BBD `MN3007` de 1024 estágios com atraso $\tau = 512 / f_{\text{clk}} \in [5,12\text{ ms},\; 12,8\text{ ms}]$ para $f_{\text{clk}} \in [40\text{ kHz},\; 100\text{ kHz}]$ | `F-01`, `F-03` | Boss CE-2 1979 | `F-01` §"BBD Stage (MN3007 & MN3101)"; `F-03` p. 1 | `SECONDARY_TECHNICAL` / `PRIMARY_COMPONENT` | `CONFIRMED` |
 | Redes complementares de Pré-Ênfase (`+15,4 dB`) e De-Ênfase (`-15,4 dB`) entre `225 Hz` e `1560 Hz` + filtros anti-aliasing/reconstrução `~6,8 kHz` exclusivamente no ramo Wet | `F-01` | Boss CE-2 1979 | `F-01` §"Pre-Emphasis and De-Emphasis / Anti-Aliasing Filters" | `SECONDARY_TECHNICAL` | `CONFIRMED` |
-| LFO de onda triangular (`TL022CP`) e soma fixa 50/50 Dry/Wet ($R_{18}=R_{19}=47\text{ k}\Omega$) com apenas 2 knobs físicos (`Rate`, `Depth`) | `F-01`, `F-02` | Boss CE-2 1979 | `F-01` §"LFO Stage & Output Mixer"; `F-02` | `SECONDARY_TECHNICAL` / `PRIMARY_OFFICIAL` | `CONFIRMED` |
+| LFO de onda triangular (`TL022CP`) e soma fixa 50/50 Dry/Wet ($R_{18}=R_{19}=47\text{ k}\Omega$) com apenas 2 knobs físicos (`Rate`, `Depth`) | `F-01`, `F-02` | Boss CE-2 1979 | `F-01` §"LFO Stage & Output Mixer"; `F-02` | `SECONDARY_TECHNICAL` / `UNKNOWN` | `CONFIRMED` |
 
 ---
 
