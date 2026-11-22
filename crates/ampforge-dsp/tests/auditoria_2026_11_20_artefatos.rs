@@ -378,10 +378,10 @@ fn collect_aud_11_step_cases() -> Vec<(&'static str, bool, f32, Vec<f32>, Vec<f3
             a.panel_mut().set_presence(if hi { 10.0 } else { 0.0 });
         }),
         ("amp.master", &[1000.0], AmpModelId::BritJcm800_2203, |a, hi| {
-            a.panel_mut().set_master_volume(if hi { 9.5 } else { 0.5 });
+            a.panel_mut().set_master_volume(if hi { 10.0 } else { 0.0 });
         }),
         ("amp.volume_2", &[1000.0], AmpModelId::UkAc30TopBoost, |a, hi| {
-            a.panel_mut().set_volume_2(if hi { 9.5 } else { 0.5 });
+            a.panel_mut().set_volume_2(if hi { 10.0 } else { 0.0 });
         }),
         ("amp.cut", &[1000.0, 4000.0], AmpModelId::UkAc30TopBoost, |a, hi| {
             a.panel_mut().set_cut(if hi { 10.0 } else { 0.0 });
