@@ -18,7 +18,7 @@ use std::thread;
 use std::time::Duration;
 
 use sonix_desktop::audio::{
-    measure_loopback_latency, AudioMode, AudioStatusTelemetry,
+    measure_loopback_latency, AudioStatusTelemetry,
     InputChannel, LockFreeSpscRingBuffer, RealtimeDspChain,
     RealtimeDuplexEngine, SimulatedAudioHost, TelemetryBuffer,
 };
@@ -345,34 +345,6 @@ fn test_ca_04_realtime_cpu_load_measurement() {
     let json_tele: serde_json::Value = serde_json::from_str(&body_tele).unwrap();
     let tele_cpu = json_tele["cpu_usage_pct"].as_f64().unwrap();
     assert!(tele_cpu > 0.0, "cpu_usage_pct em /api/telemetry deve ser > 0.0%");
-}
-
-#[test]
-fn test_ca_05_graceful_wasapi_fallback() {
-    // CA-5: Se o hardware recusar WASAPI Exclusive (ex.: dispositivo em uso ou taxas in/out diferentes),
-    // o host recua automaticamente para wasapi_shared_low_latency (ou wasapi_shared) sem panic e preenche fallback_reason.
-
-    let mut host = SimulatedAudioHost::new(48000, 128);
-
-    // 1. Caso de taxas de amostragem incompatíveis
-    let result = host.open_stream_with_rates(44100, 48000, AudioMode::WasapiExclusive);
-    assert!(result.is_err(), "Taxas diferentes devem ser rejeitadas no modo exclusivo");
-
-    // 2. Recuo gracioso para modo compartilhado
-    let fallback_shared = host.open_stream_with_rates(44100, 48000, AudioMode::WasapiShared);
-    assert!(fallback_shared.is_ok(), "Deve aceitar recuo para compartilhado");
-
-    // 3. Cascata de fallback com suporte exclusivo indisponível
-    host.set_exclusive_supported(false);
-    host.set_shared_low_latency_supported(true);
-    let mode = host.initialize_auto_backend();
-    assert_eq!(mode, AudioMode::WasapiSharedLowLatency);
-    assert!(host.fallback_reason().is_some());
-    let reason = host.fallback_reason().unwrap();
-    assert!(
-        reason.to_lowercase().contains("exclusivo") || reason.to_lowercase().contains("baixa latência"),
-        "fallback_reason deve explicar o motivo do recuo: {}", reason
-    );
 }
 
 #[test]

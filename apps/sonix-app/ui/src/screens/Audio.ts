@@ -117,7 +117,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     const drivers: Array<[string, string, boolean, string]> = [
       ['wasapi_shared', 'WASAPI Compartilhado', Boolean(caps.wasapi_shared), ''],
       ['wasapi_shared_low_latency', 'WASAPI Compartilhado (Baixa Latência)', Boolean(caps.wasapi_shared_low_latency), ''],
-      ['wasapi_exclusive', 'WASAPI Exclusivo', Boolean(caps.wasapi_exclusive), 'Indisponível para este dispositivo'],
+      ['wasapi_exclusive', 'WASAPI Exclusivo', Boolean(caps.wasapi_exclusive), 'não implementado'],
       ['asio', 'ASIO (Driver Nativo)', Boolean(caps.asio), 'Indisponível — requer interface e driver ASIO instalado'],
     ];
     for (const [val, text, supported, titleHint] of drivers) {

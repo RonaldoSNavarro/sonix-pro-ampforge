@@ -1,8 +1,8 @@
 ---
 spec: 028
 titulo: Atraso audível no áudio por streams separados com Mutex, fila de 50ms e falta de modo exclusivo/IAudioClient3
-status: implementada
-atualizado: 2026-11-13
+status: parcial — WASAPI exclusivo/IAudioClient3 não implementado (has_mode_support(WasapiExclusive) == false, crates/sonix-desktop/src/audio.rs:832-838)
+atualizado: 2026-11-20
 ---
 # 028 — Latência Ultrabaixa Real (WASAPI Exclusive / IAudioClient3) e Callback 100% Lock-Free / Zero-Alloc
 

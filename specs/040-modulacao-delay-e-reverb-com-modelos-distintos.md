@@ -1,8 +1,8 @@
 ---
 spec: 040
 titulo: Os 7 modelos de modulação, 6 de delay e 5 de reverb soam quase iguais e há controles sem efeito
-status: implementada
-atualizado: 2026-11-14
+status: implementada (AUD-30: TZF 1ms dry + inversão, Rotary 2 rotores LR4 800Hz, Optical Tremolo 5/60ms LDR, AC30 Vibrato/Tremolo no canal Vibrato)
+atualizado: 2026-11-20
 ---
 # 040 — Modulação, delay e reverb: cada modelo com o mecanismo do equipamento real
 
