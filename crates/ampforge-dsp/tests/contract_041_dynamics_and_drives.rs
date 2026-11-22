@@ -253,8 +253,8 @@ fn test_ca_06_ts808_clean_path_present_at_drive_0_and_drive_10() {
 
     let gain_db = 20.0 * (rms(&out0[2400..]) / rms(&inp[2400..])).log10();
     assert!(
-        (0.0..=3.0).contains(&gain_db),
-        "TS808 @ Drive=0, 200 Hz -30 dBFS must have gain in [0, +3] dB, got {:.2} dB",
+        (8.0..=13.0).contains(&gain_db),
+        "TS808 @ Drive=0, 200 Hz -30 dBFS must match real schematic gain (+10.1 dB in [8, +13] dB), got {:.2} dB",
         gain_db
     );
 

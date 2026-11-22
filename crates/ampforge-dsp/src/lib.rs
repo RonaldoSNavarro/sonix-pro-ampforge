@@ -23,6 +23,7 @@ pub mod tuner;
 pub mod denormal;
 pub mod looper;
 pub mod regua;
+pub mod unidades;
 
 // Re-exports ergonômicos
 pub use config::{AudioConfig, BufferSize, SampleRate};

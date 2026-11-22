@@ -286,8 +286,9 @@ fn test_ca_06_drive_processor_controls_and_harmonics() {
     drive.set_sample_rate(48000.0);
 
     let n = 2048;
+    // Pico 0.03 FS fica abaixo do joelho em D=0 (0.03*9.64=0.29 V < 0.6 V) e satura forte em D=10 (AUD-29)
     let in_sig: Vec<f32> = (0..n)
-        .map(|i| 0.1 * (2.0 * PI * 1000.0 * (i as f32 / 48000.0)).sin())
+        .map(|i| 0.03 * (2.0 * PI * 1000.0 * (i as f32 / 48000.0)).sin())
         .collect();
 
     // 1. THD com drive_gain 0 vs 10

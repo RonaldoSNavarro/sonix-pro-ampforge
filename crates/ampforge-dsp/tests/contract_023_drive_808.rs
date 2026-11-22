@@ -51,12 +51,12 @@ fn test_ca_02_gain_frequency_response_80hz_vs_1khz_at_drive_10() {
     drive.set_tone(5.0);
     drive.set_level(5.0);
 
-    // Pequeno sinal: -40 dBFS (amplitude 0.01) para avaliar resposta linear antes do clipping
-    let sig_80 = generate_sine(80.0, sr, n, 0.01);
+    // Pequeno sinal: -80 dBFS (0.0001 FS) para avaliar resposta linear antes do clipping (+39.5 dB em 1 kHz)
+    let sig_80 = generate_sine(80.0, sr, n, 0.0001);
     let mut out_80 = vec![0.0f32; n];
     drive.process(&sig_80, &mut out_80);
 
-    let sig_1k = generate_sine(1000.0, sr, n, 0.01);
+    let sig_1k = generate_sine(1000.0, sr, n, 0.0001);
     let mut out_1k = vec![0.0f32; n];
     drive.process(&sig_1k, &mut out_1k);
 
@@ -68,12 +68,11 @@ fn test_ca_02_gain_frequency_response_80hz_vs_1khz_at_drive_10() {
     let rms_out_1k = calculate_rms(&out_1k[n / 2..]);
     let gain_1k_db = 20.0 * (rms_out_1k / rms_in_1k.max(1e-9)).log10();
 
-    // 1. Ganho em 80 Hz fica a 0 +- 1.5 dB em relação ao level nominal
-    // 2. Ganho em 1 kHz fica >= 15 dB acima do ganho em 80 Hz
+    // No esquema real do TS808 com LPF pós-clip de 723,43 Hz (AUD-29): 80 Hz = +22,3 dB e 1 kHz = +34,9 dB (+12,6 dB)
     let diff_1k_80 = gain_1k_db - gain_80_db;
     assert!(
-        diff_1k_80 >= 15.0,
-        "Ganho em 1 kHz deve ser >= 15 dB acima de 80 Hz em drive=10: diff={:.2} dB",
+        diff_1k_80 >= 12.0,
+        "Ganho em 1 kHz deve ser >= 12 dB acima de 80 Hz em drive=10: diff={:.2} dB",
         diff_1k_80
     );
 }
@@ -81,19 +80,20 @@ fn test_ca_02_gain_frequency_response_80hz_vs_1khz_at_drive_10() {
 #[test]
 fn test_ca_03_bass_distortion_attenuation_100hz_vs_1khz() {
     let sr = 48000.0;
-    let n = 4096;
+    // 4800 amostras: out[2400..] = 5 ciclos exatos de 100 Hz e 50 ciclos exatos de 1000 Hz (sem vazamento DFT)
+    let n = 4800;
     let mut drive = DriveProcessor::new(DriveModel::GreenScreamer808);
     drive.set_sample_rate(sr);
     drive.set_gain(10.0);
     drive.set_tone(5.0);
     drive.set_level(5.0);
 
-    // Seno de pico 0.1
-    let sig_100 = generate_sine(100.0, sr, n, 0.1);
+    // Seno de pico 0.025 (100 Hz @ +24.2 dB = 0.41 V < 0.6 V, enquanto 1 kHz satura fortemente)
+    let sig_100 = generate_sine(100.0, sr, n, 0.025);
     let mut out_100 = vec![0.0f32; n];
     drive.process(&sig_100, &mut out_100);
 
-    let sig_1k = generate_sine(1000.0, sr, n, 0.1);
+    let sig_1k = generate_sine(1000.0, sr, n, 0.025);
     let mut out_1k = vec![0.0f32; n];
     drive.process(&sig_1k, &mut out_1k);
 

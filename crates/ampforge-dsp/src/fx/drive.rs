@@ -1,6 +1,11 @@
 //! crates/ampforge-dsp/src/fx/drive.rs
 //! Pedais de Overdrive, Distorção e Fuzz White-Box com Topologias Distintas e Troca de Diodos (Spec 023 & Spec 032)
 
+use crate::unidades::volts_para_fs;
+
+/// Largura de banda de ganho unitário do amp-op LM308 compensado com Cc = 30 pF no ProCo RAT (AUD-29).
+pub const DECISAO_SONIX_LM308_GBW: f32 = 1_000_000.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriveModel {
     GreenScreamer808,
@@ -157,24 +162,6 @@ impl DriveBiquad {
         }
     }
 
-    pub fn first_order_highpass(fc: f32, sr: f32) -> Self {
-        let ratio = (fc / sr).clamp(0.0005, 0.48);
-        let k = (std::f32::consts::PI * ratio).tan();
-        let norm = 1.0 + k;
-        let b0 = 1.0 / norm;
-        Self {
-            b0,
-            b1: -b0,
-            b2: 0.0,
-            a1: (k - 1.0) / norm,
-            a2: 0.0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
     pub fn highpass(fc: f32, q: f32, sr: f32) -> Self {
         let w0 = 2.0 * std::f32::consts::PI * (fc / sr).clamp(0.0005, 0.49);
         let cos_w0 = w0.cos();
@@ -260,6 +247,56 @@ impl DriveBiquad64 {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct DriveIir3Order64 {
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    b3: f64,
+    a1: f64,
+    a2: f64,
+    a3: f64,
+    z1: f64,
+    z2: f64,
+    z3: f64,
+}
+
+impl DriveIir3Order64 {
+    fn update_coeffs(&mut self, b: [f64; 4], a: [f64; 4]) {
+        let a0 = a[0];
+        self.b0 = b[0] / a0;
+        self.b1 = b[1] / a0;
+        self.b2 = b[2] / a0;
+        self.b3 = b[3] / a0;
+        self.a1 = a[1] / a0;
+        self.a2 = a[2] / a0;
+        self.a3 = a[3] / a0;
+    }
+
+    #[inline(always)]
+    fn process(&mut self, x: f64) -> f64 {
+        let y = crate::denormal::flush_f64(self.b0 * x + self.z1);
+        let yf = if y.is_finite() { y } else { 0.0 };
+        self.z1 = crate::denormal::flush_f64(self.b1 * x - self.a1 * yf + self.z2);
+        self.z2 = crate::denormal::flush_f64(self.b2 * x - self.a2 * yf + self.z3);
+        self.z3 = crate::denormal::flush_f64(self.b3 * x - self.a3 * yf);
+        yf
+    }
+}
+
+#[inline]
+fn bilinear_poly3(p0: f64, p1: f64, p2: f64, p3: f64, k: f64) -> [f64; 4] {
+    let q1 = p1 * k;
+    let q2 = p2 * k * k;
+    let q3 = p3 * k * k * k;
+    [
+        p0 + q1 + q2 + q3,
+        3.0 * p0 + q1 - q2 - 3.0 * q3,
+        3.0 * p0 - q1 - q2 + 3.0 * q3,
+        p0 - q1 + q2 - q3,
+    ]
+}
+
 pub struct DriveProcessor {
     model: DriveModel,
     clipping_diode: ClippingDiode,
@@ -268,14 +305,15 @@ pub struct DriveProcessor {
     level: f32,
     bias: f32,
     sample_rate: f32,
-    // Estados TS808 (Spec 023)
-    ts_gain_biquad: DriveBiquad,
+    // Estados TS808 (Spec 023, AUD-29: estágio G(s)=1+Zf/Zg e LPF pós-clip 723 Hz @ 16x subpasso)
+    ts_fb_bq_os: DriveBiquad64,
+    ts_post_lp_os: DriveBiquad64,
     ts_tone_biquad: DriveBiquad,
     // Klon Centaur
     klon_mid_biquad: DriveBiquad,
     klon_treble_biquad: DriveBiquad,
-    // ProCo RAT LM308
-    rat_slew_state: f32,
+    // ProCo RAT LM308 (AUD-29: G_cl(s) 3ª ordem com GBW LM308 @ 32x subpasso + Filter passivo)
+    rat_cl_iir_os: DriveIir3Order64,
     rat_filter_biquad: DriveBiquad,
     // Big Muff Pi (4 estágios + Passive Tone Stack scoop)
     muff_hpf_biquad: DriveBiquad,
@@ -288,8 +326,9 @@ pub struct DriveProcessor {
     ds1_pre_hpf: DriveBiquad,
     ds1_mid_notch: DriveBiquad,
     ds1_tone_shelf: DriveBiquad,
-    // 8x Oversampling Anti-Aliasing (Spec 041 CA-5, zero-alloc, 64-bit precision)
+    // 8x Oversampling Anti-Aliasing com subpassos internos opcionais (Spec 041 CA-5, zero-alloc, 64-bit)
     os_hist: [f32; 3],
+    os_u_prev: f64,
     os_ai_lp: [DriveBiquad64; 4],
     os_aa_lp: [DriveBiquad64; 6],
 }
@@ -304,11 +343,12 @@ impl DriveProcessor {
             level: 5.0,
             bias: 5.0,
             sample_rate: 48000.0,
-            ts_gain_biquad: DriveBiquad::default(),
+            ts_fb_bq_os: DriveBiquad64::default(),
+            ts_post_lp_os: DriveBiquad64::default(),
             ts_tone_biquad: DriveBiquad::default(),
             klon_mid_biquad: DriveBiquad::default(),
             klon_treble_biquad: DriveBiquad::default(),
-            rat_slew_state: 0.0,
+            rat_cl_iir_os: DriveIir3Order64::default(),
             rat_filter_biquad: DriveBiquad::default(),
             muff_hpf_biquad: DriveBiquad::default(),
             muff_tone_lp_biquad: DriveBiquad::default(),
@@ -319,6 +359,7 @@ impl DriveProcessor {
             ds1_mid_notch: DriveBiquad::default(),
             ds1_tone_shelf: DriveBiquad::default(),
             os_hist: [0.0; 3],
+            os_u_prev: 0.0,
             os_ai_lp: [DriveBiquad64::default(); 4],
             os_aa_lp: [DriveBiquad64::default(); 6],
         };
@@ -337,6 +378,8 @@ impl DriveProcessor {
 
     pub fn set_model(&mut self, model: DriveModel) {
         self.model = model;
+        self.os_hist = [0.0; 3];
+        self.os_u_prev = 0.0;
         self.update_filters();
     }
 
@@ -372,11 +415,11 @@ impl DriveProcessor {
 
     fn diode_thresholds(&self) -> (f32, f32) {
         match self.clipping_diode {
-            ClippingDiode::Germanium1N34A => (0.24, 0.24),
-            ClippingDiode::SiliconSymmetrical => (0.45, 0.45),
-            ClippingDiode::AsymmetricalSiLed => (0.45, 1.35),
-            ClippingDiode::MosfetClip => (0.72, 0.72),
-            ClippingDiode::HardOpamp => (1.80, 1.80),
+            ClippingDiode::Germanium1N34A => (volts_para_fs(0.30), volts_para_fs(0.30)),
+            ClippingDiode::SiliconSymmetrical => (volts_para_fs(0.60), volts_para_fs(0.60)),
+            ClippingDiode::AsymmetricalSiLed => (volts_para_fs(1.80), volts_para_fs(0.60)),
+            ClippingDiode::MosfetClip => (volts_para_fs(0.75), volts_para_fs(0.75)),
+            ClippingDiode::HardOpamp => (volts_para_fs(1.80), volts_para_fs(1.80)),
         }
     }
 
@@ -384,9 +427,37 @@ impl DriveProcessor {
         let sr = self.sample_rate;
         let g_norm = self.gain / 10.0;
         let t_norm = self.tone / 10.0;
+        let sr_os = (sr as f64) * 8.0;
 
-        // 1. TS808: HPF de 1ª ordem em 720 Hz na realimentação não-inversora (4.7k + 47nF, Spec 041 CA-6)
-        self.ts_gain_biquad.update_coeffs(DriveBiquad::first_order_highpass(720.0, sr));
+        // 1. TS808 (AUD-29): realimentação Zf/Zg e LPF pós-clip de 1k + 0.22 µF (723,43 Hz) @ 16x (subpasso 2x em 8x OS)
+        let k_ts = 2.0 * sr_os * 2.0;
+        let d_ts = g_norm.clamp(0.0, 1.0) as f64;
+        let rf_ts = 51_000.0 + d_ts * 500_000.0;
+        let cf_ts = 51e-12;
+        let rg_ts = 4_700.0;
+        let cg_ts = 0.047e-6;
+        let tau_g = rg_ts * cg_ts;
+        let tau_f = rf_ts * cf_ts;
+        let dg0 = 1.0 + k_ts * tau_g;
+        let dg1 = 1.0 - k_ts * tau_g;
+        let df0 = 1.0 + k_ts * tau_f;
+        let df1 = 1.0 - k_ts * tau_f;
+        let a0_ts = dg0 * df0;
+        self.ts_fb_bq_os.b0 = (rf_ts * cg_ts * k_ts) / a0_ts;
+        self.ts_fb_bq_os.b1 = 0.0;
+        self.ts_fb_bq_os.b2 = -self.ts_fb_bq_os.b0;
+        self.ts_fb_bq_os.a1 = (dg0 * df1 + dg1 * df0) / a0_ts;
+        self.ts_fb_bq_os.a2 = (dg1 * df1) / a0_ts;
+
+        let tau_lp = 1_000.0 * 0.22e-6;
+        let dl0 = 1.0 + k_ts * tau_lp;
+        let dl1 = 1.0 - k_ts * tau_lp;
+        self.ts_post_lp_os.b0 = 1.0 / dl0;
+        self.ts_post_lp_os.b1 = 1.0 / dl0;
+        self.ts_post_lp_os.b2 = 0.0;
+        self.ts_post_lp_os.a1 = dl1 / dl0;
+        self.ts_post_lp_os.a2 = 0.0;
+
         let tone_gain_db = -7.5 + 1.5 * self.tone;
         self.ts_tone_biquad.update_coeffs(DriveBiquad::high_shelf(1800.0, tone_gain_db, sr));
 
@@ -394,8 +465,34 @@ impl DriveProcessor {
         self.klon_mid_biquad.update_coeffs(DriveBiquad::peaking(1050.0, 1.5 + 3.5 * g_norm, 0.9, sr));
         self.klon_treble_biquad.update_coeffs(DriveBiquad::high_shelf(2400.0, -7.0 + 14.0 * t_norm, sr));
 
-        // 3. ProCo RAT: Filter INVERTIDO de 1ª ordem (6 dB/oit, 0 = aberto ~14 kHz, 10 = escuro ~600 Hz)
-        let rat_fc = 14000.0 * (600.0f32 / 14000.0f32).powf(t_norm);
+        // 3. ProCo RAT (AUD-29): estágio não-inversor 1+Rd/Zg com GBW LM308 @ 32x (subpasso 4x em 8x OS) + Filter passivo
+        let k_rat = 2.0 * sr_os * 4.0;
+        let d_rat = (g_norm.clamp(0.0, 1.0)) as f64;
+        let rat_taper = if d_rat <= 0.0 {
+            0.0
+        } else {
+            d_rat.powf(3.321928094887362) // Taper logarítmico 10% em meio curso
+        };
+        let rd_rat = 100_000.0 * rat_taper;
+        let c1_rat = 2.2e-6;
+        let r1_rat = 47.0;
+        let c2_rat = 4.7e-6;
+        let r2_rat = 560.0;
+        let tau1 = r1_rat * c1_rat;
+        let tau2 = r2_rat * c2_rat;
+        let d1 = tau1 + tau2;
+        let d2 = tau1 * tau2;
+        let n1 = d1 + rd_rat * (c1_rat + c2_rat);
+        let n2 = d2 + rd_rat * (c1_rat * tau2 + c2_rat * tau1);
+        let w_gbw = 2.0 * std::f64::consts::PI * (DECISAO_SONIX_LM308_GBW as f64);
+        let c1 = d1 + 1.0 / w_gbw;
+        let c2 = d2 + n1 / w_gbw;
+        let c3 = n2 / w_gbw;
+        let b_rat = bilinear_poly3(1.0, n1, n2, 0.0, k_rat);
+        let a_rat = bilinear_poly3(1.0, c1, c2, c3, k_rat);
+        self.rat_cl_iir_os.update_coeffs(b_rat, a_rat);
+
+        let rat_fc = 32150.0 * (600.0f32 / 32150.0f32).powf(t_norm);
         self.rat_filter_biquad.update_coeffs(DriveBiquad::first_order_lowpass(rat_fc, sr));
 
         // 12th-order Chebyshev Type I decimation LPF (6 biquads, 0.2 dB ripple) @ 8x OS (Spec 041 CA-5)
@@ -474,30 +571,52 @@ impl DriveProcessor {
     }
 
     #[inline(always)]
-    fn oversample_4x(&mut self, x: f32, mut shaper: impl FnMut(f32) -> f32) -> f32 {
+    fn step_oversample_sub(
+        os_hist: &mut [f32; 3],
+        os_ai_lp: &mut [DriveBiquad64; 4],
+        os_aa_lp: &mut [DriveBiquad64; 6],
+        os_u_prev: &mut f64,
+        substeps: usize,
+        x: f32,
+        mut shaper: impl FnMut(f64) -> f64,
+    ) -> f32 {
         // 4-point Catmull-Rom cubic interpolation to suppress upsampling images before clipping
-        let xm1 = self.os_hist[0];
-        let x0 = self.os_hist[1];
-        let x1 = self.os_hist[2];
+        let xm1 = os_hist[0];
+        let x0 = os_hist[1];
+        let x1 = os_hist[2];
         let x2 = x;
-        self.os_hist[0] = x0;
-        self.os_hist[1] = x1;
-        self.os_hist[2] = x2;
+        os_hist[0] = x0;
+        os_hist[1] = x1;
+        os_hist[2] = x2;
 
         let c0 = x0;
         let c1 = 0.5 * (x1 - xm1);
         let c2 = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
         let c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
 
+        let inv_sub = 1.0 / (substeps.max(1) as f64);
         let mut out = 0.0f64;
         for k in 1..=8 {
             let t = (k as f32) * 0.125;
             let mut u = (c0 + t * (c1 + t * (c2 + t * c3))) as f64;
-            for ai in &mut self.os_ai_lp {
+            for ai in os_ai_lp.iter_mut() {
                 u = ai.process(u);
             }
-            let mut d = shaper(u as f32) as f64;
-            for lpf in &mut self.os_aa_lp {
+            let mut d = if substeps <= 1 {
+                *os_u_prev = crate::denormal::flush_f64(u);
+                shaper(u)
+            } else {
+                let u_prev = *os_u_prev;
+                *os_u_prev = crate::denormal::flush_f64(u);
+                let mut acc = 0.0f64;
+                let du = u - u_prev;
+                for s in 1..=substeps {
+                    let us = u_prev + du * ((s as f64) * inv_sub);
+                    acc += shaper(us);
+                }
+                acc * inv_sub
+            };
+            for lpf in os_aa_lp.iter_mut() {
                 d = lpf.process(d);
             }
             if k == 8 {
@@ -507,34 +626,49 @@ impl DriveProcessor {
         out as f32
     }
 
-    /// Processador TS808 fiel ao circuito analógico não-inversor (Spec 023, Spec 041 CA-5/CA-6):
-    /// V_out = V_in + V_clipped(HP_720(V_in) * drive_gain)
+    #[inline(always)]
+    fn oversample_4x(&mut self, x: f32, mut shaper: impl FnMut(f32) -> f32) -> f32 {
+        Self::step_oversample_sub(
+            &mut self.os_hist,
+            &mut self.os_ai_lp,
+            &mut self.os_aa_lp,
+            &mut self.os_u_prev,
+            1,
+            x,
+            |u| shaper(u as f32) as f64,
+        )
+    }
+
+    /// Processador TS808 fiel ao circuito analógico não-inversor (Spec 023, Spec 041, AUD-29):
+    /// V_stage = V_in + clip_Vf( (Zf(s)/Zg(s)) * V_in ) -> LPF 723,43 Hz (1k + 0.22 µF) -> Tone -> Level
     fn process_ts808(&mut self, input: &[f32], output: &mut [f32]) {
-        let (vf_pos, vf_neg) = match self.clipping_diode {
-            ClippingDiode::Germanium1N34A => (0.20f32, 0.20f32),
-            ClippingDiode::SiliconSymmetrical => (0.35f32, 0.35f32),
-            ClippingDiode::AsymmetricalSiLed => (1.20f32, 0.35f32),
-            ClippingDiode::MosfetClip => (0.60f32, 0.60f32),
-            ClippingDiode::HardOpamp => (1.80f32, 1.80f32),
-        };
-        let drive_gain = 0.8 + (self.gain / 10.0).powf(1.6) * 14.0;
+        let (vf_pos, vf_neg) = self.diode_thresholds();
+        let vf_p = (vf_pos as f64).max(1e-6);
+        let vf_n = (vf_neg as f64).max(1e-6);
         let out_gain = self.out_level_taper();
 
         for i in 0..input.len() {
-            let x = input[i];
-            let x_hp = self.ts_gain_biquad.process(x);
-            let clipped = self.oversample_4x(x_hp, |u| {
-                let d = u * drive_gain;
-                if d.abs() < 1e-12 {
-                    0.0
-                } else if d >= 0.0 {
-                    vf_pos * (d / vf_pos).tanh()
-                } else {
-                    -vf_neg * ((-d) / vf_neg).tanh()
-                }
-            });
-            let summed = x + clipped;
-            let toned = self.ts_tone_biquad.process(summed);
+            let clipped = Self::step_oversample_sub(
+                &mut self.os_hist,
+                &mut self.os_ai_lp,
+                &mut self.os_aa_lp,
+                &mut self.os_u_prev,
+                2,
+                input[i],
+                |us| {
+                    let v_fb = self.ts_fb_bq_os.process(us);
+                    let v_clip = if v_fb >= 0.0 {
+                        let r = v_fb / vf_p;
+                        v_fb / (1.0 + r.powi(8)).powf(0.125)
+                    } else {
+                        let r = (-v_fb) / vf_n;
+                        v_fb / (1.0 + r.powi(8)).powf(0.125)
+                    };
+                    let v_stage = us + v_clip;
+                    self.ts_post_lp_os.process(v_stage)
+                },
+            );
+            let toned = self.ts_tone_biquad.process(clipped);
             output[i] = toned * out_gain;
         }
     }
@@ -567,58 +701,59 @@ impl DriveProcessor {
         }
     }
 
-    /// ProCo RAT: slew-rate limiting LM308 + hard-clipping para terra + filtro passivo INVERTIDO (1ª ordem)
+    /// ProCo RAT (AUD-29): ganho G_cl(s) com limite de GBW do LM308 + hard-clip 2 × 1N914 para terra + filtro INVERTIDO
     fn process_rat(&mut self, input: &[f32], output: &mut [f32]) {
-        let g = (self.gain / 10.0).clamp(0.0, 1.0);
-        let pre_gain = 2.0 + g * 38.0;
         let (vf_p, vf_n) = self.diode_thresholds();
-        let vp = (vf_p * 0.72).max(0.22);
-        let vn = (vf_n * 0.78).max(0.24);
-        // Slew limit escalado ao sample rate 8x OS (~0.9 V/us relativo ao ganho)
-        let max_slew = 1.2 * (48000.0 / self.sample_rate).clamp(0.25, 2.0);
+        let vp = (vf_p as f64).max(1e-6);
+        let vn = (vf_n as f64).max(1e-6);
         let out_gain = self.out_level_taper();
 
         for i in 0..input.len() {
-            let amplified = input[i] * pre_gain;
-            let mut slew_state = self.rat_slew_state;
-            let clipped = self.oversample_4x(amplified, |u| {
-                let raw_delta = u - slew_state;
-                let delta = max_slew * (raw_delta / max_slew).tanh();
-                slew_state = slew_state * 0.999 + delta;
-                let slewed = slew_state;
-                if slewed >= 0.0 {
-                    let v = slewed / vp;
-                    vp * (v / (1.0 + v * v).sqrt()) * 1.15
-                } else {
-                    let v = (-slewed) / vn;
-                    -vn * (v / (1.0 + v * v).sqrt()) * 1.15
-                }
-            });
-            self.rat_slew_state = slew_state;
-
+            let clipped = Self::step_oversample_sub(
+                &mut self.os_hist,
+                &mut self.os_ai_lp,
+                &mut self.os_aa_lp,
+                &mut self.os_u_prev,
+                4,
+                input[i],
+                |us| {
+                    let v = self.rat_cl_iir_os.process(us);
+                    let vf = if v >= 0.0 { vp } else { vn };
+                    let r = v.abs() / vf;
+                    v / (1.0 + r.powi(8)).powf(0.125)
+                },
+            );
             let filtered = self.rat_filter_biquad.process(clipped);
-            output[i] = (filtered * out_gain).clamp(-1.5, 1.5);
+            output[i] = (filtered * out_gain).clamp(-2.5, 2.5);
         }
     }
 
-    /// Electro-Harmonix Big Muff Pi: 3 estágios transistorizados em cascata (4x OS) + Tone Stack com notch de médios
+    /// Electro-Harmonix Big Muff Pi: 3 estágios transistorizados em cascata (16x subpasso) + Tone Stack com notch de médios
     fn process_big_muff(&mut self, input: &[f32], output: &mut [f32]) {
         let g = (self.gain / 10.0).clamp(0.0, 1.0);
         let sustain = 2.5 + g * 18.0;
         let t_blend = (self.tone / 10.0).clamp(0.0, 1.0);
         let (vf_p, vf_n) = self.diode_thresholds();
-        let stage_knee = ((vf_p + vf_n) * 0.5).clamp(0.25, 1.2);
+        let stage_knee = (((vf_p + vf_n) * 0.5).clamp(0.25, 1.2)) as f64;
         let out_gain = self.out_level_taper() * 1.35;
 
         for i in 0..input.len() {
             let pre = self.muff_hpf_biquad.process(input[i]) * sustain;
-            let s = self.oversample_4x(pre, |mut u| {
-                for st in 0..3 {
-                    let drive = if st == 0 { 1.4 } else { 2.2 };
-                    u = stage_knee * ((u * drive) / stage_knee).tanh();
-                }
-                u
-            });
+            let s = Self::step_oversample_sub(
+                &mut self.os_hist,
+                &mut self.os_ai_lp,
+                &mut self.os_aa_lp,
+                &mut self.os_u_prev,
+                2,
+                pre,
+                |mut u| {
+                    for st in 0..3 {
+                        let drive = if st == 0 { 1.4 } else { 2.2 };
+                        u = stage_knee * ((u * drive) / stage_knee).tanh();
+                    }
+                    u
+                },
+            );
             // Passive twin RC Tone Stack (LP + HP blend gera notch natural ~950 Hz em Tone = 5.0)
             let lp = self.muff_tone_lp_biquad.process(s);
             let hp = self.muff_tone_hp_biquad.process(s);
@@ -665,26 +800,27 @@ impl DriveProcessor {
         }
     }
 
-    /// Boss DS-1: op-amp + hard diode clipping assimétrico (4x OS) + curva de Tone em V
+    /// Boss DS-1 (AUD-29): op-amp + hard diode clipping simétrico por 2 × 1N4148 para terra (8x OS) + curva Tone em V
     fn process_ds1(&mut self, input: &[f32], output: &mut [f32]) {
         let g = (self.gain / 10.0).clamp(0.0, 1.0);
         let pre_gain = 3.0 + g * 40.0;
-        let (vf_p, vf_n) = self.diode_thresholds();
-        let vp = (vf_p * 0.85).clamp(0.25, 1.2);
-        let vn = (vf_n * 1.15).clamp(0.32, 1.6);
+        let vf = volts_para_fs(0.60) as f64;
         let out_gain = self.out_level_taper();
 
         for i in 0..input.len() {
             let x_hp = self.ds1_pre_hpf.process(input[i]) * pre_gain;
-            let clipped = self.oversample_4x(x_hp, |u_in| {
-                if u_in >= 0.0 {
-                    let u = u_in / vp;
-                    vp * (u / (1.0 + u.abs() * 0.85))
-                } else {
-                    let u = (-u_in) / vn;
-                    -vn * (u / (1.0 + u.abs() * 0.95))
-                }
-            });
+            let clipped = Self::step_oversample_sub(
+                &mut self.os_hist,
+                &mut self.os_ai_lp,
+                &mut self.os_aa_lp,
+                &mut self.os_u_prev,
+                2,
+                x_hp,
+                |u64| {
+                    let r = u64.abs() / vf;
+                    u64 / (1.0 + r.powi(8)).powf(0.125)
+                },
+            );
             let scooped = self.ds1_mid_notch.process(clipped);
             let toned = self.ds1_tone_shelf.process(scooped);
             output[i] = (toned * out_gain).clamp(-1.5, 1.5);

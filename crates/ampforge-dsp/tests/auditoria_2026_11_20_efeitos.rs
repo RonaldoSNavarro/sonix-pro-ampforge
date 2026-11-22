@@ -1,7 +1,9 @@
 //! Testes de contrato da auditoria 2026-11-20 (Fase 5 — Efeitos).
 
 use ampforge_dsp::fx::delay::{DelayModel, DelayProcessor};
-use ampforge_dsp::regua::cents;
+use ampforge_dsp::fx::drive::{DECISAO_SONIX_LM308_GBW, DriveModel, DriveProcessor};
+use ampforge_dsp::regua::{cents, ganho_db};
+use ampforge_dsp::unidades::VOLTS_POR_FS;
 
 fn rms(buf: &[f32]) -> f32 {
     if buf.is_empty() {
@@ -253,4 +255,222 @@ fn aud_28_wow_audivel() {
             "AUD-28 modo {mode}: desvio de pico esperado de 3.0 ± 0.3 cents a 1 kHz, obtido {peak_cents:.3} cents"
         );
     }
+}
+
+type Cx = (f64, f64);
+
+#[inline]
+fn cadd(a: Cx, b: Cx) -> Cx {
+    (a.0 + b.0, a.1 + b.1)
+}
+
+#[inline]
+fn cmul(a: Cx, b: Cx) -> Cx {
+    (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+}
+
+#[inline]
+fn cdiv(a: Cx, b: Cx) -> Cx {
+    let d = b.0 * b.0 + b.1 * b.1;
+    ((a.0 * b.0 + a.1 * b.1) / d, (a.1 * b.0 - a.0 * b.1) / d)
+}
+
+#[inline]
+fn cpar(a: Cx, b: Cx) -> Cx {
+    cdiv(cmul(a, b), cadd(a, b))
+}
+
+#[inline]
+fn cabs(a: Cx) -> f64 {
+    a.0.hypot(a.1)
+}
+
+fn ts808_stage_transfer(d: f64, freq_hz: f64) -> Cx {
+    let w = 2.0 * std::f64::consts::PI * freq_hz;
+    let rf = 51_000.0 + d * 500_000.0;
+    let zf = cpar((rf, 0.0), (0.0, -1.0 / (w * 51e-12)));
+    let zg = (4_700.0, -1.0 / (w * 0.047e-6));
+    cadd((1.0, 0.0), cdiv(zf, zg))
+}
+
+fn thd_pct_dft(samples: &[f32], sr: f32, fund_hz: f64) -> f64 {
+    let n = samples.len();
+    let mut harms = [0.0f64; 7];
+    for (idx, h_out) in harms.iter_mut().enumerate() {
+        let f = fund_hz * (idx + 1) as f64;
+        let omega = 2.0 * std::f64::consts::PI * f / (sr as f64);
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for (i, &s) in samples.iter().enumerate() {
+            let ang = omega * i as f64;
+            re += (s as f64) * ang.cos();
+            im -= (s as f64) * ang.sin();
+        }
+        *h_out = re.hypot(im) / n as f64;
+    }
+    let h1 = harms[0].max(1e-12);
+    let h_sq: f64 = harms[1..].iter().map(|h| h * h).sum();
+    (h_sq.sqrt() / h1) * 100.0
+}
+
+#[test]
+fn aud_29_ts808_ganho_do_esquema() {
+    let sr = 48_000.0f32;
+    let len = 48_000usize;
+    let amp = 1e-4f32; // -80 dBFS
+    let level_unity = (10.0f32 / 1.5f32.sqrt()).clamp(0.0, 10.0); // 8.164966 -> out_level_taper = 1.0
+
+    for &d in &[0.0f64, 0.5, 1.0] {
+        for &freq in &[100.0f64, 1_000.0, 3_000.0] {
+            let inp: Vec<f32> = (0..len)
+                .map(|i| amp * (2.0 * std::f64::consts::PI * freq * i as f64 / sr as f64).sin() as f32)
+                .collect();
+            let mut drv = DriveProcessor::new(DriveModel::GreenScreamer808);
+            drv.set_sample_rate(sr);
+            drv.set_gain((d * 10.0) as f32);
+            drv.set_tone(5.0);
+            drv.set_level(level_unity);
+
+            let mut out = vec![0.0f32; len];
+            drv.process(&inp, &mut out);
+
+            let g_stage = ts808_stage_transfer(d, freq);
+            let w = 2.0 * std::f64::consts::PI * freq;
+            let h_lpf = cdiv((1.0, 0.0), (1.0, w * 1_000.0 * 0.22e-6));
+            let expected_db = 20.0 * cabs(cmul(g_stage, h_lpf)).log10();
+            let measured_db = ganho_db(&inp, &out, sr, freq as f32);
+
+            assert!(
+                (measured_db - expected_db).abs() <= 1.0,
+                "AUD-29 TS808 D={d} f={freq}Hz: esperado {expected_db:.2} dB (±1 dB), obtido {measured_db:.2} dB"
+            );
+        }
+    }
+}
+
+#[test]
+fn aud_29_rat_ganho_do_esquema() {
+    let sr = 48_000.0f32;
+    let len = 48_000usize;
+    let amp = 1e-4f32; // -80 dBFS
+    let level_unity = (10.0f32 / 1.5f32.sqrt()).clamp(0.0, 10.0);
+    let gbw_hz = DECISAO_SONIX_LM308_GBW as f64;
+
+    for &d in &[0.0f64, 0.5, 1.0] {
+        for &freq in &[100.0f64, 1_000.0, 3_000.0] {
+            let inp: Vec<f32> = (0..len)
+                .map(|i| amp * (2.0 * std::f64::consts::PI * freq * i as f64 / sr as f64).sin() as f32)
+                .collect();
+            let mut drv = DriveProcessor::new(DriveModel::BlackRodentRat);
+            drv.set_sample_rate(sr);
+            drv.set_gain((d * 10.0) as f32);
+            drv.set_tone(0.0); // Filter aberto (~32,15 kHz)
+            drv.set_level(level_unity);
+
+            let mut out = vec![0.0f32; len];
+            drv.process(&inp, &mut out);
+
+            let taper = if d <= 0.0 {
+                0.0
+            } else {
+                d.powf(3.321928094887362)
+            };
+            let rd = 100_000.0 * taper;
+            let w = 2.0 * std::f64::consts::PI * freq;
+            let z1 = (47.0, -1.0 / (w * 2.2e-6));
+            let z2 = (560.0, -1.0 / (w * 4.7e-6));
+            let zg = cpar(z1, z2);
+            let g_ideal = cadd((1.0, 0.0), cdiv((rd, 0.0), zg));
+            let a_ol = (0.0, -gbw_hz / freq);
+            let g_cl = cdiv(g_ideal, cadd((1.0, 0.0), cdiv(g_ideal, a_ol)));
+            let expected_db = 20.0 * cabs(g_cl).log10();
+            let measured_db = ganho_db(&inp, &out, sr, freq as f32);
+
+            assert!(
+                (measured_db - expected_db).abs() <= 1.0,
+                "AUD-29 RAT D={d} f={freq}Hz: esperado {expected_db:.2} dB (±1 dB), obtido {measured_db:.2} dB"
+            );
+        }
+    }
+}
+
+#[test]
+fn aud_29_ds1_simetrico() {
+    let sr = 48_000.0f32;
+    let n = 9_600usize;
+    let fund = 1_000.0f64;
+    let inp: Vec<f32> = (0..n)
+        .map(|i| 0.25 * (2.0 * std::f64::consts::PI * fund * i as f64 / sr as f64).sin() as f32)
+        .collect();
+
+    let mut drv = DriveProcessor::new(DriveModel::OrangeBossDs);
+    drv.set_sample_rate(sr);
+    drv.set_gain(10.0);
+    drv.set_tone(5.0);
+    drv.set_level(5.0);
+
+    let mut out = vec![0.0f32; n];
+    drv.process(&inp, &mut out);
+
+    let seg = &out[4_800..]; // 100 ciclos exatos
+    let mag_at = |h: usize| -> f64 {
+        let f = fund * h as f64;
+        let omega = 2.0 * std::f64::consts::PI * f / sr as f64;
+        let mut re = 0.0f64;
+        let mut im = 0.0f64;
+        for (i, &s) in seg.iter().enumerate() {
+            let ang = omega * i as f64;
+            re += (s as f64) * ang.cos();
+            im -= (s as f64) * ang.sin();
+        }
+        re.hypot(im) / seg.len() as f64
+    };
+
+    let h1 = mag_at(1).max(1e-12);
+    for h_even in [2usize, 4, 6] {
+        let he_dbc = 20.0 * (mag_at(h_even).max(1e-12) / h1).log10();
+        assert!(
+            he_dbc <= -40.0,
+            "AUD-29 DS-1 harmônico par H{h_even} deveria ser <= -40 dBc (clip simétrico), obtido {he_dbc:.2} dBc"
+        );
+    }
+}
+
+#[test]
+fn aud_29_limiar_em_volts() {
+    let sr = 48_000.0f32;
+    let n = 9_600usize;
+    let fund = 1_000.0f64;
+    let level_unity = (10.0f32 / 1.5f32.sqrt()).clamp(0.0, 10.0);
+    let target_amp = 0.6 / cabs(ts808_stage_transfer(0.0, fund)) / (VOLTS_POR_FS as f64);
+
+    let mut db_rel = -12.0f64;
+    let mut found_amp: Option<f64> = None;
+    while db_rel <= 12.0 {
+        let amp = target_amp * 10.0f64.powf(db_rel / 20.0);
+        let inp: Vec<f32> = (0..n)
+            .map(|i| (amp * (2.0 * std::f64::consts::PI * fund * i as f64 / sr as f64).sin()) as f32)
+            .collect();
+        let mut drv = DriveProcessor::new(DriveModel::GreenScreamer808);
+        drv.set_sample_rate(sr);
+        drv.set_gain(0.0);
+        drv.set_tone(5.0);
+        drv.set_level(level_unity);
+        let mut out = vec![0.0f32; n];
+        drv.process(&inp, &mut out);
+
+        let thd = thd_pct_dft(&out[4_800..], sr, fund);
+        if thd >= 1.0 {
+            found_amp = Some(amp);
+            break;
+        }
+        db_rel += 0.25;
+    }
+
+    let measured_amp = found_amp.expect("AUD-29: TS808 não atingiu THD = 1% na varredura");
+    let err_db = 20.0 * (measured_amp / target_amp).log10();
+    assert!(
+        err_db.abs() <= 2.0,
+        "AUD-29: início do clip (THD=1%) em D=0 esperado a ±2 dB de {target_amp:.5} FS, medido {measured_amp:.5} FS ({err_db:+.2} dB)"
+    );
 }
