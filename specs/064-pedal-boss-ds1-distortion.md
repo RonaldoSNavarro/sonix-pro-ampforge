@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Boss DS-1 Distortion (Revisão 1978–1993 com CI SIP Toshiba `TA7136AP`)** como processador modular independente (`pedal.boss.ds1`), eliminando o termo vago "Rev. Clássica", separando-a explicitamente da revisão pós-1994 (`DS-1A` com dual op-amp `Rohm BA728N` / `Mitsubishi M5223AL` / `NJM2904`), e corrigindo a implementação do **Tone Stack Passivo em Ponte Assimétrica (*Scooped Passive Bridge*)** atualmente reduzido a dois biquads em [`crates/ampforge-dsp/src/fx/drive.rs:445–456 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L445-L456).
+Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Boss DS-1 Distortion (Revisão 1978–1993 com CI SIP Toshiba `TA7136AP`)** como processador modular independente (`pedal.boss.ds1`), eliminando o termo vago "Rev. Clássica", separando-a explicitamente da revisão pós-1994 (`DS-1A` com dual op-amp `Rohm BA728N` / `Mitsubishi M5223AL` / `NJM2904`), e corrigindo a implementação do **Tone Stack Passivo em Ponte Assimétrica (*Scooped Passive Bridge*)** atualmente reduzido a dois biquads em [`crates/ampforge-dsp/src/fx/drive.rs:445–456 @ c20cc65`](../crates/ampforge-dsp/src/fx/drive.rs#L445-L456).
 
 ---
 
@@ -117,7 +117,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L445-L456) e [`665-685`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L665-L685) possui as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L445-L456) e [`665-685`](../crates/ampforge-dsp/src/fx/drive.rs#L665-L685) possui as seguintes divergências auditadas:
 
 - Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 - Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit

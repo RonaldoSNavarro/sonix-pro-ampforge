@@ -122,7 +122,7 @@ A arquitetura de Bob Myer no Big Muff Pi (`EH-3003`) divide o processamento em *
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L413-L426) e [`601-624`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L601-L624) possui as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L413-L426) e [`601-624`](../crates/ampforge-dsp/src/fx/drive.rs#L601-L624) possui as seguintes divergências auditadas:
 
 - Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 2. **`FACTUAL_ERROR` (`drive.rs:601–611`):** O código atual não modela os capacitores Miller coletor-base de `470 pF` em `Q1`, `Q2` e `Q3` (que suavizam as altas frequências antes e durante cada estágio de clipping), nem o desacoplamento de `1 µF` dos diodos de feedback, nem o 4º estágio BJT de recuperação (`Q4`).

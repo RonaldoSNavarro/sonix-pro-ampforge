@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, algorítmico e de verificação do componente compartilhado **Motor de Delay Algorítmico, Ducking e Spillover (`component.delay.multi_engine`)** em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/delay.rs#L1-L559), isolando claramente a unidade eletromecânica **Roland RE-201 Space Echo** em sua especificação dedicada (**[Spec 068](068-rack-roland-re201-space-echo.md)**) e separando cada um dos **6 modos algorítmicos digitais/analógicos** (`DelayModel::PristineDigitalDelay`, `DelayModel::AnalogBbdDelay`, `DualDelay`, `Reverse`, `DelayModel::PingPongStereo`, além dos subsistemas transversais `Ducking`, `Spillover/Trails` e `Tap Tempo / Subdivisões Rítmicas`).
+Especificar o contrato técnico, algorítmico e de verificação do componente compartilhado **Motor de Delay Algorítmico, Ducking e Spillover (`component.delay.multi_engine`)** em [`crates/ampforge-dsp/src/fx/delay.rs`](../crates/ampforge-dsp/src/fx/delay.rs#L1-L559), isolando claramente a unidade eletromecânica **Roland RE-201 Space Echo** em sua especificação dedicada (**[Spec 068](068-rack-roland-re201-space-echo.md)**) e separando cada um dos **6 modos algorítmicos digitais/analógicos** (`DelayModel::PristineDigitalDelay`, `DelayModel::AnalogBbdDelay`, `DualDelay`, `Reverse`, `DelayModel::PingPongStereo`, além dos subsistemas transversais `Ducking`, `Spillover/Trails` e `Tap Tempo / Subdivisões Rítmicas`).
 
 ---
 
@@ -95,7 +95,7 @@ Especificar o contrato técnico, algorítmico e de verificação do componente c
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/delay.rs#L1-L559) apresenta os seguintes achados auditados:
+O código atual em [`crates/ampforge-dsp/src/fx/delay.rs`](../crates/ampforge-dsp/src/fx/delay.rs#L1-L559) apresenta os seguintes achados auditados:
 
 1. **`MODEL_COUPLING` (`delay.rs:14–22`):** `DelayProcessor` mistura o equipamento eletromecânico `DelayModel::MultiHeadTapeEcho` (agora isolado na **Spec 068**) com os 5 modos algorítmicos digitais/BBD desta Spec 081.
 2. **`MISSING_VALIDATION` (`delay.rs:480–515`):** O modo `Reverse` e o controle de `Ducking` precisam de testes de contrato dedicados validando ausência de cliques de borda no `Reverse` e atenuação mensurável em dB do `Ducking` enquanto há sinal de entrada.

@@ -40,8 +40,8 @@ O projeto **SONIX PRO // AMPFORGE™** (`simulador-de-efeitos`) adota formalment
 **O callback de áudio nunca pode alocar memória na heap, bloquear threads (locks/mutexes) ou executar processamento algorítmico pesado de análise.**
 
 ### Detalhes de Implementação:
-1. **Ring Buffers e Cópia Lock-Free**: O callback [`RealtimeDspChain::process`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs) apenas alimenta amostras do sinal limpo de entrada (após DC blocker e antes de distorções) para um acumulador circular pré-alocado.
-2. **Scratch Buffers Pré-Alocados**: O algoritmo de autocorrelação/diferença de pitch (YIN) em [`TunerProcessor`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/tuner.rs) opera exclusivamente sobre arrays estáticos pré-dimensionados (`d_scratch`, `d_prime_scratch` de até 2048 amostras), eliminando alocações dinâmicas de vetores.
+1. **Ring Buffers e Cópia Lock-Free**: O callback [`RealtimeDspChain::process`](crates/sonix-desktop/src/audio.rs) apenas alimenta amostras do sinal limpo de entrada (após DC blocker e antes de distorções) para um acumulador circular pré-alocado.
+2. **Scratch Buffers Pré-Alocados**: O algoritmo de autocorrelação/diferença de pitch (YIN) em [`TunerProcessor`](crates/ampforge-dsp/src/tuner.rs) opera exclusivamente sobre arrays estáticos pré-dimensionados (`d_scratch`, `d_prime_scratch` de até 2048 amostras), eliminando alocações dinâmicas de vetores.
 3. **Execução Desacoplada da Thread de Áudio**: A análise pesada de pitch é disparada sob demanda ou em taxa de telemetria (30 a 60 Hz) na thread de I/O / API HTTP, enquanto a telemetria reporta `estimated_roundtrip_ms = driver_input_latency_ms + driver_output_latency_ms + (algorithmic_latency_samples / sample_rate) * 1000.0` (sem afirmar "< 1,5 ms" fixo).
 4. **Verificação Automatizada**: Todo novo componente de análise de áudio deve incluir teste de contrato específico (`test_ca_08_audio_callback_zero_alloc_and_zero_locks`) validando ausência de alocação de memória e invariância de desempenho sob carga contínua.
 

@@ -99,7 +99,7 @@ Em cadeias de guitarra de alto ganho (como JCM800 + TS808 ou Dual Rectifier Red 
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` / `FACTUAL_ERROR` (corrigido nesta Spec):** A versão inicial da Spec 065 atribuía este algoritmo ao hardware "Boss NS-2 / ISP Decimator". Na realidade, o código em [`crates/ampforge-dsp/src/fx/dynamics.rs:34–205 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L34-L205) implementa um Noise Gate digital de estúdio com 6 controles (`threshold_db`, `hysteresis_db`, `attack_ms`, `hold_ms`, `release_ms`, `range_db`, `sidechain_hpf_hz`) e filtro sidechain LR4 (`sc_hpf_1`, `sc_hpf_2`). A reclassificação para `tipo: modulo-dsp` (`module.dynamics.noise_gate_lr4`) alinha 100% a documentação ao código e à UI.
+1. **`MODEL_COUPLING` / `FACTUAL_ERROR` (corrigido nesta Spec):** A versão inicial da Spec 065 atribuía este algoritmo ao hardware "Boss NS-2 / ISP Decimator". Na realidade, o código em [`crates/ampforge-dsp/src/fx/dynamics.rs:34–205 @ c20cc65`](../crates/ampforge-dsp/src/fx/dynamics.rs#L34-L205) implementa um Noise Gate digital de estúdio com 6 controles (`threshold_db`, `hysteresis_db`, `attack_ms`, `hold_ms`, `release_ms`, `range_db`, `sidechain_hpf_hz`) e filtro sidechain LR4 (`sc_hpf_1`, `sc_hpf_2`). A reclassificação para `tipo: modulo-dsp` (`module.dynamics.noise_gate_lr4`) alinha 100% a documentação ao código e à UI.
 2. **`CODE_REFERENCE_STALE` (verificado):** Em `controls.registry.ts:648`, o controle visual `pedal.gate.decay` mapeia para a chave backend `gate.release_ms` (nota explícita em `controls.registry.ts:650`), e `pedal.gate.hold` mapeia para `gate.hold_ms` (`0..500 ms`).
 
 ---

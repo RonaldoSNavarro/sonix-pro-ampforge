@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático e de verificação do componente compartilhado **Solvers Analíticos de Redes Passivas de Tone Stack (`component.tonestack.passive_solvers`)** em [`crates/ampforge-dsp/src/tonestack.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/tonestack.rs#L1-L401), separando rigorosamente os **4 solvers de circuito distintos** sem aproximar uma topologia pela outra:
+Especificar o contrato técnico, matemático e de verificação do componente compartilhado **Solvers Analíticos de Redes Passivas de Tone Stack (`component.tonestack.passive_solvers`)** em [`crates/ampforge-dsp/src/tonestack.rs`](../crates/ampforge-dsp/src/tonestack.rs#L1-L401), separando rigorosamente os **4 solvers de circuito distintos** sem aproximar uma topologia pela outra:
 1. **`FmvToneStackSolver` (Fender / Marshall / Vox-derivados FMV de 3ª ordem — Equações Exatas de David Yeh DAFx-06):** Modelagem exata de 3ª ordem ($H(s) = \frac{b_1 s + b_2 s^2 + b_3 s^3}{a_0 + a_1 s + a_2 s^2 + a_3 s^3}$) parametrizada pelos 7 componentes físicos ($R_1, R_2, R_3, R_4, C_1, C_2, C_3$) **incluindo explicitamente a impedância de saída do estágio excitador $R_{\text{src}}$** (`38 kΩ` para Fender Twin AB763 *plate-driven* vs `1,3 kΩ` para Marshall 1959/JCM800 *cathode-follower driven*!).
 2. **`VoxTopBoostToneStackSolver` (Vox AC30 Top Boost `OS/010`, 2 controles interativos `Bass`/`Treble` sem potenciômetro `Mid` físico):** Equação nodal dedicada da rede passiva de 2 controles de Dick Denney (`50 pF / 22 nF / 22 nF`, `100 kΩ` slope, `1 MΩ` Bass/Treble, `R_mid_fixo = 10 kΩ`) + controle **`Top Cut`** separado pós-inversor de fase (`250 kΩ` + `4,7 nF`).
 3. **`JamesBaxandallToneStackSolver`:** Rede passiva de dois controles desacoplados (`Bass` / `Treble`) para amplificadores vintage e extensão futura (Ampeg / Orange / Hiwatt).
@@ -104,7 +104,7 @@ Conforme derivado simbolicamente por David T. Yeh & Julius O. Smith III (`F-01`,
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/tonestack.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/tonestack.rs#L1-L401) apresenta os seguintes achados auditados:
+O código atual em [`crates/ampforge-dsp/src/tonestack.rs`](../crates/ampforge-dsp/src/tonestack.rs#L1-L401) apresenta os seguintes achados auditados:
 
 1. **`FACTUAL_ERROR` (`tonestack.rs` — $R_{\text{src}}$ não parametrizado por topologia excitadora):** A versão atual já implementa o polinômio de 3ª ordem de Yeh (DAFx-06), o que é uma excelente base! Porém, a verificação de $R_{\text{src}}$ (`38 kΩ` plate-driven no Fender AB763 vs `1,3 kΩ` cathode-follower no Marshall 1959/JCM800) e a separação dedicada da topologia `VoxTopBoost` (onde não existe potenciômetro `Mid`, apenas `10 kΩ` fixo) e `James/Baxandall` precisam ser formalizadas em 4 structs/solvers independentes.
 2. **`DOCUMENTATION_PENDING` (`tonestack.rs` — Mesa Dual Rectifier Rev F):** Conforme registrado na Spec 057, os valores exatos do Tone Stack de `Rev F` (vs `Rev G`) dependem da obtenção do esquema oficial `Rev F` da Mesa/Boogie.

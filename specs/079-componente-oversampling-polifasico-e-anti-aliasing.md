@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático e de verificação do componente compartilhado de **Oversampling Polifásico e Anti-Aliasing (`component.oversampling.polyphase`)** em [`crates/ampforge-dsp/src/oversampling.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/oversampling.rs#L1-L316), eliminando critérios qualitativos ou incompletos da versão anterior e definindo **especificações completas e mensuráveis de engenharia de filtros** (banda passante, ondulação máxima de passband, banda de transição, atenuação mínima de stopband para IIR e FIR, atraso de grupo máximo, e método rigoroso de medição de aliasing por DFT sob excitação não-linear).
+Especificar o contrato técnico, matemático e de verificação do componente compartilhado de **Oversampling Polifásico e Anti-Aliasing (`component.oversampling.polyphase`)** em [`crates/ampforge-dsp/src/oversampling.rs`](../crates/ampforge-dsp/src/oversampling.rs#L1-L316), eliminando critérios qualitativos ou incompletos da versão anterior e definindo **especificações completas e mensuráveis de engenharia de filtros** (banda passante, ondulação máxima de passband, banda de transição, atenuação mínima de stopband para IIR e FIR, atraso de grupo máximo, e método rigoroso de medição de aliasing por DFT sob excitação não-linear).
 
 ---
 
@@ -94,7 +94,7 @@ O oversampling em fator $M \in \{2, 4, 8\}$ eleva a frequência de Nyquist inter
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/oversampling.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/oversampling.rs#L1-L316) apresenta os seguintes achados auditados:
+O código atual em [`crates/ampforge-dsp/src/oversampling.rs`](../crates/ampforge-dsp/src/oversampling.rs#L1-L316) apresenta os seguintes achados auditados:
 
 1. **`MISSING_VALIDATION` (`oversampling.rs:1–316`):** Os coeficientes dos filtros *Half-Band* IIR existem em `oversampling.rs`, mas não existe teste de contrato formal medindo por DFT a ondulação de banda passante (`20 Hz – 18 kHz <= ±0,25 dB`), a atenuação real de stopband (`>= 70 dB`) e o ganho de rejeição de aliasing sob senoide de `5 kHz` em hard-clipping (`1×` vs `8×`).
 2. **`ARCHITECTURE_CONFLICT` (`oversampling.rs`):** Ainda não existe o modo opcional `PolyphaseFir` (`>= 96 dB` stopband, fase linear) para renderização offline ou cenários sensíveis à fase.

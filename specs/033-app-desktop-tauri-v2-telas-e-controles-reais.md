@@ -12,7 +12,7 @@ Entregar o SONIX PRO // AMPFORGE como aplicativo Windows nativo (Tauri v2 + WebV
 ## Contexto
 **1. O app não é Tauri, embora a Spec 012 esteja marcada como `implementada`.**
 - `crates/sonix-desktop/Cargo.toml` não depende de `tauri`. As dependências são `cpal`, `ringbuf`, `tiny_http`, `serde` e `serde_json`.
-- A janela é o Edge em modo app: `msedge --app=http://127.0.0.1:7890 --window-size=1280,820` (`crates/sonix-desktop/src/main.rs:80-114`, `crates/sonix-desktop/src/server.rs:2992`).
+- A janela era o Edge em modo app: `msedge --app=http://127.0.0.1:7890 --window-size=1280,820` (histórico antes da migração Tauri: `crates/sonix-desktop/src/main.rs:80-114` e `server.rs:2992`; hoje `crates/sonix-desktop/src/server.rs:1-675 @ 573344b`).
 - A UI conversa com o motor por HTTP local (`fetch('/api/params')`, `/api/state`, `/api/tuner`, `/api/scope`, `/api/telemetry`, `/api/audio/status`), com token CSRF em `X-Sonix-Token` (`design-system/app.js:195-201`).
 - Isso contradiz o CA-6 da Spec 012 ("sem expor servidor HTTP de rede e sem depender de navegador Web externo"). A Spec 012 deve voltar para `implementada (CA-6 revertido)` quando esta for aprovada.
 

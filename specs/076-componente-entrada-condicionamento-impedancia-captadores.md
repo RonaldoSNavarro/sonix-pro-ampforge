@@ -104,9 +104,9 @@ Especificar o contrato técnico, físico, matemático e de verificação do **Co
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs#L4558-L4602) (parâmetros `input.*`) e [`audio.rs:1456–1515`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs#L1456-L1515) apresenta os seguintes achados auditados:
+O código atual em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](../crates/sonix-desktop/src/audio.rs#L4558-L4602) (parâmetros `input.*`) e [`audio.rs:1456–1515`](../crates/sonix-desktop/src/audio.rs#L1456-L1515) apresenta os seguintes achados auditados:
 
-1. **`CODE_REFERENCE_STALE` (corrigido nesta revisão):** A Spec 076 original citava números de linha desatualizados para o bloco de entrada em `audio.rs`. Após a revisão da Spec 052, o manipulador de parâmetros `input.*` reside em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs#L4558-L4602) (controlando `input.gain_db`, `input.pad`, `input.channel_mode`, `input.impedance`, `input.pickup_type`).
+1. **`CODE_REFERENCE_STALE` (corrigido nesta revisão):** A Spec 076 original citava números de linha desatualizados para o bloco de entrada em `audio.rs`. Após a revisão da Spec 052, o manipulador de parâmetros `input.*` reside em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](../crates/sonix-desktop/src/audio.rs#L4558-L4602) (controlando `input.gain_db`, `input.pad`, `input.channel_mode`, `input.impedance`, `input.pickup_type`).
 2. **`ARCHITECTURE_CONFLICT` (`audio.rs`):** O condicionamento de entrada ainda reside inline dentro de `RealtimeDspChain` em `sonix-desktop/src/audio.rs` em vez de ser um bloco reutilizável em `ampforge-dsp` (`component.input.conditioning_and_pickup_rlc`) compartilhado entre standalone desktop e futuros formatos CLAP/VST3.
 
 ---

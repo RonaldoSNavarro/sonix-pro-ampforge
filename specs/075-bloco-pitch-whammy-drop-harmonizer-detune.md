@@ -23,7 +23,7 @@ Especificar o contrato técnico, algorítmico e de verificação **exclusivament
 - **[Spec 090](090-modulo-harmonizer-diatonico-inteligente.md):** **Módulo Harmonizer Diatônico Inteligente** (`module.pitch.diatonic_harmonizer`) — detector de pitch + quantização diatônica por tonalidade/escala/intervalo;
 - **[Spec 091](091-rack-eventide-h3000-micropitch-detune.md):** **Rack Eventide H3000 MicroPitch Detune** (`rack.eventide.h3000_micropitch`) — duplo micro-pitch estéreo (`±9 cents` com atrasos assimétricos L/R).
 
-Preserva-se rastreabilidade completa à Spec anterior [042](042-bloco-de-pitch-sem-processamento.md) e ao motor atual em [`crates/ampforge-dsp/src/fx/pitch.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/pitch.rs#L1-L416).
+Preserva-se rastreabilidade completa à Spec anterior [042](042-bloco-de-pitch-sem-processamento.md) e ao motor atual em [`crates/ampforge-dsp/src/fx/pitch.rs`](../crates/ampforge-dsp/src/fx/pitch.rs#L1-L416).
 
 ---
 
@@ -105,7 +105,7 @@ Preserva-se rastreabilidade completa à Spec anterior [042](042-bloco-de-pitch-s
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/pitch.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/pitch.rs#L1-L416) apresenta os seguintes achados auditados:
+O código atual em [`crates/ampforge-dsp/src/fx/pitch.rs`](../crates/ampforge-dsp/src/fx/pitch.rs#L1-L416) apresenta os seguintes achados auditados:
 
 1. **`MODEL_COUPLING` (corrigido nesta revisão):** `PitchProcessor` em `pitch.rs:14–21` agrupa 4 modos/equipamentos distintos (`Whammy`, `Drop`, `Harmonizer`, `Detune`) em uma única struct monolítica, e a Spec 075 original fazia o mesmo. Agora `Drop`, `Harmonizer` e `Detune` foram separados nas **Specs 089, 090 e 091**.
 2. **`FACTUAL_ERROR` (`pitch.rs:171` — Janelamento Triangular/Crossfade vs Hann e Atraso de Janela):** Em `pitch.rs:170–175`, a janela usada é `sin(π * phase)` (cujo somatório $\sin(\pi\phi) + \sin(\pi(\phi+0,5))$ varia entre `1,00` e `1,414`, causando **`+3,0 dB` de modulação periódica de amplitude** na frequência da janela quando os dois taps somam em fase, ou exigindo normalização por soma quadrática!). Usar janelamento complementar de soma unitária exata ($\sin^2(\pi\phi_A) + \sin^2(\pi\phi_B) \equiv 1,0$) ou normalizar pelo ganho instantâneo elimina a ondulação de amplitude.

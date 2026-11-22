@@ -14,8 +14,8 @@ Origem: code review do commit `e1ffff3` (2026-11-14), verificado por leitura de 
 
 | Achado | Evidência |
 |---|---|
-| Arraste do knob quebra | `apps/sonix-app/ui/src/main.ts:138`: todo `store.emit()` chama `renderActiveScreen` → `replaceChildren`. Isso acontece a cada commit de knob e a cada frame de telemetria, afinador ou osciloscópio (~30–45 Hz). O knob arrastado sai do DOM e perde o pointer capture e o `dragState`; cada arraste anda no máximo um passo. |
-| Telemetria com nomes trocados | O backend envia `cpu_usage_pct` e `gate_gr_db` (`crates/sonix-desktop/src/audio.rs:2722`); a UI lê `cpu_avg_pct` e `gain_reduction_db` (`ui/src/store.ts:72-73`). CPU fica em 5,2% e GR em 0,0 dB para sempre. |
+| Arraste do knob quebra | No commit histórico `e1ffff3` (`main.ts:138`, hoje refatorado em `apps/sonix-app/ui/src/shell.ts:1-709 @ 573344b`): todo `store.emit()` chamava `renderActiveScreen` → `replaceChildren`. Isso acontecia a cada commit de knob e a cada frame de telemetria (~30–45 Hz). |
+| Telemetria com nomes trocados | O backend envia `cpu_usage_pct` e `gate_gr_db` (`crates/sonix-desktop/src/audio.rs:2722 @ 573344b`); a UI lê `cpu_avg_pct` e `gain_reduction_db` (`ui/src/store.ts:72-73`). CPU fica em 5,2% e GR em 0,0 dB para sempre. |
 | Osciloscópio com formato trocado | O backend envia `{transfer:[{x,y}]}`, `{waveform:{di,output}}` e `{tonestack:[{f,db}]}` (`api.rs:762,775,794`); a UI lê `transfer_x/transfer_y`, `waveform_in/out` e `tonestack_db` (`store.ts:87-92`). O modo `'wave'` da UI não existe no backend (`"waveform"`) e devolve 400. |
 | Presets e dispositivos | `/api/presets` e `/api/devices` devolvem arrays puros; a UI espera `{presets}` e `{devices}` (`store.ts:279-289`). Os ids padrão da UI (plexi_jumped, cali_modern…) não existem no backend (brit800, usdeluxe, recto, ac30), então carregar dá 404. O load não devolve `state` e os knobs não se atualizam. |
 

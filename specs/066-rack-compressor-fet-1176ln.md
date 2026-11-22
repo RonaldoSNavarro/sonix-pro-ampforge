@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do compressor de estúdio **UREI Model 1176LN Solid-State Peak Limiter (Revision D/E Blackface)** como processador modular independente (`rack.urei.1176ln`), fundamentado no manual técnico oficial da UREI (`https://media.uaudio.com/assetlibrary/1/1/1176ln_manual.pdf`, `PRIMARY_OFFICIAL`), separando-o estritamente das outras variantes hoje agrupadas em `CompressorProcessor` (`PedalRossDyna`, `OpticalLa2a`, `VcaMasterBus`), e diagnosticando a diferença entre a topologia real de **realimentação (*feedback*) com divisor JFET `2N5457`** do 1176LN e o detector *feedforward* simplificado atualmente implementado em [`crates/ampforge-dsp/src/fx/dynamics.rs:433–530 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L433-L530).
+Especificar o contrato técnico, topológico, matemático e de verificação do compressor de estúdio **UREI Model 1176LN Solid-State Peak Limiter (Revision D/E Blackface)** como processador modular independente (`rack.urei.1176ln`), fundamentado no manual técnico oficial da UREI (`https://media.uaudio.com/assetlibrary/1/1/1176ln_manual.pdf`, `PRIMARY_OFFICIAL`), separando-o estritamente das outras variantes hoje agrupadas em `CompressorProcessor` (`PedalRossDyna`, `OpticalLa2a`, `VcaMasterBus`), e diagnosticando a diferença entre a topologia real de **realimentação (*feedback*) com divisor JFET `2N5457`** do 1176LN e o detector *feedforward* simplificado atualmente implementado em [`crates/ampforge-dsp/src/fx/dynamics.rs:433–530 @ c20cc65`](../crates/ampforge-dsp/src/fx/dynamics.rs#L433-L530).
 
 ---
 
@@ -113,7 +113,7 @@ De acordo com o manual oficial de operação e serviço da UREI (`F-01`, Seçõe
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/dynamics.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L211-L551) possui as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/dynamics.rs`](../crates/ampforge-dsp/src/fx/dynamics.rs#L211-L551) possui as seguintes divergências auditadas:
 
 1. **`MODEL_COUPLING` (`dynamics.rs:212–217`):** O `CompressorProcessor` agrupa 4 arquiteturas físicas incompatíveis (`PedalRossDyna`, `Fet1176`, `OpticalLa2a`, `VcaMasterBus`) dentro de um único método `process_sample`. Esta Spec isola exclusivamente o contrato do **`rack.urei.1176ln` (`Fet1176`)**.
 - Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit

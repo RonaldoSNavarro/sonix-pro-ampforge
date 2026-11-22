@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático e de verificação do **Módulo Equalizador Paramétrico Digital de 8 Bandas (`module.eq.parametric_8band`)**, atualmente implementado em `EqProcessor (EqMode::Parametric8Band)` ([`crates/ampforge-dsp/src/fx/eq.rs:1–92 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L1-L92)), desacoplando-o definitivamente do pedal analógico **MXR M108** (**[Spec 067](067-pedal-mxr-m108-equalizador-grafico-10-bandas.md)**) e do **Mesa/Boogie 5-Band** (**[Spec 085](085-eq-grafico-5-bandas-mesa-boogie-mark.md)**), e introduzindo a especificação de **compensação de *Nyquist cramping*** (Orfanidis / Massberg) e precisão `f64` para operação cirúrgica de estúdio (`20 Hz – 20 kHz`).
+Especificar o contrato técnico, matemático e de verificação do **Módulo Equalizador Paramétrico Digital de 8 Bandas (`module.eq.parametric_8band`)**, atualmente implementado em `EqProcessor (EqMode::Parametric8Band)` ([`crates/ampforge-dsp/src/fx/eq.rs:1–92 @ c20cc65`](../crates/ampforge-dsp/src/fx/eq.rs#L1-L92)), desacoplando-o definitivamente do pedal analógico **MXR M108** (**[Spec 067](067-pedal-mxr-m108-equalizador-grafico-10-bandas.md)**) e do **Mesa/Boogie 5-Band** (**[Spec 085](085-eq-grafico-5-bandas-mesa-boogie-mark.md)**), e introduzindo a especificação de **compensação de *Nyquist cramping*** (Orfanidis / Massberg) e precisão `f64` para operação cirúrgica de estúdio (`20 Hz – 20 kHz`).
 
 ---
 

@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do pedal **MXR Phase 90 (1974 Script Logo, 4× JFET `2N5952`)** como processador modular independente (`pedal.mxr.phase90`), separando com rigor histórico e elétrico a revisão **`1974 Script Logo`** (que **não possui** o resistor de realimentação $R_{28}$, operando com `feedback = 0.0` puro) da revisão **`1977+ Block Logo / M101`** (que adicionou o resistor de realimentação $R_{28}$ entre a saída do 4º estágio all-pass e a entrada do 1º estágio), e corrigindo o bug em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 238`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L78-L240) onde o valor padrão de `self.feedback` estava codificado em `0.70` (`0.35` efetivo) em um modelo intitulado `PhaserPhase90` ("Script Logo")!
+Especificar o contrato técnico, topológico, matemático e de verificação do pedal **MXR Phase 90 (1974 Script Logo, 4× JFET `2N5952`)** como processador modular independente (`pedal.mxr.phase90`), separando com rigor histórico e elétrico a revisão **`1974 Script Logo`** (que **não possui** o resistor de realimentação $R_{28}$, operando com `feedback = 0.0` puro) da revisão **`1977+ Block Logo / M101`** (que adicionou o resistor de realimentação $R_{28}$ entre a saída do 4º estágio all-pass e a entrada do 1º estágio), e corrigindo o bug em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 238`](../crates/ampforge-dsp/src/fx/modulation.rs#L78-L240) onde o valor padrão de `self.feedback` estava codificado em `0.70` (`0.35` efetivo) em um modelo intitulado `PhaserPhase90` ("Script Logo")!
 
 ---
 
@@ -103,7 +103,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233–244`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L233-L244) contém um **conflito de revisão histórica (`REVISION_MISMATCH` / `FACTUAL_ERROR`)**:
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233–244`](../crates/ampforge-dsp/src/fx/modulation.rs#L233-L244) contém um **conflito de revisão histórica (`REVISION_MISMATCH` / `FACTUAL_ERROR`)**:
 
 1. **`REVISION_MISMATCH` / `FACTUAL_ERROR` (`modulation.rs:78, 238` e `controls.registry.ts:986`):**
    - O comentário em `modulation.rs:233` declara `"// MXR Phase 90 Script: 4-stage all-pass phaser with JFET modulation"`, mas o construtor em `modulation.rs:78` inicializa `feedback: 0.7` (e `controls.registry.ts:986` define `default: 70`), aplicando `self.phaser_fb_state * (self.feedback * 0.5)` (`35%` de realimentação!) por padrão!

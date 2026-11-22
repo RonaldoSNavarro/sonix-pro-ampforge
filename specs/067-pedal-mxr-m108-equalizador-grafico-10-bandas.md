@@ -113,7 +113,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L117-L228) e [`apps/sonix-app/ui/src/controls.registry.ts:799–883`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/apps/sonix-app/ui/src/controls.registry.ts#L799-L883) apresenta as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](../crates/ampforge-dsp/src/fx/eq.rs#L117-L228) e [`apps/sonix-app/ui/src/controls.registry.ts:799–883`](../apps/sonix-app/ui/src/controls.registry.ts#L799-L883) apresenta as seguintes divergências auditadas:
 
 1. **`MODEL_COUPLING` (corrigido nesta revisão):** A Spec 067 original agrupava `EqProcessor (EqMode::Graphic10BandPedal)` (M108 10-Band + Mesa 5-Band) e `EqProcessor (EqMode::Parametric8Band)` (8-Band Parametric). Agora a Spec 067 trata exclusivamente do **MXR M108 (`pedal.mxr.m108_10band_eq`)**, enquanto o Mesa 5-Band foi movido para a **Spec 085** e o Paramétrico de 8 Bandas para a **Spec 086**.
 2. **`FACTUAL_ERROR` (`eq.rs:131, 166`):** Em `EqProcessor (EqMode::Graphic10BandPedal)`, o limite de ganho das bandas está codificado como `gain_db.clamp(-15.0, 15.0)` (`±15 dB`) e o $Q$ proporcional usa `gain_db.abs() / 15.0`. Porém, tanto o manual oficial da Dunlop (`F-01` p. 2, `F-02` p. 2) quanto o registro de controles da própria UI do AMPFORGE (`controls.registry.ts:815–879`, `range: [-12, 12]`) especificam que o MXR M108 opera estritamente em **`±12,0 dB`**!

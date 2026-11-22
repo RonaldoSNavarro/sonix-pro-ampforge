@@ -29,7 +29,7 @@ Evidência:
 1. **Afinador no motor, sobre a entrada.** O callback copia a entrada (depois do DC blocker, antes
    de boost, gate e amp) para um buffer lock-free; uma thread de análise roda `TunerProcessor` na
    taxa efetiva da sessão (Spec 018) e publica nota, cents, frequência e confiança.
-2. **Faixa de guitarra.** Detecta de 60 Hz a 1,4 kHz (cobre afinações graves até Dó2 e o Mi6 da
+2. **Faixa de guitarra.** Detecta de 38 Hz a 1,4 kHz (cobre afinações graves até Dó2 e o Mi6 da
    corda aguda no 24º traste).
 3. **Saída durante a afinação.** `tuner.output` = `mute` (padrão, como afinador de pedaleira) ou
    `bypass`; rampa de 5 ms ao abrir e fechar (Spec 008 CA-4).
@@ -43,7 +43,7 @@ Evidência:
 - **CA-1:** Seno de 110 Hz na entrada com `amp_1.gain`=10: o afinador reporta Lá2 a ±0,5 cent (lê a
   entrada, não a saída distorcida).
 - **CA-2:** Com a sessão em 44,1 kHz, seno de 440 Hz → Lá4 a ±0,1 cent.
-- **CA-3:** Senos de 65,41 Hz (Dó2) e 1.318,5 Hz (Mi6) → notas corretas a ±1 cent; abaixo de 60 Hz
+- **CA-3:** Senos de 65,41 Hz (Dó2) e 1.318,5 Hz (Mi6) → notas corretas a ±1 cent; abaixo de 38 Hz
   não reporta nota.
 - **CA-4:** Com `tuner.enabled=true` e `tuner.output=mute`, a saída chega a 0 em 5 ms ± 1 bloco e
   volta com a mesma rampa ao fechar; com `bypass`, a saída não muda.

@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, de memória em tempo real, de máquina de estados e de verificação do **Componente Looper de Performance (`component.looper.performance`)** em [`crates/ampforge-dsp/src/looper.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/looper.rs#L1-L275), desacoplando-o definitivamente do **Afinador YIN** (**[Spec 083](083-componente-afinador-yin-e-looper-de-performance.md)**) para eliminar o acoplamento indevido (`MODEL_COUPLING`) entre dois utilitários sem nenhuma dependência algorítmica entre si.
+Especificar o contrato técnico, de memória em tempo real, de máquina de estados e de verificação do **Componente Looper de Performance (`component.looper.performance`)** em [`crates/ampforge-dsp/src/looper.rs`](../crates/ampforge-dsp/src/looper.rs#L1-L275), desacoplando-o definitivamente do **Afinador YIN** (**[Spec 083](083-componente-afinador-yin-e-looper-de-performance.md)**) para eliminar o acoplamento indevido (`MODEL_COUPLING`) entre dois utilitários sem nenhuma dependência algorítmica entre si.
 
 ---
 
@@ -74,7 +74,7 @@ Especificar o contrato técnico, de memória em tempo real, de máquina de estad
 
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
-| `F-01` | Ross Bencina — *Real-time audio programming 101* & Regra Promovida Cortex `d272` | [`AGENTS.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/AGENTS.md) | `INTERNAL_REFERENCE` / `SECONDARY_TECHNICAL` | Contrato zero-alloc, zero-lock e WCET constante em operações de estado (`Rec`, `Overdub`, `Undo`, `Redo`, `Clear`). |
+| `F-01` | Ross Bencina — *Real-time audio programming 101* & Regra Promovida Cortex `d272` | [`AGENTS.md`](../AGENTS.md) | `INTERNAL_REFERENCE` / `SECONDARY_TECHNICAL` | Contrato zero-alloc, zero-lock e WCET constante em operações de estado (`Rec`, `Overdub`, `Undo`, `Redo`, `Clear`). |
 
 ### 6.2. Evidência documental por afirmação técnica
 

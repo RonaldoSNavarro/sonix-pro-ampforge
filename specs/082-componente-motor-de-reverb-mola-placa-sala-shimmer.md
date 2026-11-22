@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, acústico, matemático e de verificação do **Componente Motor de Reverb Multi-Arquitetura (`component.reverb.multi_architecture`)** em [`crates/ampforge-dsp/src/fx/reverb.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/reverb.rs#L1-L337), diagnosticando e corrigindo **três defeitos objetivos de implementação** descobertos durante a auditoria do código atual:
+Especificar o contrato técnico, acústico, matemático e de verificação do **Componente Motor de Reverb Multi-Arquitetura (`component.reverb.multi_architecture`)** em [`crates/ampforge-dsp/src/fx/reverb.rs`](../crates/ampforge-dsp/src/fx/reverb.rs#L1-L337), diagnosticando e corrigindo **três defeitos objetivos de implementação** descobertos durante a auditoria do código atual:
 1. **Falsa Diferenciação entre `Plate`, `Hall` e `Chamber` (`reverb.rs:169–175`):** No código atual, `Plate`, `Hall` e `Chamber` executam a **mesma rede de 8 combs Schroeder**, diferindo apenas por um multiplicador escalar de comprimento (`0.95`, `1.15`, `0.80`)! Esta Spec exige 5 arquiteturas acusticamente distintas e justificadas fisicamente (`Spring`, `Plate`, `Hall`, `Chamber`, `Shimmer`).
 2. **Damping Dependente da Taxa de Amostragem (`reverb.rs:228`):** A linha `self.damp_state[i] = comb_out * (1.0 - damp) + self.damp_state[i] * damp;` aplica o coeficiente `damp` diretamente sem escalonar pela taxa de amostragem $f_s$ — fazendo com que a frequência de corte de absorção de agudos dobre em `96 kHz` em relação a `48 kHz`!
 3. **Divergência no Limite de `predelay_ms` (`reverb.rs:114`):** `reverb.rs:114` limita `predelay_ms` a `150.0 ms`, divergindo do limite de `250.0 ms` especificado na UI (`controls.registry.ts`) e na Spec 032.
@@ -109,7 +109,7 @@ Especificar o contrato técnico, acústico, matemático e de verificação do **
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/reverb.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/reverb.rs#L1-L337) possui **três defeitos auditados**:
+O código atual em [`crates/ampforge-dsp/src/fx/reverb.rs`](../crates/ampforge-dsp/src/fx/reverb.rs#L1-L337) possui **três defeitos auditados**:
 
 1. **`FACTUAL_ERROR` / `MODEL_COUPLING` (`reverb.rs:169–175`):** `Plate`, `Hall` e `Chamber` não possuem arquiteturas distintas — compartilham o mesmo loop de 8 combs Schroeder diferindo apenas em `model_scale = 0.95 / 1.15 / 0.80`!
 2. **`FACTUAL_ERROR` (`reverb.rs:228` — Damping Dependente de `sample_rate`):** O filtro passa-baixas de absorção dentro dos combs usa diretamente `self.damp_state[i] * damp + comb_out * (1.0 - damp)` sem conversão via $\exp(-2\pi f_{\text{damp}} / f_s)$, alterando drasticamente o brilho da cauda entre `44,1 kHz`, `48 kHz` e `96 kHz`!

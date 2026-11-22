@@ -91,7 +91,7 @@ Nos amplificadores Mesa/Boogie Mark Series, o Tone Stack passivo rotativo (`Bass
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** Em [`crates/ampforge-dsp/src/fx/eq.rs:95 @ c20cc65, 112`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L95-L115), `MESA_5_FREQS = [80.0, 240.0, 750.0, 2200.0, 6600.0]` estava acoplado dentro da mesma struct `EqProcessor (EqMode::Graphic10BandPedal)` que o MXR M108 (Spec 067). Esta Spec estabelece seu contrato isolado (`amp.mesa.mark_5band_eq`).
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** Em [`crates/ampforge-dsp/src/fx/eq.rs:95 @ c20cc65, 112`](../crates/ampforge-dsp/src/fx/eq.rs#L95-L115), `MESA_5_FREQS = [80.0, 240.0, 750.0, 2200.0, 6600.0]` estava acoplado dentro da mesma struct `EqProcessor (EqMode::Graphic10BandPedal)` que o MXR M108 (Spec 067). Esta Spec estabelece seu contrato isolado (`amp.mesa.mark_5band_eq`).
 
 ---
 

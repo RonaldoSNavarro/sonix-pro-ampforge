@@ -98,7 +98,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:258–266 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L258-L266) apresenta as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:258–266 @ c20cc65`](../crates/ampforge-dsp/src/fx/modulation.rs#L258-L266) apresenta as seguintes divergências auditadas:
 
 1. **`MODEL_COUPLING` (corrigido nesta revisão):** A Spec 073 original combinava `ModModel::OpticalBiasTremolo` e `TremoloBias` em um único documento. O `TremoloBias` foi separado para a **[Spec 088](088-modulo-tremolo-modulacao-bias.md)**.
 2. **`FACTUAL_ERROR` (`modulation.rs:259–265`):** O código atual modela `ModModel::OpticalBiasTremolo` simplesmente como `let target = 1.0 - self.depth * mod_val.powf(1.5);` suavizado por um único coeficiente simétrico (`0.002` a cada amostra, independente de `sample_rate` e idêntico para subida e descida!). Isso viola duas propriedades físicas:

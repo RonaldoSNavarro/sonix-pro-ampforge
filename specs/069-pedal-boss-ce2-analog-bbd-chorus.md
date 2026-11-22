@@ -112,7 +112,7 @@ De acordo com a análise esquemática do Boss CE-2 (`F-01`) e o manual oficial d
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:195–218 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L195-L218) apresenta as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:195–218 @ c20cc65`](../crates/ampforge-dsp/src/fx/modulation.rs#L195-L218) apresenta as seguintes divergências auditadas:
 
 1. **`MODEL_COUPLING` (`modulation.rs:196–218`):** O braço `ModModel::ChorusCe2` em `modulation.rs:196–218` implementa na verdade um **Tri-Chorus de 3 fases senoidais** (`p1 = 0`, `p2 = 1/3`, `p3 = 2/3` a $120^\circ$, somando `(w1 + w2 + w3) / 3.0`) em torno de `15 ms ± 6 ms`!
    - Isso **não é o circuito do Boss CE-2**! O Boss CE-2 real possui **uma única linha BBD (`MN3007`)** modulada por um **LFO Triangular** em torno de $\tau_0 \approx 7,5\text{ ms}$ (`5,12..12,8 ms`).

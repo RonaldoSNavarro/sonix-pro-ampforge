@@ -17,10 +17,10 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, de concorrência em memória (*lock-free memory ordering*), de roteamento de sinal e de verificação do **Componente de Roteamento DAG, Split/Merge, Fila SPSC e Modifiers (`component.routing.dag_spsc_modifiers`)** em [`crates/ampforge-dsp/src/dag.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/dag.rs#L1-L529), [`crates/ampforge-dsp/src/queue.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/queue.rs#L1-L275) e [`crates/sonix-desktop/src/audio.rs:2558–2693 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs#L2558-L2693), corrigindo e auditando três pontos críticos encontrados no código real:
+Especificar o contrato técnico, de concorrência em memória (*lock-free memory ordering*), de roteamento de sinal e de verificação do **Componente de Roteamento DAG, Split/Merge, Fila SPSC e Modifiers (`component.routing.dag_spsc_modifiers`)** em [`crates/ampforge-dsp/src/dag.rs`](../crates/ampforge-dsp/src/dag.rs#L1-L529), [`crates/ampforge-dsp/src/queue.rs`](../crates/ampforge-dsp/src/queue.rs#L1-L275) e [`crates/sonix-desktop/src/audio.rs:2558–2693 @ c20cc65`](../crates/sonix-desktop/src/audio.rs#L2558-L2693), corrigindo e auditando três pontos críticos encontrados no código real:
 1. **Risco de Alocação na Heap em `MixerNode::configure_channel` (`dag.rs`):** A função atual realiza `Vec::resize` caso `channel_index >= self.channels.len()`, o que **nunca pode ser invocado na thread de áudio RT**;
 2. **Auditoria de Invariantes `unsafe` da Fila SPSC (`queue.rs:1–275`):** Formalização obrigatória das provas de segurança `// SAFETY:` (`UnsafeCell`, ordenação de memória `Acquire`/`Release` nos índices `head`/`tail`, invariante estrito de produtor único e consumidor único, e comportamento `Drop` seguro sem vazamentos);
-3. **Atualização das Referências de Código em `audio.rs`:** Atualização dos números de linha do motor de roteamento paralelo `AMP 1 / AMP 2` (implementado na Spec 052) em [`crates/sonix-desktop/src/audio.rs:2558–2693 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs#L2558-L2693).
+3. **Atualização das Referências de Código em `audio.rs`:** Atualização dos números de linha do motor de roteamento paralelo `AMP 1 / AMP 2` (implementado na Spec 052) em [`crates/sonix-desktop/src/audio.rs:2558–2693 @ c20cc65`](../crates/sonix-desktop/src/audio.rs#L2558-L2693).
 
 ---
 
@@ -106,7 +106,7 @@ Especificar o contrato técnico, de concorrência em memória (*lock-free memory
 ### 7.1. Auditoria do código atual e classificação dos achados
 
 1. **`FACTUAL_ERROR` / Risco RT (`crates/ampforge-dsp/src/dag.rs` — `MixerNode::configure_channel`):** A função `configure_channel` chama `Vec::resize` dinamicamente se o índice exceder `len()`. Para garantir invariante zero-alloc absoluta, `MixerNode` deve usar capacidade fixa pré-alocada (`MAX_CHANNELS = 8`, array estático `[ChannelConfig; 8]`), eliminando qualquer `Vec::resize` em tempo de execução!
-2. **`CODE_REFERENCE_STALE` (corrigido nesta revisão):** O código de roteamento `AMP 1 / AMP 2` paralelo e a aplicação de parâmetros de roteamento residem atualmente em [`crates/sonix-desktop/src/audio.rs:2558–2693 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs#L2558-L2693) (atualizado pela Spec 052).
+2. **`CODE_REFERENCE_STALE` (corrigido nesta revisão):** O código de roteamento `AMP 1 / AMP 2` paralelo e a aplicação de parâmetros de roteamento residem atualmente em [`crates/sonix-desktop/src/audio.rs:2558–2693 @ c20cc65`](../crates/sonix-desktop/src/audio.rs#L2558-L2693) (atualizado pela Spec 052).
 3. **`MISSING_VALIDATION` (`crates/ampforge-dsp/src/queue.rs`):** Os blocos `unsafe` do ring buffer SPSC precisam ter cada invariante `// SAFETY:` explicitamente documentado e coberto por teste de estresse concorrente multi-thread (1 milhão de mensagens) validando ordem FIFO exata e zero perda/corrupção sob contenção.
 
 ---

@@ -111,7 +111,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L465-L565) apresenta um **defeito crítico de engenharia DSP**:
+O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L465-L565) apresenta um **defeito crítico de engenharia DSP**:
 
 1. **`FACTUAL_ERROR` (`drive.rs:465–480` e `553–560` — Cancelamento Comb-Filter por Desalinhamento de Fase entre Clean e Dirty):**
    - Na linha `465`, quando `self.model == DriveModel::KlonCentaur`, `process_sample` **não** faz oversampling do bloco inteiro (`let needs_oversampling = matches!(self.model, ...)` exclui `KlonCentaur`!).

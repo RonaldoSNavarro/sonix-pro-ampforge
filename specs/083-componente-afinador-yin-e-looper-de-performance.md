@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático, de desacoplamento em tempo real e de verificação **exclusivamente** do **Componente de Afinador (`component.tuner.yin_strobe`)** em [`crates/ampforge-dsp/src/tuner.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/tuner.rs#L1-L493), desfazendo o agrupamento indevido (`MODEL_COUPLING`) da versão anterior desta Spec — que misturava o Afinador YIN com o **Looper de Performance** (agora isolado integralmente na **[Spec 092](092-componente-looper-de-performance.md)**) — e mantendo conformidade rigorosa com a **Regra Promovida Cortex `20261111-023654-dsp-fd17`** (análise pesada YIN executada exclusivamente fora da thread RT, enquanto o callback RT apenas grava amostras em um ring buffer lock-free).
+Especificar o contrato técnico, matemático, de desacoplamento em tempo real e de verificação **exclusivamente** do **Componente de Afinador (`component.tuner.yin_strobe`)** em [`crates/ampforge-dsp/src/tuner.rs`](../crates/ampforge-dsp/src/tuner.rs#L1-L493), desfazendo o agrupamento indevido (`MODEL_COUPLING`) da versão anterior desta Spec — que misturava o Afinador YIN com o **Looper de Performance** (agora isolado integralmente na **[Spec 092](092-componente-looper-de-performance.md)**) — e mantendo conformidade rigorosa com a **Regra Promovida Cortex `20261111-023654-dsp-fd17`** (análise pesada YIN executada exclusivamente fora da thread RT, enquanto o callback RT apenas grava amostras em um ring buffer lock-free).
 
 ---
 
@@ -69,7 +69,7 @@ O algoritmo **YIN** (`F-01`) supera a autocorrelação simples e a detecção po
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
 | `F-01` | Alain de Cheveigné & Hideki Kawahara — *YIN, a fundamental frequency estimator for speech and music* (JASA, Vol. 111, No. 4, pp. 1917–1930, 2002) | Literatura acadêmica fundadora do algoritmo YIN | `ACADEMIC` | Equações da CMNDF $d'(\tau)$, limiar absoluto $\theta$, interpolação parabólica e rejeição de erro de oitava. |
-| `F-02` | Regra Promovida Cortex `20261111-023654-dsp-fd17` & Spec 026 | [`AGENTS.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/AGENTS.md) / [`specs/026-afinador-dsp-zero-alloc-desacoplado.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/specs/026-afinador-dsp-zero-alloc-desacoplado.md) | `INTERNAL_REFERENCE` | Contrato de desacoplamento RT vs Thread de Telemetria (`30–60 Hz`) e scratch buffers pré-alocados. |
+| `F-02` | Regra Promovida Cortex `20261111-023654-dsp-fd17` & Spec 026 | [`AGENTS.md`](../AGENTS.md) / [`specs/026-afinador-ao-vivo-na-entrada.md`](026-afinador-ao-vivo-na-entrada.md) | `INTERNAL_REFERENCE` | Contrato de desacoplamento RT vs Thread de Telemetria (`30–60 Hz`) e scratch buffers pré-alocados. |
 
 ### 6.2. Evidência documental por afirmação técnica
 

@@ -17,10 +17,10 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático, de memória em tempo real e de verificação do **Componente de Gabinete, Convolução IR Zero-Latency e Microfonação (`component.cab.ir_convolution_and_mics`)** em [`crates/ampforge-dsp/src/cab.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/cab.rs#L1-L1206), corrigindo três pontos críticos identificados na auditoria:
+Especificar o contrato técnico, matemático, de memória em tempo real e de verificação do **Componente de Gabinete, Convolução IR Zero-Latency e Microfonação (`component.cab.ir_convolution_and_mics`)** em [`crates/ampforge-dsp/src/cab.rs`](../crates/ampforge-dsp/src/cab.rs#L1-L1206), corrigindo três pontos críticos identificados na auditoria:
 1. **Definição matemática precisa de "Convolução Particionada Zero-Latency":** A Partição `0` (`h[0..B-1]`) é computada por convolução FIR direta no domínio do tempo (ou bloco particionado sem latência adicional de enquadramento), enquanto as partições de cauda `1..P-1` operam via *Frequency-Domain Delay Line (FDL)* com FFT de tamanho `2B` (`Overlap-Save` / `Overlap-Add`), garantindo **`0` amostras de latência algorítmica**;
 2. **Reconciliação da divergência do filtro do microfone `SM57` (`cab.rs:1084` vs `docs/cab-microfones-fontes.md`):** Documentação rigorosa dos 7 microfones clássicos (`SM57`, `R121`, `U87`, `MD421`, `E906`, `C414`, `SM7B`) com base em seus datasheets oficiais (`PRIMARY_COMPONENT`), registrando a divergência verificada no `SM57` (`5600 Hz, +4,0 dB, Q=2,5` no código atual `cab.rs:1084` vs curva publicada pela Shure `4,5–6,0 kHz, +5,0 dB`);
-3. **Diagnóstico do vazamento de memória intencional (`std::mem::forget`) em [`crates/ampforge-dsp/src/cab.rs:1199 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/cab.rs#L1199):** O código atual evita desalocar a IR antiga na thread de áudio chamando `std::mem::forget(old_ir)` — o que satisfaz `zero-dealloc` no callback ao custo de **vazar memória permanentemente a cada troca de IR ou preset**! Esta Spec especifica a devolução da IR substituída por fila SPSC *lock-free* para coleta (*garbage reclamation*) na Control Thread.
+3. **Diagnóstico do vazamento de memória intencional (`std::mem::forget`) em [`crates/ampforge-dsp/src/cab.rs:1199 @ c20cc65`](../crates/ampforge-dsp/src/cab.rs#L1199):** O código atual evita desalocar a IR antiga na thread de áudio chamando `std::mem::forget(old_ir)` — o que satisfaz `zero-dealloc` no callback ao custo de **vazar memória permanentemente a cada troca de IR ou preset**! Esta Spec especifica a devolução da IR substituída por fila SPSC *lock-free* para coleta (*garbage reclamation*) na Control Thread.
 
 ---
 
@@ -77,16 +77,16 @@ Especificar o contrato técnico, matemático, de memória em tempo real e de ver
 | ID | Título / Documento | URL / Localização | Classificação | Revisão / Escopo |
 |---|---|---|---|---|
 | `F-01` | William G. Gardner — *Efficient Convolution without Input-Output Delay* (JAES, Vol. 43, No. 3, 1995) | Literatura acadêmica fundadora da convolução particionada zero-latency | `ACADEMIC` | Partição 0 sem atraso + partições de cauda em FDL FFT com igualdade matemática exata à convolução direta. |
-| `F-02` | Shure Incorporated — *SM57 & SM7B Cardioid Dynamic Microphone User Guides / Frequency Response Curves* | Referência consolidada em [`docs/cab-microfones-fontes.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | Curvas de resposta em frequência (`SM57` pico `4,5–6 kHz`, rolagem `< 100 Hz`; `SM7B` presença suave). |
-| `F-03` | Royer Labs — *R-121 Studio Ribbon Microphone Datasheet* | Referência consolidada em [`docs/cab-microfones-fontes.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | Padrão figura-8, efeito de proximidade acentuado e rolagem suave de agudos (`> 8 kHz`). |
-| `F-04` | Neumann (`U87 Ai`), Sennheiser (`MD 421-II`, `e 906`), AKG (`C414 XLS`) — *Official Technical Datasheets* | Referência consolidada em [`docs/cab-microfones-fontes.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | Curvas de resposta em frequência e diretividade dos demais 4 microfones do banco. |
+| `F-02` | Shure Incorporated — *SM57 & SM7B Cardioid Dynamic Microphone User Guides / Frequency Response Curves* | Referência consolidada em [`docs/cab-microfones-fontes.md`](../docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | Curvas de resposta em frequência (`SM57` pico `4,5–6 kHz`, rolagem `< 100 Hz`; `SM7B` presença suave). |
+| `F-03` | Royer Labs — *R-121 Studio Ribbon Microphone Datasheet* | Referência consolidada em [`docs/cab-microfones-fontes.md`](../docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | Padrão figura-8, efeito de proximidade acentuado e rolagem suave de agudos (`> 8 kHz`). |
+| `F-04` | Neumann (`U87 Ai`), Sennheiser (`MD 421-II`, `e 906`), AKG (`C414 XLS`) — *Official Technical Datasheets* | Referência consolidada em [`docs/cab-microfones-fontes.md`](../docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | Curvas de resposta em frequência e diretividade dos demais 4 microfones do banco. |
 
 ### 6.2. Evidência documental por afirmação técnica
 
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
 | Partição 0 direta (`B=128`) + cauda FDL FFT (`N=256`) resulta em latência `0` amostras e erro de reconstrução `< -100 dB` | `F-01` | JAES 1995 | §2–3 | `ACADEMIC` | `CONFIRMED` |
-| Respostas nominais dos 7 microfones (`SM57`, `R121`, `U87`, `MD421`, `E906`, `C414`, `SM7B`) | `F-02`, `F-03`, `F-04` | Datasheets oficiais | [`docs/cab-microfones-fontes.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | `CONFIRMED` |
+| Respostas nominais dos 7 microfones (`SM57`, `R121`, `U87`, `MD421`, `E906`, `C414`, `SM7B`) | `F-02`, `F-03`, `F-04` | Datasheets oficiais | [`docs/cab-microfones-fontes.md`](../docs/cab-microfones-fontes.md) | `PRIMARY_COMPONENT` | `CONFIRMED` |
 | Divergência de calibração do `SM57` entre código atual (`5600 Hz, +4,0 dB, Q=2,5` em `cab.rs:1084`) e referência anterior (`4,8 kHz, +5,0 dB, Q=1,4`) | `F-02` & auditoria `cab.rs:1084` | SM57 Datasheet | `docs/cab-microfones-fontes.md` | `PRIMARY_COMPONENT` | `CONFIRMED` (reconciliado na doc e especificado para calibração consistente) |
 
 ---
@@ -104,7 +104,7 @@ Especificar o contrato técnico, matemático, de memória em tempo real e de ver
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/cab.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/cab.rs#L1-L1206) apresenta os seguintes achados auditados:
+O código atual em [`crates/ampforge-dsp/src/cab.rs`](../crates/ampforge-dsp/src/cab.rs#L1-L1206) apresenta os seguintes achados auditados:
 
 1. **`FACTUAL_ERROR` / Risco de Vazamento de Memória (`cab.rs:1199` — `std::mem::forget` na Troca de IR):**
    - Na linha `1199` de `crates/ampforge-dsp/src/cab.rs`, ao trocar de IR no callback RT, o código chama `std::mem::forget` sobre a estrutura de IR anterior para evitar chamar `dealloc` na thread de áudio!
@@ -251,7 +251,7 @@ O código atual em [`crates/ampforge-dsp/src/cab.rs`](file:///g:/Dev/Projetos/Si
 ## 20. Referências
 
 - `[F-01]` Gardner, W. G. (1995). *Efficient Convolution without Input-Output Delay*. JAES, 43(3), 127–136.
-- `[F-02]`–`[F-04]` Datasheets oficiais Shure (`SM57`, `SM7B`), Royer (`R-121`), Neumann (`U87 Ai`), Sennheiser (`MD 421-II`, `e 906`), AKG (`C414 XLS`), consolidados em [`docs/cab-microfones-fontes.md`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/docs/cab-microfones-fontes.md).
+- `[F-02]`–`[F-04]` Datasheets oficiais Shure (`SM57`, `SM7B`), Royer (`R-121`), Neumann (`U87 Ai`), Sennheiser (`MD 421-II`, `e 906`), AKG (`C414 XLS`), consolidados em [`docs/cab-microfones-fontes.md`](../docs/cab-microfones-fontes.md).
 
 ---
 

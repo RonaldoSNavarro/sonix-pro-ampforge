@@ -117,7 +117,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L440-L444) e [`567-598`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L567-L598) contém as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L440-L444) e [`567-598`](../crates/ampforge-dsp/src/fx/drive.rs#L567-L598) contém as seguintes divergências auditadas:
 
 - Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 - Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit

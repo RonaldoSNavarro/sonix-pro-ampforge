@@ -84,7 +84,7 @@ Modelagem rigorosa dos esquemas elétricos originais:
 │   ├── sonix-desktop/              # Host desktop, drivers de áudio (WASAPI/ASIO) e MIDI
 │   └── sonix-plugin/               # Plugins de áudio DAW VST3 e CLAP (via nih-plug; sem editor próprio; usa a interface genérica de parâmetros do host)
 ├── docs/                           # Documentação arquitetural, levantamento de requisitos e referências visuais
-├── specs/                          # Especificações formais SDD (Specs 001 a 050)
+├── specs/                          # Especificações formais SDD (Specs 001–052 implementadas (com ressalvas registradas em 001, 002, 007, 008, 009, 012, 028) e Specs 053–092 em rascunho modular)
 └── tests/                          # Testes de contrato automatizados de ponta a ponta (E2E / JS)
 ```
 
@@ -140,7 +140,7 @@ npm run test:e2e
 python tools/verificar_specs.py
 ```
 
-Todas as 50 especificações arquiteturais possuem rastreabilidade completa e critérios de aceite auditáveis. Para mais detalhes, consulte o [Índice de Especificações (specs/README.md)](specs/README.md).
+As Specs 001–052 implementadas (e 053–092 em rascunho) possuem rastreabilidade completa e critérios de aceite auditáveis. Para mais detalhes, consulte o [Índice de Especificações (specs/README.md)](specs/README.md).
 
 ---
 

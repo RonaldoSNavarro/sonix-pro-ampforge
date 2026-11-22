@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, físico-matemático e de verificação do **Módulo Algorítmico Through-Zero Flanger (`module.mod.through_zero_flanger`)**, reclassificando-o honestamente como `tipo: modulo-dsp` e diagnosticando o **erro fundamental de princípio físico** no código atual ([`crates/ampforge-dsp/src/fx/modulation.rs:219–231 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L219-L231)), onde o ramo seco não possui linha de atraso de referência ($\tau_{\text{dry}} = 0$) enquanto o ramo modulado varia apenas no semieixo positivo (`0,1 ms` a `5,1 ms`), tornando matematicamente impossível o cruzamento pelo zero ($\Delta\tau(t) = \tau_{\text{mod}}(t) - \tau_{\text{ref}} = 0$)!
+Especificar o contrato técnico, físico-matemático e de verificação do **Módulo Algorítmico Through-Zero Flanger (`module.mod.through_zero_flanger`)**, reclassificando-o honestamente como `tipo: modulo-dsp` e diagnosticando o **erro fundamental de princípio físico** no código atual ([`crates/ampforge-dsp/src/fx/modulation.rs:219–231 @ c20cc65`](../crates/ampforge-dsp/src/fx/modulation.rs#L219-L231)), onde o ramo seco não possui linha de atraso de referência ($\tau_{\text{dry}} = 0$) enquanto o ramo modulado varia apenas no semieixo positivo (`0,1 ms` a `5,1 ms`), tornando matematicamente impossível o cruzamento pelo zero ($\Delta\tau(t) = \tau_{\text{mod}}(t) - \tau_{\text{ref}} = 0$)!
 
 ---
 
@@ -109,7 +109,7 @@ Para evitar qualquer confusão conceitual, esta Spec estabelece a distinção ex
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:219–231 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L219-L231) e [`apps/sonix-app/ui/src/controls.registry.ts:909–951`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/apps/sonix-app/ui/src/controls.registry.ts#L909-L951) possui duas falhas graves:
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:219–231 @ c20cc65`](../crates/ampforge-dsp/src/fx/modulation.rs#L219-L231) e [`apps/sonix-app/ui/src/controls.registry.ts:909–951`](../apps/sonix-app/ui/src/controls.registry.ts#L909-L951) possui duas falhas graves:
 
 1. **`FACTUAL_ERROR` (`modulation.rs:219–231` — Falso Through-Zero Flanger com $\tau_{\text{dry}} = 0$):**
    - O comentário na linha `219` diz `"// Through-Zero Flanger: 0.1..5ms delay with feedback"`, mas na linha `230` soma `input * (1.0 - self.mix) + wet * self.mix`, onde `input` tem atraso **`0,0 ms`** e `wet` tem atraso `delay_ms = 0.1 + mod_val * self.depth * 5.0` ($\in [0,1\text{ ms},\; 5,1\text{ ms}]$)!

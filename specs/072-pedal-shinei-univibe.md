@@ -19,7 +19,7 @@ status: rascunho
 
 Especificar o contrato técnico, topológico, matemático e de verificação do pedal foto-óptico **Shin-ei / Univox Uni-Vibe (1968, projetado por Fumio Mieda)** como processador modular independente (`pedal.shinei.univibe`), corrigindo:
 1. O link quebrado `uvtech.htm` para a URL válida verificada da análise de R. G. Keen no GEOFEX (`http://www.geofex.com/Article_Folders/univibe/univtech.htm`, HTTP 200); e
-2. O **erro factual grave** na implementação atual ([`crates/ampforge-dsp/src/fx/modulation.rs:247 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L247)), que usa multiplicadores igualmente espaçados em meia-oitava `[1.0, 1.41, 2.0, 2.83]` (razão total de apenas `2,83 : 1`), quando no esquema elétrico real do Shin-ei Uni-Vibe os 4 capacitores de deslocamento de fase são **`15 nF`, `220 nF`, `470 pF` e `4,7 nF`** — uma razão escalonada assimétrica (*staggered*) de **`468,08 : 1`** ($220\,000\text{ pF} / 470\text{ pF}$)!
+2. O **erro factual grave** na implementação atual ([`crates/ampforge-dsp/src/fx/modulation.rs:247 @ c20cc65`](../crates/ampforge-dsp/src/fx/modulation.rs#L247)), que usa multiplicadores igualmente espaçados em meia-oitava `[1.0, 1.41, 2.0, 2.83]` (razão total de apenas `2,83 : 1`), quando no esquema elétrico real do Shin-ei Uni-Vibe os 4 capacitores de deslocamento de fase são **`15 nF`, `220 nF`, `470 pF` e `4,7 nF`** — uma razão escalonada assimétrica (*staggered*) de **`468,08 : 1`** ($220\,000\text{ pF} / 470\text{ pF}$)!
 
 ---
 

@@ -17,7 +17,7 @@ status: rascunho
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático e de verificação do **Módulo Stereo Tri-Chorus (`module.mod.stereo_tri_chorus`)** — algoritmo de 3 linhas de atraso moduladas em fase trifásica ($0^\circ$, $120^\circ$ e $240^\circ$) atualmente implementado de forma trocada dentro do braço `ModModel::ChorusCe2` em [`crates/ampforge-dsp/src/fx/modulation.rs:196–218 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L196-L218) — isolando-o definitivamente do pedal analógico mono de linha única **Boss CE-2** (**[Spec 069](069-pedal-boss-ce2-analog-bbd-chorus.md)**).
+Especificar o contrato técnico, matemático e de verificação do **Módulo Stereo Tri-Chorus (`module.mod.stereo_tri_chorus`)** — algoritmo de 3 linhas de atraso moduladas em fase trifásica ($0^\circ$, $120^\circ$ e $240^\circ$) atualmente implementado de forma trocada dentro do braço `ModModel::ChorusCe2` em [`crates/ampforge-dsp/src/fx/modulation.rs:196–218 @ c20cc65`](../crates/ampforge-dsp/src/fx/modulation.rs#L196-L218) — isolando-o definitivamente do pedal analógico mono de linha única **Boss CE-2** (**[Spec 069](069-pedal-boss-ce2-analog-bbd-chorus.md)**).
 
 ---
 

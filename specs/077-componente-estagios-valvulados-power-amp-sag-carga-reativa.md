@@ -115,7 +115,7 @@ Cada sub-modelo possui sua própria struct, estado físico e tabela de parâmetr
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/amp.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/amp.rs#L1-L1738) e [`crates/ampforge-dsp/src/modshop.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/modshop.rs#L1-L506) apresenta os seguintes achados auditados:
+O código atual em [`crates/ampforge-dsp/src/amp.rs`](../crates/ampforge-dsp/src/amp.rs#L1-L1738) e [`crates/ampforge-dsp/src/modshop.rs`](../crates/ampforge-dsp/src/modshop.rs#L1-L506) apresenta os seguintes achados auditados:
 
 1. **`MODEL_COUPLING` (`amp.rs:1–1738`):** Os 5 amplificadores atualmente compartilham uma grande struct monolítica `AmpProcessor` com múltiplos `match self.model` internos, em vez de compor instâncias parametrizadas explícitas dos 10 sub-modelos definidos na Seção 2.
 2. **`FACTUAL_ERROR` (`amp.rs` — Transformador de Saída Estático):** A modelagem atual de saturação do transformador de saída não integra o fluxo magnético $\Phi(t) = \int v(t)\,dt$ dependente da frequência ($1/f$), saturando de maneira quase uniforme entre graves e agudos.
