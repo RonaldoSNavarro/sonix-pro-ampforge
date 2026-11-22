@@ -18,7 +18,7 @@ custom-protocol = ["tauri/custom-protocol"]
 asio = ["sonix-desktop/asio"]
 
 [dependencies]
-sonix-desktop = { path = "../../../crates/sonix-desktop", default-features = false }
+sonix-desktop = { path = "../../../crates/sonix-desktop", default-features = false, features = ["host-audio"] }
 ampforge-dsp = { path = "../../../crates/ampforge-dsp" }
 sonix-core = { path = "../../../crates/sonix-core" }
 serde = { version = "1.0", features = ["derive"] }
