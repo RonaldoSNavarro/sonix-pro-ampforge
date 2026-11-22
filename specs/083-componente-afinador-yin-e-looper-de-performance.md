@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 083: Componente de Afinador Estroboscópico e Polifônico (Algoritmo YIN Desacoplado da Thread RT)
 
 > **Status:** `rascunho`
@@ -91,7 +95,7 @@ O algoritmo **YIN** (`F-01`) supera a autocorrelação simples e a detecção po
 ### 7.1. Auditoria do código atual e classificação dos achados
 
 1. **`MODEL_COUPLING` (corrigido nesta revisão):** A Spec 083 original agrupava o Afinador (`tuner.rs`) e o Looper (`looper.rs`) em um único documento. O Looper foi movido integralmente para a **[Spec 092](092-componente-looper-de-performance.md)**.
-2. **`CONFIRMED` (`crates/ampforge-dsp/src/tuner.rs:1–493`):** O código atual já cumpre exemplarmente o desacoplamento da thread RT e o uso de `d_scratch` / `d_prime_scratch` pré-alocados (verificado pela Spec 026).
+2. **`CONFIRMED` (`crates/ampforge-dsp/src/tuner.rs:1–493 @ c20cc65`):** O código atual já cumpre exemplarmente o desacoplamento da thread RT e o uso de `d_scratch` / `d_prime_scratch` pré-alocados (verificado pela Spec 026).
 
 ---
 
@@ -216,7 +220,7 @@ O algoritmo **YIN** (`F-01`) supera a autocorrelação simples e a detecção po
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Precisão `<= ±0,5 cent` sem erro de oitava (CMNDF + interpolação parabólica) | `F-01` | Spec 083 / `CA-01` | `crates/ampforge-dsp/src/tuner.rs:1–493` | `contract_026_tuner_zero_alloc.rs` | `TESTED` |
+| Precisão `<= ±0,5 cent` sem erro de oitava (CMNDF + interpolação parabólica) | `F-01` | Spec 083 / `CA-01` | `crates/ampforge-dsp/src/tuner.rs:1–493 @ c20cc65` | `contract_026_tuner_zero_alloc.rs` | `TESTED` |
 | Calibração `A4` (`430..450 Hz`) | Spec 026 | Spec 083 / `CA-02` | `crates/ampforge-dsp/src/tuner.rs` | `contract_026_tuner_zero_alloc.rs` | `TESTED` |
 | Mute silencioso anti-clique mantendo leitura do afinador ativa | Spec 026 | Spec 083 / `CA-03` | `crates/sonix-desktop/src/audio.rs` | `contract_026_tuner_zero_alloc.rs` | `TESTED` |
 | Desacoplamento total da RT e zero-alloc em `analyze()` | `F-02` | Spec 083 / `CA-04` | `crates/ampforge-dsp/src/tuner.rs` & `audio.rs` | `contract_026_tuner_zero_alloc.rs`, `contract_044_sdd_integrity.rs` | `TESTED` |

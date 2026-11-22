@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 092: Componente Looper de Performance (Gravação, Overdub, Undo/Redo, Half-Speed e Reverse Zero-Alloc)
 
 > **Status:** `rascunho`
@@ -94,7 +98,7 @@ Especificar o contrato técnico, de memória em tempo real, de máquina de estad
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** O Looper (`crates/ampforge-dsp/src/looper.rs:1–275`) estava acoplado na Spec 083 com o Afinador YIN (`tuner.rs`).
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** O Looper (`crates/ampforge-dsp/src/looper.rs:1–275 @ c20cc65`) estava acoplado na Spec 083 com o Afinador YIN (`tuner.rs`).
 2. **`FACTUAL_ERROR` / Risco de WCET (`looper.rs` — `Undo` por cópia completa de buffer):** Caso a implementação faça `clone_from_slice` sobre o buffer inteiro de `60 s` (`~11–23 MB`) dentro do callback de áudio ao entrar em `Overdub` ou `Undo`, o pico de latência pode causar *buffer underrun (xrun)* em buffers de `64–128` amostras (`1,3–2,6 ms`). A arquitetura *Dual-Layer* (`base_layer` + `top_layer`) desta Spec garante WCET estritamente $O(1)$ por amostra!
 
 ---
@@ -224,6 +228,6 @@ Especificar o contrato técnico, de memória em tempo real, de máquina de estad
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Máquina de estados `Empty/Record/Play/Overdub/Stop/Undo/Redo/Clear` com arquitetura *Dual-Layer* $O(1)$ | `F-01` | Spec 092 / `CA-01`, `CA-04` | `crates/ampforge-dsp/src/looper.rs:1–275` | `contract_044_sdd_integrity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Máquina de estados `Empty/Record/Play/Overdub/Stop/Undo/Redo/Clear` com arquitetura *Dual-Layer* $O(1)$ | `F-01` | Spec 092 / `CA-01`, `CA-04` | `crates/ampforge-dsp/src/looper.rs:1–275 @ c20cc65` | `contract_044_sdd_integrity.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Modos `Half-Speed (0,5×)` e `Reverse` + crossfade de emenda `5 ms` | `F-01` | Spec 092 / `CA-02`, `CA-03` | `crates/ampforge-dsp/src/looper.rs` | Ausente | `SPECIFIED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 092 / `CA-04` | `crates/ampforge-dsp/src/looper.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

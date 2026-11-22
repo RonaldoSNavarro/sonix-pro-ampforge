@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 091: Rack Eventide H3000 MicroPitch Detune (Dual Stereo Micro-Pitch Shift ±Cents & Asymmetric Delays)
 
 > **Status:** `rascunho`
@@ -86,7 +90,7 @@ Especificar o contrato técnico, algorítmico e de verificação do efeito de es
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** `PitchMode::Detune` estava agrupado dentro da Spec 075 e reduzido a mono em `crates/ampforge-dsp/src/fx/pitch.rs:353–365`, perdendo o espalhamento estéreo `L/R` e os pré-atrasos assimétricos (`12 ms / 20 ms`) que definem o Eventide H3000 MicroPitch!
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** `PitchMode::Detune` estava agrupado dentro da Spec 075 e reduzido a mono em `crates/ampforge-dsp/src/fx/pitch.rs:353–365 @ c20cc65`, perdendo o espalhamento estéreo `L/R` e os pré-atrasos assimétricos (`12 ms / 20 ms`) que definem o Eventide H3000 MicroPitch!
 
 ---
 
@@ -209,5 +213,5 @@ Especificar o contrato técnico, algorítmico e de verificação do efeito de es
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Dual Micro-Pitch Estéreo (`-9c L / +9c R`) + pré-atrasos assimétricos (`12 ms / 20 ms`) | `F-01`, `F-02` | Spec 091 / `CA-01`, `CA-02`, `CA-03` | `crates/ampforge-dsp/src/fx/pitch.rs:353–365` (atualmente mono sem pré-atrasos assimétricos `12 ms / 20 ms`) | `contract_042_pitch_wah.rs` | `SPECIFIED` |
+| Dual Micro-Pitch Estéreo (`-9c L / +9c R`) + pré-atrasos assimétricos (`12 ms / 20 ms`) | `F-01`, `F-02` | Spec 091 / `CA-01`, `CA-02`, `CA-03` | `crates/ampforge-dsp/src/fx/pitch.rs:353–365 @ c20cc65` (atualmente mono sem pré-atrasos assimétricos `12 ms / 20 ms`) | `contract_042_pitch_wah.rs` | `SPECIFIED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 091 / `CA-04` | `crates/ampforge-dsp/src/fx/pitch.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 087: Módulo Stereo Tri-Chorus (3 Linhas de Atraso Moduladas a 0° / 120° / 240°)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático e de verificação do **Módulo Stereo Tri-Chorus (`module.mod.stereo_tri_chorus`)** — algoritmo de 3 linhas de atraso moduladas em fase trifásica ($0^\circ$, $120^\circ$ e $240^\circ$) atualmente implementado de forma trocada dentro do braço `ModModel::ChorusCe2` em [`crates/ampforge-dsp/src/fx/modulation.rs:196–218`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L196-L218) — isolando-o definitivamente do pedal analógico mono de linha única **Boss CE-2** (**[Spec 069](069-pedal-boss-ce2-analog-bbd-chorus.md)**).
+Especificar o contrato técnico, matemático e de verificação do **Módulo Stereo Tri-Chorus (`module.mod.stereo_tri_chorus`)** — algoritmo de 3 linhas de atraso moduladas em fase trifásica ($0^\circ$, $120^\circ$ e $240^\circ$) atualmente implementado de forma trocada dentro do braço `ModModel::ChorusCe2` em [`crates/ampforge-dsp/src/fx/modulation.rs:196–218 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L196-L218) — isolando-o definitivamente do pedal analógico mono de linha única **Boss CE-2** (**[Spec 069](069-pedal-boss-ce2-analog-bbd-chorus.md)**).
 
 ---
 
@@ -81,7 +85,7 @@ O centro de massa tonal permanece perfeitamente afinado enquanto a imagem estér
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** Em `crates/ampforge-dsp/src/fx/modulation.rs:196–218`, este algoritmo trifásico (`0°/120°/240°` a `15 ms ± 6 ms`) estava rotulado como `ModModel::ChorusCe2` e reduzido a mono `(w1 + w2 + w3) / 3.0`. Esta Spec o formaliza como seu próprio módulo estéreo (`module.mod.stereo_tri_chorus`).
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** Em `crates/ampforge-dsp/src/fx/modulation.rs:196–218 @ c20cc65`, este algoritmo trifásico (`0°/120°/240°` a `15 ms ± 6 ms`) estava rotulado como `ModModel::ChorusCe2` e reduzido a mono `(w1 + w2 + w3) / 3.0`. Esta Spec o formaliza como seu próprio módulo estéreo (`module.mod.stereo_tri_chorus`).
 
 ---
 
@@ -203,6 +207,6 @@ O centro de massa tonal permanece perfeitamente afinado enquanto a imagem estér
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| 3 linhas de atraso moduladas em $0^\circ / 120^\circ / 240^\circ$ em torno de `14–15 ms` | `F-01` | Spec 087 / `CA-01`, `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:196–218` (atualmente acoplado sob `ModModel::ChorusCe2`) | `contract_032_time_mod_fx.rs` | `IMPLEMENTED_UNVERIFIED` |
+| 3 linhas de atraso moduladas em $0^\circ / 120^\circ / 240^\circ$ em torno de `14–15 ms` | `F-01` | Spec 087 / `CA-01`, `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:196–218 @ c20cc65` (atualmente acoplado sob `ModModel::ChorusCe2`) | `contract_032_time_mod_fx.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Distribuição panorâmica estéreo verdadeira `L (0°) / C (120°) / R (240°)` | `F-01`, `F-02` | Spec 087 / `CA-02` | Ausente em `modulation.rs:212` (soma mono `(w1+w2+w3)/3.0`) | Ausente | `SPECIFIED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 087 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

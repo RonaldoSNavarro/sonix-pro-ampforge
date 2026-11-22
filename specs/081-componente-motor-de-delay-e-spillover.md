@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 081: Componente Compartilhado — Motor Algorítmico de Delay, Modos Estéreo, Ducking e Spillover
 
 > **Status:** `rascunho`
@@ -13,18 +17,18 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, algorítmico e de verificação do componente compartilhado **Motor de Delay Algorítmico, Ducking e Spillover (`component.delay.multi_engine`)** em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/delay.rs#L1-L559), isolando claramente a unidade eletromecânica **Roland RE-201 Space Echo** em sua especificação dedicada (**[Spec 068](068-rack-roland-re201-space-echo.md)**) e separando cada um dos **6 modos algorítmicos digitais/analógicos** (`DigitalClean`, `AnalogBbd`, `DualDelay`, `Reverse`, `PingPong`, além dos subsistemas transversais `Ducking`, `Spillover/Trails` e `Tap Tempo / Subdivisões Rítmicas`).
+Especificar o contrato técnico, algorítmico e de verificação do componente compartilhado **Motor de Delay Algorítmico, Ducking e Spillover (`component.delay.multi_engine`)** em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/delay.rs#L1-L559), isolando claramente a unidade eletromecânica **Roland RE-201 Space Echo** em sua especificação dedicada (**[Spec 068](068-rack-roland-re201-space-echo.md)**) e separando cada um dos **6 modos algorítmicos digitais/analógicos** (`DelayModel::PristineDigitalDelay`, `DelayModel::AnalogBbdDelay`, `DualDelay`, `Reverse`, `DelayModel::PingPongStereo`, além dos subsistemas transversais `Ducking`, `Spillover/Trails` e `Tap Tempo / Subdivisões Rítmicas`).
 
 ---
 
 ## 2. Escopo
 
 1. **6 Sub-Motores Algorítmicos Distintos:**
-   - **`DigitalClean`:** Linha de atraso de banda larga transparente (`20 Hz – 20 kHz`, `20..2000 ms`) com interpolação cúbica Lagrange e realimentação limpa com filtros opcionais `Low Cut` / `High Cut`.
-   - **`AnalogBbd` (estilo Boss DM-2 / MXR Carbon Copy `MN3005`):** Linha de atraso com degradação progressiva de agudos (`~2,5–3,5 kHz` por repetição), compressão/saturação quente tipo compander (`NE570` / `MN3005`) no loop e modulação sutil de clock (`Mod Depth`).
+   - **`DelayModel::PristineDigitalDelay`:** Linha de atraso de banda larga transparente (`20 Hz – 20 kHz`, `20..2000 ms`) com interpolação cúbica Lagrange e realimentação limpa com filtros opcionais `Low Cut` / `High Cut`.
+   - **`DelayModel::AnalogBbdDelay` (estilo Boss DM-2 / MXR Carbon Copy `MN3005`):** Linha de atraso com degradação progressiva de agudos (`~2,5–3,5 kHz` por repetição), compressão/saturação quente tipo compander (`NE570` / `MN3005`) no loop e modulação sutil de clock (`Mod Depth`).
    - **`DualDelay` (estilo TC 2290 / U2 Dotted-8th + Quarter):** Duas linhas independentes (`Time L` e `Time R` em proporção configurável, ex.: `1,0 : 0,75` colcheia pontuada) com realimentação independente ou cruzada.
    - **`Reverse` (Reverso Granular Sem Cliques):** Gravação de grãos de comprimento `time_ms` e leitura em sentido reverso com **envelope de crossfade Hann/linear obrigatório nas bordas do grão (`>= 5,0 ms` de ataque e `>= 5,0 ms` de release)**, eliminando os cliques de salto de amostra nos limites de cada bloco reverso!
-   - **`PingPong` (Estéreo Cruzado L ↔ R):** A saída da linha esquerda alimenta a entrada da linha direita e vice-versa (`L → R → L → R`), com controle de largura estéreo.
+   - **`DelayModel::PingPongStereo` (Estéreo Cruzado L ↔ R):** A saída da linha esquerda alimenta a entrada da linha direita e vice-versa (`L → R → L → R`), com controle de largura estéreo.
    - **`Ducking` (Transversal / Dinâmico estilo TC 2290):** Detector de envoltória no sinal seco de entrada que atenua dinamicamente o retorno das repetições (`wet`) enquanto o guitarrista toca, liberando as caudas de eco apenas nas pausas das frases!
 2. **Spillover / Trails (Transição Sem Corte de Caudas):** Ao colocar o pedal em bypass com `trails = true`, o motor zera apenas a **injeção de entrada** (`send = 0.0`) enquanto mantém o loop de leitura e realimentação ativo até a cauda decair abaixo de `-90 dBFS`.
 3. **Sincronização `Tap Tempo` / BPM e Subdivisões Rítmicas (`1/4`, `1/8`, `1/8D` colcheia pontuada, `1/8T` tercina, `1/16`).**
@@ -84,7 +88,7 @@ Especificar o contrato técnico, algorítmico e de verificação do componente c
 [Input L/R] ──┬─────────────────────────────────────────────────────────────────► (Dry) ──┐
               │                                                                           ├──► [Out L/R]
               ▼ (Send Gate: 1.0 if enabled, 0.0 if Spillover/Trails bypass)               │
-     [Mode Router: Digital | BBD | Dual | Reverse (5ms win) | PingPong] ──► [Ducking VCA] ┘ (Wet)
+     [Mode Router: Digital | BBD | Dual | Reverse (5ms win) | DelayModel::PingPongStereo] ──► [Ducking VCA] ┘ (Wet)
                                     ▲                                           ▲
                                     └── [Feedback + Low/High Cut] ──┘   [Dry Envelope Sidechain]
 ```
@@ -93,7 +97,7 @@ Especificar o contrato técnico, algorítmico e de verificação do componente c
 
 O código atual em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/delay.rs#L1-L559) apresenta os seguintes achados auditados:
 
-1. **`MODEL_COUPLING` (`delay.rs:14–22`):** `DelayProcessor` mistura o equipamento eletromecânico `TapeRe201` (agora isolado na **Spec 068**) com os 5 modos algorítmicos digitais/BBD desta Spec 081.
+1. **`MODEL_COUPLING` (`delay.rs:14–22`):** `DelayProcessor` mistura o equipamento eletromecânico `DelayModel::MultiHeadTapeEcho` (agora isolado na **Spec 068**) com os 5 modos algorítmicos digitais/BBD desta Spec 081.
 2. **`MISSING_VALIDATION` (`delay.rs:480–515`):** O modo `Reverse` e o controle de `Ducking` precisam de testes de contrato dedicados validando ausência de cliques de borda no `Reverse` e atenuação mensurável em dB do `Ducking` enquanto há sinal de entrada.
 
 ---
@@ -151,15 +155,15 @@ O código atual em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projet
 
 | Invariante | Regra Verificável |
 |---|---|
-| Precisão temporal (`DigitalClean`) | Impulso unitário reaparece exatamente em `round(time_ms * fs / 1000)` $\pm 1$ amostra. |
-| Alternância `PingPong` | 1ª repetição exclusivamente em `L`, 2ª exclusivamente em `R`, 3ª em `L`. |
+| Precisão temporal (`DelayModel::PristineDigitalDelay`) | Impulso unitário reaparece exatamente em `round(time_ms * fs / 1000)` $\pm 1$ amostra. |
+| Alternância `DelayModel::PingPongStereo` | 1ª repetição exclusivamente em `L`, 2ª exclusivamente em `R`, 3ª em `L`. |
 | Continuidade `Spillover / Trails` | Ao desligar `enabled = false` com `trails = true`, repetições já gravadas continuam saindo sem corte abrupto. |
 
 ---
 
 ## 15. Estratégia de testes, validação e benchmark
 
-1. Testes individuais para cada modo (`DigitalClean`, `AnalogBbd`, `PingPong`, `Reverse` sem cliques, `Ducking`, `Spillover`).
+1. Testes individuais para cada modo (`DelayModel::PristineDigitalDelay`, `DelayModel::AnalogBbdDelay`, `DelayModel::PingPongStereo`, `Reverse` sem cliques, `Ducking`, `Spillover`).
 
 ---
 
@@ -171,13 +175,13 @@ O código atual em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projet
 
 ## 17. Critérios de aceite (CA-01 a CA-05)
 
-- **CA-01 — Precisão Temporal (`DigitalClean`) e Alternância Estéreo (`PingPong`) (`ANALYTICAL` / `REGRESSION`):**
+- **CA-01 — Precisão Temporal (`DelayModel::PristineDigitalDelay`) e Alternância Estéreo (`DelayModel::PingPongStereo`) (`ANALYTICAL` / `REGRESSION`):**
   - *Sinal de entrada:* Impulso unitário mono (`L = R = 1.0` em $n = 0$).
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `delay.time_ms = 200.0` (`9600` amostras), `delay.feedback = 0.50`, `delay.mix = 1.0`.
   - *Critério e tolerância:*
-    1. Em `DigitalClean`, picos exatos em `9600 ± 1` e `19200 ± 1` amostras com atenuação de `-6,02 dB ± 0,2 dB` entre repetições.
-    2. Em `PingPong`, a 1ª repetição (`200 ms`) possui razão `L / R >= 40 dB` e a 2ª repetição (`400 ms`) possui razão `R / L >= 40 dB`.
+    1. Em `DelayModel::PristineDigitalDelay`, picos exatos em `9600 ± 1` e `19200 ± 1` amostras com atenuação de `-6,02 dB ± 0,2 dB` entre repetições.
+    2. Em `DelayModel::PingPongStereo`, a 1ª repetição (`200 ms`) possui razão `L / R >= 40 dB` e a 2ª repetição (`400 ms`) possui razão `R / L >= 40 dB`.
 
 - **CA-02 — Spillover / Trails Contínuo ao Acionar Bypass (`REGRESSION`):**
   - *Sinal de entrada:* Impulso em $t = 0$; em $t = 100\text{ ms}$ (antes da 1ª repetição de `250 ms`), comuta-se `delay.enabled = false` com `delay.trails = true`.
@@ -210,7 +214,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projet
 
 ## 19. Critérios de conclusão da Spec
 
-- [x] Roland RE-201 isolado exclusivamente na Spec 068; modos algorítmicos (`Digital`, `BBD`, `Dual`, `Reverse`, `PingPong`, `Ducking`, `Spillover`) especificados separadamente.
+- [x] Roland RE-201 isolado exclusivamente na Spec 068; modos algorítmicos (`Digital`, `BBD`, `Dual`, `Reverse`, `DelayModel::PingPongStereo`, `Ducking`, `Spillover`) especificados separadamente.
 - [x] Critérios `CA-01` a `CA-05` classificados e mensuráveis.
 - [x] Matriz de rastreabilidade preenchida na Seção 22.
 
@@ -233,8 +237,8 @@ O código atual em [`crates/ampforge-dsp/src/fx/delay.rs`](file:///g:/Dev/Projet
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Precisão temporal (`DigitalClean`) e alternância estéreo (`PingPong`) | `F-01` | Spec 081 / `CA-01` | `crates/ampforge-dsp/src/fx/delay.rs:452–530` | `contract_032_time_mod_fx.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
-| `Spillover / Trails` mantendo caudas sem corte ao acionar bypass | Spec 032 | Spec 081 / `CA-02` | `crates/ampforge-dsp/src/fx/delay.rs:384–392` | `contract_032_time_mod_fx.rs` (`test_ca_04_delay_spillover_and_reverb_tails`) | `TESTED` |
-| Atenuação dinâmica `Ducking` pelo envelope Dry | Spec 032 | Spec 081 / `CA-03` | `crates/ampforge-dsp/src/fx/delay.rs:515–525` | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Modo `Reverse` com janelamento `>= 5 ms` livre de cliques de borda | `F-01` | Spec 081 / `CA-04` | `crates/ampforge-dsp/src/fx/delay.rs:480–510` | Ausente (sem validação de derivada nas bordas) | `IMPLEMENTED_UNVERIFIED` |
+| Precisão temporal (`DelayModel::PristineDigitalDelay`) e alternância estéreo (`DelayModel::PingPongStereo`) | `F-01` | Spec 081 / `CA-01` | `crates/ampforge-dsp/src/fx/delay.rs:452–530 @ c20cc65` | `contract_032_time_mod_fx.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
+| `Spillover / Trails` mantendo caudas sem corte ao acionar bypass | Spec 032 | Spec 081 / `CA-02` | `crates/ampforge-dsp/src/fx/delay.rs:384–392 @ c20cc65` | `contract_032_time_mod_fx.rs` (`test_ca_04_delay_spillover_and_reverb_tails`) | `TESTED` |
+| Atenuação dinâmica `Ducking` pelo envelope Dry | Spec 032 | Spec 081 / `CA-03` | `crates/ampforge-dsp/src/fx/delay.rs:515–525 @ c20cc65` | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Modo `Reverse` com janelamento `>= 5 ms` livre de cliques de borda | `F-01` | Spec 081 / `CA-04` | `crates/ampforge-dsp/src/fx/delay.rs:480–510 @ c20cc65` | Ausente (sem validação de derivada nas bordas) | `IMPLEMENTED_UNVERIFIED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 081 / `CA-05` | `crates/ampforge-dsp/src/fx/delay.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

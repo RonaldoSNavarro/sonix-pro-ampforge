@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 089: Pedal DigiTech Drop (Polyphonic Drop Tune Shifter — -1 a -7 Semitons & -1 Oitava)
 
 > **Status:** `rascunho`
@@ -208,5 +212,5 @@ Especificar o contrato técnico, algorítmico e de verificação do pedal de afi
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Transposição polifônica limpa (`-1` a `-7 st`, `-12 st`, `OCT+DRY`) de acordes | `F-01`, `F-02` | Spec 089 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/pitch.rs:316–328` (usa delay rotativo simples sem WSOLA/phase-locking) | `contract_042_pitch_wah.rs` | `SPECIFIED` |
+| Transposição polifônica limpa (`-1` a `-7 st`, `-12 st`, `OCT+DRY`) de acordes | `F-01`, `F-02` | Spec 089 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/pitch.rs:316–328 @ c20cc65` (usa delay rotativo simples sem WSOLA/phase-locking) | `contract_042_pitch_wah.rs` | `SPECIFIED` |
 | Latência determinística `<= 25 ms` e zero-alloc em tempo real | Spec 053 | Spec 089 / `CA-03`, `CA-04` | `crates/ampforge-dsp/src/fx/pitch.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

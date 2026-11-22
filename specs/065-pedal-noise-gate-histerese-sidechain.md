@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 065: Módulo Algorítmico de Noise Gate / Expander com Histerese, Hold e Sidechain LR4
 
 > **Status:** `rascunho`
@@ -95,7 +99,7 @@ Em cadeias de guitarra de alto ganho (como JCM800 + TS808 ou Dual Rectifier Red 
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` / `FACTUAL_ERROR` (corrigido nesta Spec):** A versão inicial da Spec 065 atribuía este algoritmo ao hardware "Boss NS-2 / ISP Decimator". Na realidade, o código em [`crates/ampforge-dsp/src/fx/dynamics.rs:34–205`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L34-L205) implementa um Noise Gate digital de estúdio com 6 controles (`threshold_db`, `hysteresis_db`, `attack_ms`, `hold_ms`, `release_ms`, `range_db`, `sidechain_hpf_hz`) e filtro sidechain LR4 (`sc_hpf_1`, `sc_hpf_2`). A reclassificação para `tipo: modulo-dsp` (`module.dynamics.noise_gate_lr4`) alinha 100% a documentação ao código e à UI.
+1. **`MODEL_COUPLING` / `FACTUAL_ERROR` (corrigido nesta Spec):** A versão inicial da Spec 065 atribuía este algoritmo ao hardware "Boss NS-2 / ISP Decimator". Na realidade, o código em [`crates/ampforge-dsp/src/fx/dynamics.rs:34–205 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L34-L205) implementa um Noise Gate digital de estúdio com 6 controles (`threshold_db`, `hysteresis_db`, `attack_ms`, `hold_ms`, `release_ms`, `range_db`, `sidechain_hpf_hz`) e filtro sidechain LR4 (`sc_hpf_1`, `sc_hpf_2`). A reclassificação para `tipo: modulo-dsp` (`module.dynamics.noise_gate_lr4`) alinha 100% a documentação ao código e à UI.
 2. **`CODE_REFERENCE_STALE` (verificado):** Em `controls.registry.ts:648`, o controle visual `pedal.gate.decay` mapeia para a chave backend `gate.release_ms` (nota explícita em `controls.registry.ts:650`), e `pedal.gate.hold` mapeia para `gate.hold_ms` (`0..500 ms`).
 
 ---
@@ -265,8 +269,8 @@ Em cadeias de guitarra de alto ganho (como JCM800 + TS808 ou Dual Rectifier Red 
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Histerese de duplo limiar ($\theta_{\text{open}}$, $\theta_{\text{close}} = \theta_{\text{open}} - H_{\text{dB}}$) | `F-01` Cap. 4 | Spec 065 / `CA-01` | `crates/ampforge-dsp/src/fx/dynamics.rs:146–176` | `contract_031_pedals_dsp.rs` (`test_ca_05_noise_gate_hysteresis_and_sidechain`) | `TESTED` |
-| Sidechain Passa-Altas Linkwitz-Riley de 4ª Ordem (`2× Butterworth 2nd Q=0.707`, `24 dB/oitava`) sem filtrar o caminho principal | `F-02` | Spec 065 / `CA-02` | `crates/ampforge-dsp/src/fx/dynamics.rs:124–129, 148–149` | `contract_031_pedals_dsp.rs` (`test_ca_05_noise_gate_hysteresis_and_sidechain`) | `TESTED` |
-| Temporizador determinístico de `Hold` (`0..500 ms`) | `F-01` Cap. 4 | Spec 065 / `CA-03` | `crates/ampforge-dsp/src/fx/dynamics.rs:156–167` | `contract_040_pedals_parity.rs` | `TESTED` |
-| Balística exponencial `Attack` (`0.1..50 ms`), `Decay/Release` (`5..1000 ms`) e `Range` (`-80..0 dB`) | `F-01` Cap. 4 | Spec 065 / `CA-04` | `crates/ampforge-dsp/src/fx/dynamics.rs:131–133, 178–194` | `contract_040_pedals_parity.rs` | `TESTED` |
-| Execução zero-alloc em tempo real | Spec 053 | Spec 065 / `CA-05` | `crates/ampforge-dsp/src/fx/dynamics.rs:144–204` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Histerese de duplo limiar ($\theta_{\text{open}}$, $\theta_{\text{close}} = \theta_{\text{open}} - H_{\text{dB}}$) | `F-01` Cap. 4 | Spec 065 / `CA-01` | `crates/ampforge-dsp/src/fx/dynamics.rs:146–176 @ c20cc65` | `contract_031_pedals_dsp.rs` (`test_ca_05_noise_gate_hysteresis_and_sidechain`) | `TESTED` |
+| Sidechain Passa-Altas Linkwitz-Riley de 4ª Ordem (`2× Butterworth 2nd Q=0.707`, `24 dB/oitava`) sem filtrar o caminho principal | `F-02` | Spec 065 / `CA-02` | `crates/ampforge-dsp/src/fx/dynamics.rs:124–129 @ c20cc65, 148–149` | `contract_031_pedals_dsp.rs` (`test_ca_05_noise_gate_hysteresis_and_sidechain`) | `TESTED` |
+| Temporizador determinístico de `Hold` (`0..500 ms`) | `F-01` Cap. 4 | Spec 065 / `CA-03` | `crates/ampforge-dsp/src/fx/dynamics.rs:156–167 @ c20cc65` | `contract_040_pedals_parity.rs` | `TESTED` |
+| Balística exponencial `Attack` (`0.1..50 ms`), `Decay/Release` (`5..1000 ms`) e `Range` (`-80..0 dB`) | `F-01` Cap. 4 | Spec 065 / `CA-04` | `crates/ampforge-dsp/src/fx/dynamics.rs:131–133 @ c20cc65, 178–194` | `contract_040_pedals_parity.rs` | `TESTED` |
+| Execução zero-alloc em tempo real | Spec 053 | Spec 065 / `CA-05` | `crates/ampforge-dsp/src/fx/dynamics.rs:144–204 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

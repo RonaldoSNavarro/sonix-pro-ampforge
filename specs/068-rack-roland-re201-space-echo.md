@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 068: Rack Roland RE-201 Space Echo (Multi-Head Magnetic Tape Delay & Spring Reverb)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, físico, mecânico e de verificação da unidade eletromecânica de eco de fita **Roland RE-201 Space Echo (1974)** como processador modular independente (`rack.roland.re201_space_echo`), corrigindo o erro factual na tabela da chave seletora de **12 modos (`MODE SELECTOR 1–12`)** presente no código atual (`crates/ampforge-dsp/src/fx/delay.rs:364–378`) e na Spec 032, além de documentar integralmente:
+Especificar o contrato técnico, físico, mecânico e de verificação da unidade eletromecânica de eco de fita **Roland RE-201 Space Echo (1974)** como processador modular independente (`rack.roland.re201_space_echo`), corrigindo o erro factual na tabela da chave seletora de **12 modos (`MODE SELECTOR 1–12`)** presente no código atual (`crates/ampforge-dsp/src/fx/delay.rs:364–378 @ c20cc65`) e na Spec 032, além de documentar integralmente:
 1. O caminho físico da fita magnética (`Erase Head` $\to$ `Record Head` $\to$ `Playback Head 1` $\to$ `Playback Head 2` $\to$ `Playback Head 3`);
 2. A variação contínua da velocidade do motor *capstan* (`REPEAT RATE`) com inércia mecânica (*pitch glide / Doppler warp*), *wow* e *flutter*;
 3. A saturação magnética com histerese/compressão de fita e pré/de-ênfase (`BASS` e `TREBLE` no loop de eco); e
@@ -34,7 +38,7 @@ Especificar o contrato técnico, físico, mecânico e de verificação da unidad
 
 ## 3. Fora de escopo
 
-- **Outros algoritmos de delay hoje agrupados em `DelayProcessor` (`delay.rs:14–22`):** `DigitalClean`, `AnalogBbd`, `DualDelay`, `Reverse`, `PingPong` — documentados na **[Spec 081](081-componente-motor-de-delay-e-spillover.md)**.
+- **Outros algoritmos de delay hoje agrupados em `DelayProcessor` (`delay.rs:14–22`):** `DelayModel::PristineDigitalDelay`, `DelayModel::AnalogBbdDelay`, `DualDelay`, `Reverse`, `DelayModel::PingPongStereo` — documentados na **[Spec 081](081-componente-motor-de-delay-e-spillover.md)**.
 - **Roland RE-101** (sem tanque de Spring Reverb e apenas 6 modos) ou **RE-301 Chorus Echo** (adiciona BBD Chorus e Sound-on-Sound).
 
 ---
@@ -47,7 +51,7 @@ Especificar o contrato técnico, físico, mecânico e de verificação da unidad
 | **Fabricante de referência** | Roland Corporation (Osaka / Hamamatsu, Japão — Ikutaro Kakehashi) |
 | **Modelo de referência** | Roland RE-201 Space Echo |
 | **Ano / época / revisão** | 1974–1990 (1 Erase Head, 1 Record Head, 3 Playback Heads `H1/H2/H3`, Capstan Motor DC, Tanque de Mola Spring Reverb) |
-| **Identificador no sistema** | `rack.roland.re201_space_echo` (`DelayModel::TapeRe201` / UI `pedal.delay.*`) |
+| **Identificador no sistema** | `rack.roland.re201_space_echo` (`DelayModel::DelayModel::MultiHeadTapeEcho` / UI `pedal.delay.*`) |
 | **Papel na cadeia de sinal** | Bloco `DELAY` pós-pré-amplificador (ou pós-cab). |
 
 ---
@@ -123,17 +127,26 @@ Especificar o contrato técnico, físico, mecânico e de verificação da unidad
                                                  └── [Intensity] ◄── [Echo Bass & Treble EQ] ──► [Echo Volume]
 ```
 
-### 7.1. Auditoria do código atual e classificação dos achados
+### 7.1. Estado atual no código (pós-AUD-28)
 
-O código atual em [`crates/ampforge-dsp/src/fx/delay.rs:364–378`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/delay.rs#L364-L378) contém um **erro factual na tabela dos Modos 5 a 10**:
+Em `crates/ampforge-dsp/src/fx/delay.rs:359-378 @ c20cc65`, a tabela de modos do `DelayModel::MultiHeadTapeEcho` já segue o painel do RE-201 (conforme corrigido no AUD-28):
+- Modos `1..4`: somente fita (`1 => H1`, `2 => H2`, `3 => H3`, `4 => H2+H3`, `reverb = false`).
+- Modos `5..7`: cabeças individuais (`H1`, `H2`, `H3`) com tanque de mola (`reverb = true`).
+- Modos `8..11`: combinações multi-cabeça (`DECISAO_SONIX_RE201_ORDEM_PARES`: `H1+H2`, `H2+H3`, `H1+H3`, `H1+H2+H3`) com tanque de mola (`reverb = true`).
+- Modo `12`: somente tanque de mola (`reverb = true`, cabeças de eco desligadas; não é mudo).
 
-1. **`FACTUAL_ERROR` (`delay.rs:364–378` — Combinações de Cabeças Erradas nos Modos 5 a 10):**
-   No código atual, `re201_head_gains(mode)` define:
-   - `5 => (1.0, 1.0, 0.0)` (H1+H2), `6 => (1.0, 0.0, 1.0)` (H1+H3), `7 => (1.0, 1.0, 1.0)` (H1+H2+H3), `8 => (1.0, 0.0, 0.0)` (H1), `9 => (0.0, 1.0, 0.0)` (H2), `10 => (0.0, 0.0, 1.0)` (H3)!
-   - Isso está **invertido** em relação ao painel frontal do Roland RE-201 real (`F-01`, `F-02`): no equipamento real, os **Modos 5, 6 e 7** são as cabeças individuais **`H1` (`Modo 5`), `H2` (`Modo 6`) e `H3` (`Modo 7`)** com Reverb, enquanto os **Modos 8, 9, 10 e 11** são as combinações multi-cabeça **`H1+H2` (`Modo 8`), `H2+H3` (`Modo 9`), `H1+H3` (`Modo 10`) e `H1+H2+H3` (`Modo 11`)** com Reverb!
-2. **`FACTUAL_ERROR` (`delay.rs:376` e `443` — Ausência de Spring Reverb no Modo 12 e nos Modos 5–11):**
-   - Na linha `376`, o Modo 12 retorna `(0.0, 0.0, 0.0)` ("Reverb only (no tape heads)") e `wet` fica literalmente `0.0` (mudo!) porque `DelayProcessor` não inclui o tanque de mola interno do RE-201 nos Modos `5..12`!
-   - No processador modular `rack.roland.re201_space_echo`, os Modos `5..12` devem acionar uma linha de difusão de mola interna (*RE-201 Spring Tank*) somada ao sinal de eco (e operando isoladamente no `Modo 12`).
+```rust
+if self.model == DelayModel::MultiHeadTapeEcho {
+    match self.re201_mode {
+        1 => (true, false, false, false, true),
+        2 => (false, true, false, false, true),
+        3 => (false, false, true, false, true),
+        4 => (false, true, true, false, true),
+        5 => (true, false, false, true, true),
+        6 => (false, true, false, true, true),
+        7 => (false, false, true, true, true),
+        // 8..11 via DECISAO_SONIX_RE201_ORDEM_PARES; 12 => reverb only
+```
 
 ---
 
@@ -297,9 +310,9 @@ O código atual em [`crates/ampforge-dsp/src/fx/delay.rs:364–378`](file:///g:/
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Modos `1–4` (`Echo Only`: `H1`, `H2`, `H3`, `H2+H3`) com relações espaciais `1 : 1,895 : 2,845` | `F-01`, `F-02` | Spec 068 / `CA-01` | `crates/ampforge-dsp/src/fx/delay.rs:365–368, 425–432` | `contract_032_time_mod_fx.rs` | `TESTED` |
-| Modos `5–11` (`Reverb + Echo`: `H1`, `H2`, `H3`, `H1+H2`, `H2+H3`, `H1+H3`, `H1+H2+H3`) e Modo `12` (`Reverb Only`) | `F-01`, `F-02` | Spec 068 / `CA-01` | `crates/ampforge-dsp/src/fx/delay.rs:370–376` (BUG: cabeças dos modos `5–10` invertidas e tanque Spring Reverb ausente nos modos `5–12`) | Ausente | `SPECIFIED` |
-| Auto-oscilação controlada por saturação magnética de fita em alta `Intensity` | `F-01`, `F-02` | Spec 068 / `CA-02` | `crates/ampforge-dsp/src/fx/delay.rs:444–450` | `contract_032_time_mod_fx.rs` (`test_ca_01_re201_multi_head_and_self_oscillation`) | `TESTED` |
-| Degradação espectral progressiva (*tape gap loss*) e filtro de loop | `F-02` | Spec 068 / `CA-03` | `crates/ampforge-dsp/src/fx/delay.rs:446–448` | `contract_032_time_mod_fx.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Inércia mecânica do motor *capstan* (*Doppler pitch glide*) e *Wow & Flutter* | `F-01`, `F-02` | Spec 068 / `CA-04` | `crates/ampforge-dsp/src/fx/delay.rs:394–409` | `contract_040_pedals_parity.rs` | `TESTED` |
-| Execução zero-alloc em tempo real | Spec 053 | Spec 068 / `CA-05` | `crates/ampforge-dsp/src/fx/delay.rs:384–536` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Modos `1–4` (`Echo Only`: `H1`, `H2`, `H3`, `H2+H3`) com relações espaciais `1 : 1,895 : 2,845` | `F-01`, `F-02` | Spec 068 / `CA-01` | `crates/ampforge-dsp/src/fx/delay.rs:365–368 @ c20cc65, 425–432` | `contract_032_time_mod_fx.rs` | `TESTED` |
+| Modos `5–11` (`Reverb + Echo`: `H1`, `H2`, `H3`, `H1+H2`, `H2+H3`, `H1+H3`, `H1+H2+H3`) e Modo `12` (`Reverb Only`) | `F-01`, `F-02` | Spec 068 / `CA-01` | `crates/ampforge-dsp/src/fx/delay.rs:370–376 @ c20cc65` (BUG: cabeças dos modos `5–10` invertidas e tanque Spring Reverb ausente nos modos `5–12`) | Ausente | `SPECIFIED` |
+| Auto-oscilação controlada por saturação magnética de fita em alta `Intensity` | `F-01`, `F-02` | Spec 068 / `CA-02` | `crates/ampforge-dsp/src/fx/delay.rs:444–450 @ c20cc65` | `contract_032_time_mod_fx.rs` (`test_ca_01_re201_multi_head_and_self_oscillation`) | `TESTED` |
+| Degradação espectral progressiva (*tape gap loss*) e filtro de loop | `F-02` | Spec 068 / `CA-03` | `crates/ampforge-dsp/src/fx/delay.rs:446–448 @ c20cc65` | `contract_032_time_mod_fx.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Inércia mecânica do motor *capstan* (*Doppler pitch glide*) e *Wow & Flutter* | `F-01`, `F-02` | Spec 068 / `CA-04` | `crates/ampforge-dsp/src/fx/delay.rs:394–409 @ c20cc65` | `contract_040_pedals_parity.rs` | `TESTED` |
+| Execução zero-alloc em tempo real | Spec 053 | Spec 068 / `CA-05` | `crates/ampforge-dsp/src/fx/delay.rs:384–536 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

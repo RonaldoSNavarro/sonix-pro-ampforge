@@ -57,7 +57,7 @@ dependencias: [001, 002, 014, 025, 033, 037, 044, 045, 049]
 |---|---|---|---|---|---|
 | Proibição de alocação, desalocação e locks na thread de áudio | F4, F5 | Spec 037 / Bencina | `contract_037_realtime_safety.rs` | `INTERNAL_REFERENCE` / `SECONDARY_TECHNICAL` | Confirmado |
 | Nível nominal calibrado `-12 dBFS` (`0.2512` pico) e limiter final `[-1.0, 1.0]` | F2, F4 | Spec 016 / Spec 019 | `calibration.rs:81`, `audio.rs:4680–4689` | `INTERNAL_REFERENCE` | Confirmado |
-| Acoplamento atual de `RealtimeDspChain` (2633 linhas dentro de `audio.rs`) | F2 | HEAD `d891389` | `crates/sonix-desktop/src/audio.rs:2558–5190` | `INTERNAL_REFERENCE` | Confirmado |
+| Acoplamento atual de `RealtimeDspChain` (2633 linhas dentro de `audio.rs`) | F2 | HEAD `d891389` | `crates/sonix-desktop/src/audio.rs:2558–5190 @ c20cc65` | `INTERNAL_REFERENCE` | Confirmado |
 | Duplicação de `BiquadFilter` em 6 módulos (`amp`, `cab`, `drive`, `dynamics`, `delay`, `precision`) | F1 | HEAD `d891389` | `amp.rs:11`, `cab.rs:7`, `fx/drive.rs:58`, `fx/dynamics.rs:19`, `fx/delay.rs:15`, `precision.rs:8` | `INTERNAL_REFERENCE` | Confirmado |
 | Fronteira IPC Tauri v2 e `Channel` a 30 Hz | F3, F6 | Tauri `2.12.5` | `streams.rs`, `https://v2.tauri.app/` | `PRIMARY_OFFICIAL` / `INTERNAL_REFERENCE` | Confirmado |
 
@@ -147,11 +147,11 @@ dependencias: [001, 002, 014, 025, 033, 037, 044, 045, 049]
 ## 22. Matriz de rastreabilidade
 | Requisito | Fonte | Spec/CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Trait comum `AudioProcessor`, `ModelDescriptor` e `ProcessorRegistry` | F1, F2 | `Spec 053 / CA-1, CA-2` | `crates/ampforge-dsp/src/engine.rs`, `crates/sonix-desktop/src/audio.rs:2558–5190` | Planejado: `contract_053_modular_architecture.rs` | `SPECIFIED` |
-| Validação atômica por modelo e rejeição de parâmetros incompatíveis | F2, F4 | `Spec 053 / CA-3` | `crates/sonix-desktop/src/api.rs:1400–2450` | `crates/sonix-desktop/tests/contract_014_ui_dsp_bridge.rs` | `TESTED` |
-| Suporte a blocos arbitrários (`32..2048`, incl. `441/480`) e múltiplas taxas | F2, F4 | `Spec 053 / CA-4` | `crates/sonix-desktop/src/audio.rs:4533–4540` | `crates/sonix-desktop/tests/contract_018_low_latency_host.rs` | `TESTED` |
-| Compensação automática de latência paralela (PDC) no `MixerNode` | F1 | `Spec 053 / CA-5` | `crates/ampforge-dsp/src/dag.rs:265–345` (sem PDC automático ainda) | Planejado: `contract_053_modular_architecture.rs` | `SPECIFIED` |
-| Separação Off-RT (`prepare`/queues) vs Zero-Alloc RT (`process`/`RetiredReaper`) | F2, F4, F5 | `Spec 053 / CA-6` | `crates/sonix-desktop/src/audio.rs:2666–2670, 4528–4707` | `crates/sonix-desktop/tests/contract_037_realtime_safety.rs`, `contract_044_sdd_integrity.rs` | `TESTED` |
+| Trait comum `AudioProcessor`, `ModelDescriptor` e `ProcessorRegistry` | F1, F2 | `Spec 053 / CA-1, CA-2` | `crates/ampforge-dsp/src/engine.rs`, `crates/sonix-desktop/src/audio.rs:2558–5190 @ c20cc65` | Planejado: `contract_053_modular_architecture.rs` | `SPECIFIED` |
+| Validação atômica por modelo e rejeição de parâmetros incompatíveis | F2, F4 | `Spec 053 / CA-3` | `crates/sonix-desktop/src/api.rs:1400–2450 @ c20cc65` | `crates/sonix-desktop/tests/contract_014_ui_dsp_bridge.rs` | `TESTED` |
+| Suporte a blocos arbitrários (`32..2048`, incl. `441/480`) e múltiplas taxas | F2, F4 | `Spec 053 / CA-4` | `crates/sonix-desktop/src/audio.rs:4533–4540 @ c20cc65` | `crates/sonix-desktop/tests/contract_018_low_latency_host.rs` | `TESTED` |
+| Compensação automática de latência paralela (PDC) no `MixerNode` | F1 | `Spec 053 / CA-5` | `crates/ampforge-dsp/src/dag.rs:265–345 @ c20cc65` (sem PDC automático ainda) | Planejado: `contract_053_modular_architecture.rs` | `SPECIFIED` |
+| Separação Off-RT (`prepare`/queues) vs Zero-Alloc RT (`process`/`RetiredReaper`) | F2, F4, F5 | `Spec 053 / CA-6` | `crates/sonix-desktop/src/audio.rs:2666–2670 @ c20cc65, 4528–4707` | `crates/sonix-desktop/tests/contract_037_realtime_safety.rs`, `contract_044_sdd_integrity.rs` | `TESTED` |
 | Persistência declarativa (`model_id`, `model_revision`, `schema_version`) | F4 | `Spec 053 / CA-7` | `crates/sonix-core/src/persistence.rs` | `crates/sonix-core/tests/contract_010_persistence_offline.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Isolamento de dependências de `ampforge-dsp` | F1 | `Spec 053 / CA-8` | `crates/ampforge-dsp/Cargo.toml` | `crates/ampforge-dsp/tests/contract_001_nucleo_dsp.rs` | `TESTED` |
-| Headroom interno acima de `0 dBFS` + limiter final `[-1.0, 1.0]` + sanitização `NaN/Inf` | F2, F4 | `Spec 053 / CA-9` | `crates/sonix-desktop/src/audio.rs:4680–4689` | `crates/ampforge-dsp/tests/contract_016_guitar_chain.rs`, `contract_015_server_hardening.rs` | `TESTED` |
+| Headroom interno acima de `0 dBFS` + limiter final `[-1.0, 1.0]` + sanitização `NaN/Inf` | F2, F4 | `Spec 053 / CA-9` | `crates/sonix-desktop/src/audio.rs:4680–4689 @ c20cc65` | `crates/ampforge-dsp/tests/contract_016_guitar_chain.rs`, `contract_015_server_hardening.rs` | `TESTED` |

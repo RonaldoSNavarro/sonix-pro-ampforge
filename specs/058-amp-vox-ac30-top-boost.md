@@ -136,9 +136,9 @@ dependencias: [053, 077, 078, 079]
 ## 22. Matriz de rastreabilidade
 | Requisito | Fonte | Spec/CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Rede tonal Vox Top Boost dedicada (`OS/010`, sem matriz FMV) | F1, F2 | `Spec 058 / CA-1` | `crates/ampforge-dsp/src/tonestack.rs:79–93` *(dívida: usa matriz FMV com `m_pos=1.0`)* | Planejado: `contract_058_amp_vox_ac30_top_boost.rs` | `SPECIFIED` |
-| Controle `Tone Cut` pós-LTP (`>= 6 dB` de corte > 2 kHz) | F1 | `Spec 058 / CA-2` | `crates/ampforge-dsp/src/amp.rs:1345–1347, 1590–1595` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` (`ca_3`) | `TESTED` |
-| Bypass da rede Top Boost no canal `Normal` e ativação em `Brilliant / top_boost` | F1, F4 | `Spec 058 / CA-3` | `crates/ampforge-dsp/src/amp.rs:1542–1565` | `crates/sonix-desktop/tests/contract_051_manual_test_fixes.rs` | `TESTED` |
-| Ausência de NFB (`nfb = 0`) e retificação `GZ34` por padrão | F1, F3 | `Spec 058 / CA-4` | `crates/ampforge-dsp/src/amp.rs:353–366` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` | `TESTED` |
-| Remoção de `Master Volume`, `Presence` e `Depth` do modelo JMI 1964 | F1 | `Spec 058 / CA-4` | `crates/ampforge-dsp/src/amp.rs:1161–1164, 1282–1285` *(dívida: ainda ativos)* | Planejado: `contract_058_amp_vox_ac30_top_boost.rs` | `SPECIFIED` |
-| Confirmação de `R_treble` (`1 MΩ` em `OS/010` vs `220 kΩ` em `OS/056`) | F1 | `Spec 058 / §5, §20` | `crates/ampforge-dsp/src/tonestack.rs:81` (`220 kΩ`) | Sem cópia primária de `OS/056` | `PENDING` |
+| Rede tonal Vox Top Boost dedicada (`OS/010`, sem matriz FMV) | F1, F2 | `Spec 058 / CA-1` | `crates/ampforge-dsp/src/tonestack.rs:79–93 @ c20cc65` *(dívida: usa matriz FMV com `m_pos=1.0`)* | Planejado: `contract_058_amp_vox_ac30_top_boost.rs` | `SPECIFIED` |
+| Controle `Tone Cut` pós-LTP (`>= 6 dB` de corte > 2 kHz) | F1 | `Spec 058 / CA-2` | `crates/ampforge-dsp/src/amp.rs:1345–1347 @ c20cc65, 1590–1595` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` (`ca_3`) | `TESTED` |
+| Bypass da rede Top Boost no canal `Normal` e ativação em `Brilliant / top_boost` | F1, F4 | `Spec 058 / CA-3` | `crates/ampforge-dsp/src/amp.rs:1542–1565 @ c20cc65` | `crates/sonix-desktop/tests/contract_051_manual_test_fixes.rs` | `TESTED` |
+| Ausência de NFB (`nfb = 0`) e retificação `GZ34` por padrão | F1, F3 | `Spec 058 / CA-4` | `crates/ampforge-dsp/src/amp.rs:353–366 @ c20cc65` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` | `TESTED` |
+| Remoção de `Master Volume`, `Presence` e `Depth` do modelo JMI 1964 | F1 | `Spec 058 / CA-4` | `crates/ampforge-dsp/src/amp.rs:1161–1164 @ c20cc65, 1282–1285` *(dívida: ainda ativos)* | Planejado: `contract_058_amp_vox_ac30_top_boost.rs` | `SPECIFIED` |
+| Confirmação de `R_treble` (`1 MΩ` em `OS/010` vs `220 kΩ` em `OS/056`) | F1 | `Spec 058 / §5, §20` | `crates/ampforge-dsp/src/tonestack.rs:81 @ c20cc65` (`220 kΩ`) | Sem cópia primária de `OS/056` | `PENDING` |

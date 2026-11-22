@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 082: Componente Compartilhado — Motor de Reverb Multi-Arquitetura (Spring, Plate, Hall, Chamber e Shimmer)
 
 > **Status:** `rascunho`
@@ -250,8 +254,8 @@ O código atual em [`crates/ampforge-dsp/src/fx/reverb.rs`](file:///g:/Dev/Proje
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| `Damping` e `RT60` invariantes à taxa de amostragem (`48 kHz` vs `96 kHz`) | `F-01` | Spec 082 / `CA-01` | `crates/ampforge-dsp/src/fx/reverb.rs:228` (BUG: `damp` não escala com `sample_rate`) | Ausente | `SPECIFIED` |
-| `Pre-Delay` até `250 ms` | Spec 032 | Spec 082 / `CA-02` | `crates/ampforge-dsp/src/fx/reverb.rs:114` (BUG: limitado a `150.0 ms`) | Ausente | `SPECIFIED` |
-| 5 arquiteturas acusticamente distintas (`Spring` dispersivo, `Plate` Dattorro, `Hall` FDN Hadamard, `Chamber`, `Shimmer`) | `F-01`, `F-02`, `F-03` | Spec 082 / `CA-03` | `crates/ampforge-dsp/src/fx/reverb.rs:169–175` (BUG: `Plate/Hall/Chamber` só alteram `model_scale` sobre os mesmos 8 combs) | `contract_032_time_mod_fx.rs` | `SPECIFIED` |
-| Modo `Shimmer` com transposição `+12 st` no loop de realimentação | Spec 032 | Spec 082 / `CA-04` | `crates/ampforge-dsp/src/fx/reverb.rs:250–295` | `contract_032_time_mod_fx.rs` (`test_ca_05_reverb_shimmer_octave_generation`) | `TESTED` |
+| `Damping` e `RT60` invariantes à taxa de amostragem (`48 kHz` vs `96 kHz`) | `F-01` | Spec 082 / `CA-01` | `crates/ampforge-dsp/src/fx/reverb.rs:228 @ c20cc65` (BUG: `damp` não escala com `sample_rate`) | Ausente | `SPECIFIED` |
+| `Pre-Delay` até `250 ms` | Spec 032 | Spec 082 / `CA-02` | `crates/ampforge-dsp/src/fx/reverb.rs:114 @ c20cc65` (BUG: limitado a `150.0 ms`) | Ausente | `SPECIFIED` |
+| 5 arquiteturas acusticamente distintas (`Spring` dispersivo, `Plate` Dattorro, `Hall` FDN Hadamard, `Chamber`, `Shimmer`) | `F-01`, `F-02`, `F-03` | Spec 082 / `CA-03` | `crates/ampforge-dsp/src/fx/reverb.rs:169–175 @ c20cc65` (BUG: `Plate/Hall/Chamber` só alteram `model_scale` sobre os mesmos 8 combs) | `contract_032_time_mod_fx.rs` | `SPECIFIED` |
+| Modo `Shimmer` com transposição `+12 st` no loop de realimentação | Spec 032 | Spec 082 / `CA-04` | `crates/ampforge-dsp/src/fx/reverb.rs:250–295 @ c20cc65` | `contract_032_time_mod_fx.rs` (`test_ca_05_reverb_shimmer_octave_generation`) | `TESTED` |
 | Segurança zero-alloc e proteção contra denormais em tempo real | Spec 053 | Spec 082 / `CA-05` | `crates/ampforge-dsp/src/fx/reverb.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

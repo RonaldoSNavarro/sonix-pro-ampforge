@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 063: Pedal Arbiter Fuzz Face (1966 NKT275 PNP Germanium Transistors)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Arbiter Fuzz Face (1966–1967, 2× NKT275 PNP Germânio)** como processador modular independente (`pedal.arbiter.fuzz_face_ge`), eliminando a ambiguidade `FuzzFaceSiGe` do código atual (`crates/ampforge-dsp/src/fx/drive.rs:11`), separando explicitamente a variante histórica `NKT275` (Germânio PNP) de variantes posteriores (`AC128` Ge e `BC108C` Silício NPN de 1968+), e resolvendo a discrepância do controle `Tone` existente no motor genérico (`drive.tone`) mas **inexistente no pedal Fuzz Face real** (que possui apenas `Volume` e `Fuzz`).
+Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Arbiter Fuzz Face (1966–1967, 2× NKT275 PNP Germânio)** como processador modular independente (`pedal.arbiter.fuzz_face_ge`), eliminando a ambiguidade `FuzzFaceSiGe` do código atual (`crates/ampforge-dsp/src/fx/drive.rs:11 @ c20cc65`), separando explicitamente a variante histórica `NKT275` (Germânio PNP) de variantes posteriores (`AC128` Ge e `BC108C` Silício NPN de 1968+), e resolvendo a discrepância do controle `Tone` existente no motor genérico (`drive.tone`) mas **inexistente no pedal Fuzz Face real** (que possui apenas `Volume` e `Fuzz`).
 
 ---
 
@@ -103,7 +107,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 1. **`MODEL_COUPLING` (`drive.rs:11`):** O enum atual define `DriveModel::FuzzFaceSiGe`, agrupando no nome Silício (`Si`) e Germânio (`Ge`), embora as duas versões históricas (`1966 NKT275 Ge PNP` vs `1968+ BC108C Si NPN`) possuam parâmetros físicos incompatíveis. Esta Spec fixa o contrato canônico de `pedal.arbiter.fuzz_face_ge` exclusivamente na versão **`1966 NKT275 PNP Germânio`**.
 2. **`FACTUAL_ERROR` / `ARCHITECTURE_CONFLICT` (`drive.rs:442–443` vs `controls.registry.ts:753–795`):**
    - No registro de UI `controls.registry.ts:753–795` (`pedal.fuzz.*`), a interface expõe corretamente **apenas 3 controles**: `pedal.fuzz.enabled`, `pedal.fuzz.gain` (`FUZZ`) e `pedal.fuzz.level` (`VOLUME`) — não há knob `Tone` na UI do Fuzz Face!
-   - Entretanto, em `drive.rs:442–443`, `DriveModel::FuzzFaceSiGe` compartilha o mesmo braço de `update_filters` do `ProCoRat` (`DriveModel::ProCoRat | DriveModel::FuzzFaceSiGe => { let fc = 15000.0 * (475.0 / 15000.0).powf(self.tone); ... }`), aplicando indevidamente o filtro reverso de `3,3 nF` do RAT sobre o Fuzz Face dependendo do estado residual de `self.tone`!
+   - Entretanto, em `drive.rs:442–443`, `DriveModel::FuzzFaceSiGe` compartilha o mesmo braço de `update_filters` do `DriveModel::BlackRodentRat` (`DriveModel::DriveModel::BlackRodentRat | DriveModel::FuzzFaceSiGe => { let fc = 15000.0 * (475.0 / 15000.0).powf(self.tone); ... }`), aplicando indevidamente o filtro reverso de `3,3 nF` do RAT sobre o Fuzz Face dependendo do estado residual de `self.tone`!
    - No processador modular `pedal.arbiter.fuzz_face_ge`, não deve existir filtro `RAT` acoplado a `self.tone`; a resposta em frequência de saída deve ser governada apenas pelo circuito real do Fuzz Face (capacitor de saída $C_3 = 10\text{ nF}$ + `500 kΩ` e roll-off natural das capacitâncias de junção $C_{\text{cb}}$ do germânio `NKT275` em $\sim 6,5\text{ kHz}$).
 
 ---
@@ -259,8 +263,8 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Limpeza dinâmica com volume da guitarra (*Volume Cleanup*) e realimentação shunt $R_2 = 100\text{ k}\Omega$ | `F-01`, `F-02` | Spec 063 / `CA-01` | `crates/ampforge-dsp/src/fx/drive.rs:627–662` | `contract_031_pedals_dsp.rs` (`test_ca_04_fuzz_face_volume_cleanup`) | `TESTED` |
-| Assimetria harmônica Twin-BJT `NKT275` ($H_2 - H_1 \ge -18\text{ dB}$) | `F-01`, `F-02` | Spec 063 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:635–653` | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Ausência de controle `Tone` físico (desacoplamento do filtro reverso do RAT em `drive.rs:442`) | `F-01`, `F-02` | Spec 063 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:442` (BUG: compartilha o braço `DriveModel::ProCoRat \| DriveModel::FuzzFaceSiGe` do filtro `tone`) | Ausente | `SPECIFIED` |
-| Curva de ganho hiperbólica do bypass de emissor de `Q2` (`1 kΩ B` + $20\text{ }\mu\text{F}$) | `F-01`, `F-02` | Spec 063 / `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:629` (usa ganho exponencial simples `4.0 + drive * 36.0`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
-| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 063 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Limpeza dinâmica com volume da guitarra (*Volume Cleanup*) e realimentação shunt $R_2 = 100\text{ k}\Omega$ | `F-01`, `F-02` | Spec 063 / `CA-01` | `crates/ampforge-dsp/src/fx/drive.rs:627–662 @ c20cc65` | `contract_031_pedals_dsp.rs` (`test_ca_04_fuzz_face_volume_cleanup`) | `TESTED` |
+| Assimetria harmônica Twin-BJT `NKT275` ($H_2 - H_1 \ge -18\text{ dB}$) | `F-01`, `F-02` | Spec 063 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:635–653 @ c20cc65` | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Ausência de controle `Tone` físico (desacoplamento do filtro reverso do RAT em `drive.rs:442`) | `F-01`, `F-02` | Spec 063 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:442 @ c20cc65` (BUG: compartilha o braço `DriveModel::DriveModel::BlackRodentRat \| DriveModel::FuzzFaceSiGe` do filtro `tone`) | Ausente | `SPECIFIED` |
+| Curva de ganho hiperbólica do bypass de emissor de `Q2` (`1 kΩ B` + $20\text{ }\mu\text{F}$) | `F-01`, `F-02` | Spec 063 / `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:629 @ c20cc65` (usa ganho exponencial simples `4.0 + drive * 36.0`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
+| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 063 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

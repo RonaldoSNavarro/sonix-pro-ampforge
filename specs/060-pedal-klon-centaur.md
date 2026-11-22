@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 060: Pedal Klon Centaur Professional Overdrive
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Klon Centaur Professional Overdrive** (`pedal.klon.centaur`), corrigindo o defeito crítico de desalinhamento de fase entre o ramo limpo e o ramo saturado presente no código atual (`crates/ampforge-dsp/src/fx/drive.rs:553–560`) e modelando fielmente o potenciômetro duplo (`Dual-Gang 100 kΩ B`) de `Gain`, o headroom expandido (`+18 V` a `-9 V`, `27 Vpp`) e o equalizador shelving ativo `Treble` centrado no somador inversor `IC2B`.
+Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Klon Centaur Professional Overdrive** (`pedal.klon.centaur`), corrigindo o defeito crítico de desalinhamento de fase entre o ramo limpo e o ramo saturado presente no código atual (`crates/ampforge-dsp/src/fx/drive.rs:553–560 @ c20cc65`) e modelando fielmente o potenciômetro duplo (`Dual-Gang 100 kΩ B`) de `Gain`, o headroom expandido (`+18 V` a `-9 V`, `27 Vpp`) e o equalizador shelving ativo `Treble` centrado no somador inversor `IC2B`.
 
 ---
 
@@ -113,7 +117,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projet
    - Na linha `465`, quando `self.model == DriveModel::KlonCentaur`, `process_sample` **não** faz oversampling do bloco inteiro (`let needs_oversampling = matches!(self.model, ...)` exclui `KlonCentaur`!).
    - Em vez disso, dentro de `process_sample_inner` (`drive.rs:553–560`), o código calcula `let clean = x * clean_blend;` (com **atraso de 0 amostras**) e passa **apenas** o ramo `dirty` por `self.oversampler.upsample_8x` e `downsample_8x` (`let dirty = self.oversampler.downsample_8x(&os_buf);`) e depois soma `clean + dirty`!
    - Como o filtro polifásico IIR `8×` (`Oversampler8x`) introduz um atraso de grupo não-nulo e rotação de fase dependente da frequência no ramo `dirty`, somar `clean` (0 atraso) com `dirty` (atrasado pelo filtro de oversampling) cria um **cancelamento de fase tipo *comb-filter*** ao longo do espectro audível — fenômeno que jamais existe no pedal analógico real!
-2. **`FACTUAL_ERROR` (`drive.rs:437`):** O filtro `post_filter` para `KlonCentaur` é configurado como `set_lowpass(sr, 2500.0 + self.tone * 7500.0, 0.707)` aplicado sobre a soma final, quando no circuito real o controle `Treble` (`10 kΩ B` + `3,9 nF`) é um **equalizador shelving ativo** ($\pm 12\text{ dB}$ acima de $\sim 1,2\text{ kHz}$), e não um filtro passa-baixas de 2ª ordem que corta todo o espectro superior quando `Treble = 0.5`.
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 
 ---
 
@@ -281,8 +285,8 @@ Para eliminar completamente o cancelamento de fase entre `clean` e `dirty`, exis
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Alinhamento de fase `0 amostras` entre ramos `clean` e `dirty` no somador `IC2B` | `F-01` §"Summing Amplifier" | Spec 060 / `CA-01` | `crates/ampforge-dsp/src/fx/drive.rs:465, 553–560` (DEFASADO: `clean` sem OS somado a `dirty` com 8× IIR OS) | Ausente | `SPECIFIED` |
-| Clean boost de alto headroom (`27 Vpp`, `+18V/-9V`) em `Gain = 0` (`THD <= 0,5%`) | `F-01`, `F-02`, `F-03` | Spec 060 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:538–564` | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Potenciômetro duplo `Gain1a/1b` + clipping shunt `1N34A` + ramo limpo grave `830 Hz` | `F-01` | Spec 060 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:538–558` (usa `clean_blend = (1.0 - drive * 0.85)` sem filtro LPF de `830 Hz` no ramo limpo) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `SPECIFIED` |
-| Equalizador shelving ativo `Treble` ($\pm 12\text{ dB} @ >1,2\text{ kHz}$) no somador `IC2B` | `F-01` §"Tone Control" | Spec 060 / `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:437` (usa LPF simples `2500..10000 Hz`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
+| Alinhamento de fase `0 amostras` entre ramos `clean` e `dirty` no somador `IC2B` | `F-01` §"Summing Amplifier" | Spec 060 / `CA-01` | `crates/ampforge-dsp/src/fx/drive.rs:465 @ c20cc65, 553–560` (DEFASADO: `clean` sem OS somado a `dirty` com 8× IIR OS) | Ausente | `SPECIFIED` |
+| Clean boost de alto headroom (`27 Vpp`, `+18V/-9V`) em `Gain = 0` (`THD <= 0,5%`) | `F-01`, `F-02`, `F-03` | Spec 060 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:538–564 @ c20cc65` | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Potenciômetro duplo `Gain1a/1b` + clipping shunt `1N34A` + ramo limpo grave `830 Hz` | `F-01` | Spec 060 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:538–558 @ c20cc65` (usa `clean_blend = (1.0 - drive * 0.85)` sem filtro LPF de `830 Hz` no ramo limpo) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `SPECIFIED` |
+| Equalizador shelving ativo `Treble` ($\pm 12\text{ dB} @ >1,2\text{ kHz}$) no somador `IC2B` | `F-01` §"Tone Control" | Spec 060 / `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:437 @ c20cc65` (usa LPF simples `2500..10000 Hz`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
 | Curva de lote original dos diodos `1N34A` selecionados pela Klon | Sem fonte oficial de fábrica | Spec 060 / §6.2 | `drive.rs:549` (`vt = 0.35`) | N/A | `PENDING` |

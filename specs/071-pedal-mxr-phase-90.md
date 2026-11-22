@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 071: Pedal MXR Phase 90 (4-Stage JFET All-Pass Phaser — Script Logo 1974 vs Block Logo)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do pedal **MXR Phase 90 (1974 Script Logo, 4× JFET `2N5952`)** como processador modular independente (`pedal.mxr.phase90`), separando com rigor histórico e elétrico a revisão **`1974 Script Logo`** (que **não possui** o resistor de realimentação $R_{28}$, operando com `feedback = 0.0` puro) da revisão **`1977+ Block Logo / M101`** (que adicionou o resistor de realimentação $R_{28}$ entre a saída do 4º estágio all-pass e a entrada do 1º estágio), e corrigindo o bug em [`crates/ampforge-dsp/src/fx/modulation.rs:78, 238`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L78-L240) onde o valor padrão de `self.feedback` estava codificado em `0.70` (`0.35` efetivo) em um modelo intitulado `PhaserPhase90` ("Script Logo")!
+Especificar o contrato técnico, topológico, matemático e de verificação do pedal **MXR Phase 90 (1974 Script Logo, 4× JFET `2N5952`)** como processador modular independente (`pedal.mxr.phase90`), separando com rigor histórico e elétrico a revisão **`1974 Script Logo`** (que **não possui** o resistor de realimentação $R_{28}$, operando com `feedback = 0.0` puro) da revisão **`1977+ Block Logo / M101`** (que adicionou o resistor de realimentação $R_{28}$ entre a saída do 4º estágio all-pass e a entrada do 1º estágio), e corrigindo o bug em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 238`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L78-L240) onde o valor padrão de `self.feedback` estava codificado em `0.70` (`0.35` efetivo) em um modelo intitulado `PhaserPhase90` ("Script Logo")!
 
 ---
 
@@ -99,7 +103,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78, 233–244`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L233-L244) contém um **conflito de revisão histórica (`REVISION_MISMATCH` / `FACTUAL_ERROR`)**:
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233–244`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L233-L244) contém um **conflito de revisão histórica (`REVISION_MISMATCH` / `FACTUAL_ERROR`)**:
 
 1. **`REVISION_MISMATCH` / `FACTUAL_ERROR` (`modulation.rs:78, 238` e `controls.registry.ts:986`):**
    - O comentário em `modulation.rs:233` declara `"// MXR Phase 90 Script: 4-stage all-pass phaser with JFET modulation"`, mas o construtor em `modulation.rs:78` inicializa `feedback: 0.7` (e `controls.registry.ts:986` define `default: 70`), aplicando `self.phaser_fb_state * (self.feedback * 0.5)` (`35%` de realimentação!) por padrão!
@@ -251,6 +255,6 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78, 233–244`](fi
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| 4 estágios All-Pass de 1ª ordem idênticos ($C = 47\text{ nF}$ + `2N5952` JFET) gerando 2 notches em $0,4142\,f_b$ e $2,4142\,f_b$ | `F-01` | Spec 071 / `CA-01`, `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:233–244` | `contract_032_time_mod_fx.rs` (`test_ca_03_phaser_allpass_notches_sweep`) | `TESTED` |
-| Padrão `1974 Script Logo` com `feedback = 0.0` (sem resistor $R_{28}$) e extensão `Block Logo` (`feedback > 0.0`) | `F-01` §"Script vs Block" | Spec 071 / `CA-02` | `crates/ampforge-dsp/src/fx/modulation.rs:78, 238` e `controls.registry.ts:986` (DIVERGENTE: default atual é `0.70` / `70%` em vez de `0.0`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
-| Segurança zero-alloc em tempo real | Spec 053 | Spec 071 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| 4 estágios All-Pass de 1ª ordem idênticos ($C = 47\text{ nF}$ + `2N5952` JFET) gerando 2 notches em $0,4142\,f_b$ e $2,4142\,f_b$ | `F-01` | Spec 071 / `CA-01`, `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:233–244 @ c20cc65` | `contract_032_time_mod_fx.rs` (`test_ca_03_phaser_allpass_notches_sweep`) | `TESTED` |
+| Padrão `1974 Script Logo` com `feedback = 0.0` (sem resistor $R_{28}$) e extensão `Block Logo` (`feedback > 0.0`) | `F-01` §"Script vs Block" | Spec 071 / `CA-02` | `crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 238` e `controls.registry.ts:986` (DIVERGENTE: default atual é `0.70` / `70%` em vez de `0.0`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
+| Segurança zero-alloc em tempo real | Spec 053 | Spec 071 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

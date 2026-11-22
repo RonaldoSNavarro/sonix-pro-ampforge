@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 062: Pedal Electro-Harmonix Big Muff Pi (V3 NYC 4-Stage BJT Fuzz/Sustainer)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Electro-Harmonix Big Muff Pi (Revisão V3 NYC 1977, PCB EH-3003, 4× BJT)** como processador modular independente (`pedal.ehx.big_muff_pi`), corrigindo as simplificações do código atual (`crates/ampforge-dsp/src/fx/drive.rs:413–426, 601–624`) para representar fielmente:
+Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Electro-Harmonix Big Muff Pi (Revisão V3 NYC 1977, PCB EH-3003, 4× BJT)** como processador modular independente (`pedal.ehx.big_muff_pi`), corrigindo as simplificações do código atual (`crates/ampforge-dsp/src/fx/drive.rs:413–426 @ c20cc65, 601–624`) para representar fielmente:
 1. Os quatro estágios transistores BJT `Q1`–`Q4` (`2N5088`) com realimentação shunt-série e capacitores Miller coletor-base de `470 pF`;
 2. Os dois estágios em cascata de soft-clipping no feedback coletor-base (`Q2` e `Q3`) desacoplados por capacitores de `1 µF` ($f_{\text{HPF,fb}} \approx 31\text{ Hz}$); e
 3. O **Tone Stack Passivo em Ponte Cruzada** de 1ª ordem ($R_8 = 39\text{ k}\Omega, C_8 = 10\text{ nF} \Rightarrow f_{\text{LPF}} = 408,1\text{ Hz}$ e $C_9 = 4\text{ nF}, R_5 = 22\text{ k}\Omega \Rightarrow f_{\text{HPF}} = 1808,6\text{ Hz}$) que produz o entalhe clássico (*mid-scoop* de `-7 dB a -10 dB` em **`~1000 Hz`**), seguido do 4º estágio BJT de recuperação de ganho (`Q4`, $+15\text{ dB}$).
@@ -120,7 +124,7 @@ A arquitetura de Bob Myer no Big Muff Pi (`EH-3003`) divide o processamento em *
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L413-L426) e [`601-624`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L601-L624) possui as seguintes divergências auditadas:
 
-1. **`FACTUAL_ERROR` (`drive.rs:416–420`):** Os dois filtros do Tone Stack (`muff_lpf` em `480 Hz` e `muff_hpf` em `1890 Hz`) são implementados como **biquads Butterworth de 2ª ordem (`Q = 0.707`)**! Em um filtro Butterworth de 2ª ordem, a rotação de fase no centro geométrico (`~950 Hz`) entre o LPF e o HPF aproxima-se de **`180°`** ($\pm 90^\circ$ de cada filtro de 2ª ordem), provocando cancelamento destrutivo excessivo e inclinações de `12 dB/oitava`. No circuito real do Big Muff Pi (`EH-3003`), ambos os braços são redes RC passivas de **1ª ordem** (`6 dB/oitava`, $\pm 45^\circ$ de fase máxima, diferença de fase de $90^\circ$), com cortes em `408,1 Hz` ($39\text{ k}\Omega / 10\text{ nF}$) e `1808,6 Hz` ($22\text{ k}\Omega / 4\text{ nF}$) carregados mutuamente pelo potenciômetro `100 kΩ`.
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 2. **`FACTUAL_ERROR` (`drive.rs:601–611`):** O código atual não modela os capacitores Miller coletor-base de `470 pF` em `Q1`, `Q2` e `Q3` (que suavizam as altas frequências antes e durante cada estágio de clipping), nem o desacoplamento de `1 µF` dos diodos de feedback, nem o 4º estágio BJT de recuperação (`Q4`).
 
 ---
@@ -284,7 +288,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projet
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Tone Stack passivo em ponte de **1ª ordem** (`408,1 Hz` LPF + `1808,6 Hz` HPF) com *mid-scoop* em `~950–1000 Hz` | `F-01` §"Tone Control", `F-02` | Spec 062 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:416–420` (usa biquads Butterworth de **2ª ordem** em `480 Hz` e `1890 Hz`) | `contract_031_pedals_dsp.rs` (`test_ca_03_big_muff_mid_scoop`) | `TESTED` (scoop) / `SPECIFIED` (ordem 1ª exata) |
-| Duplo estágio de clipping coletor-base (`Q2 → Q3`, `1N914 + 1 µF`) | `F-01` §"Clipping Stage" | Spec 062 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:604–611` (`soft_clip_diode` em 2 estágios sem desacoplamento `1 µF`) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Tone Stack passivo em ponte de **1ª ordem** (`408,1 Hz` LPF + `1808,6 Hz` HPF) com *mid-scoop* em `~950–1000 Hz` | `F-01` §"Tone Control", `F-02` | Spec 062 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:416–420 @ c20cc65` (usa biquads Butterworth de **2ª ordem** em `480 Hz` e `1890 Hz`) | `contract_031_pedals_dsp.rs` (`test_ca_03_big_muff_mid_scoop`) | `TESTED` (scoop) / `SPECIFIED` (ordem 1ª exata) |
+| Duplo estágio de clipping coletor-base (`Q2 → Q3`, `1N914 + 1 µF`) | `F-01` §"Clipping Stage" | Spec 062 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:604–611 @ c20cc65` (`soft_clip_diode` em 2 estágios sem desacoplamento `1 µF`) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Três capacitores Miller coletor-base (`3× 470 pF` em `Q1`, `Q2`, `Q3`) e 4º estágio BJT `Q4` (`+14,5 dB`) | `F-01` | Spec 062 / `CA-04` | Ausentes em `drive.rs:601–624` | Ausente | `SPECIFIED` |
-| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 062 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 062 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

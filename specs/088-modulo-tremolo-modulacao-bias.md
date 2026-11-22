@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 088: Módulo de Tremolo por Modulação de Bias Valvulado (Power-Tube Grid Bias Modulation)
 
 > **Status:** `rascunho`
@@ -41,7 +45,7 @@ Especificar o contrato técnico, físico-matemático e de verificação do **Mó
 | **Fabricante de referência** | Referência topológica: Fender Electric Instrument Co. (Circuitos `6G3 Deluxe`, `6G11 Vibrolux`, `AA1164 Princeton Reverb`, 1961–1966) |
 | **Modelo de referência** | Power-Tube Grid Bias Modulation Tremolo (`module.mod.bias_tremolo`) |
 | **Ano / época / revisão** | 1961–1966 (Oscilador `12AX7` acoplado à malha de bias negativo das válvulas `2× 6V6GT` push-pull) |
-| **Identificador no sistema** | `module.mod.bias_tremolo` (`ModModel::TremoloBias` em `crates/ampforge-dsp/src/fx/modulation.rs:267–274`) |
+| **Identificador no sistema** | `module.mod.bias_tremolo` (`ModModel::TremoloBias` em `crates/ampforge-dsp/src/fx/modulation.rs:267–274 @ c20cc65`) |
 | **Papel na cadeia de sinal** | Bloco `MOD` (`mod_1`), simulando a modulação orgânica de estágio de saída push-pull. |
 
 ---
@@ -89,7 +93,7 @@ Em um estágio push-pull `2× 6V6GT` com bias negativo $V_{\text{bias}}(t) = V_{
 ### 7.1. Auditoria do código atual e classificação dos achados
 
 1. **`MODEL_COUPLING` (corrigido nesta revisão):** Estava acoplado na Spec 073 com o Tremolo Óptico.
-2. **`FACTUAL_ERROR` (`crates/ampforge-dsp/src/fx/modulation.rs:267–274`):** A implementação atual faz `((input + bias_shift) * 1.3).tanh() - (bias_shift * 1.3).tanh()` em ramo **single-ended** (não diferencial push-pull!), gerando forte 2º harmônico assimétrico em vez da física push-pull diferencial (`f(V_b + x) - f(V_b - x)`) de um Fender `AA1164 / 6G3`.
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 
 ---
 
@@ -212,6 +216,6 @@ Em um estágio push-pull `2× 6V6GT` com bias negativo $V_{\text{bias}}(t) = V_{
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Par push-pull diferencial com modulação de $V_{\text{bias}}(t)$ e zero *LFO thump* em silêncio | `F-01`, `F-02` | Spec 088 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:267–274` (usa aproximação single-ended `tanh`) | `contract_032_time_mod_fx.rs` | `SPECIFIED` |
+| Par push-pull diferencial com modulação de $V_{\text{bias}}(t)$ e zero *LFO thump* em silêncio | `F-01`, `F-02` | Spec 088 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:267–274 @ c20cc65` (usa aproximação single-ended `tanh`) | `contract_032_time_mod_fx.rs` | `SPECIFIED` |
 | Profundidade sensível à dinâmica de toque (`-24 dBFS` > `-3 dBFS`) e conteúdo harmônico $\ge 1,0\%$ | `F-01`, `F-02` | Spec 088 / `CA-02`, `CA-03` | Parcial em `modulation.rs:267–274` | Ausente | `SPECIFIED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 088 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

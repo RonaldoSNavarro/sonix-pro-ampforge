@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 074: Efeito Eletromecânico Rotary Speaker Leslie 147 (Bi-Banda 800 Hz com Rotores Independentes Horn & Drum)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, acústico, eletromecânico e de verificação do gabinete rotativo **Leslie Model 147 (`cab.leslie.147_rotary_speaker`)**, diagnosticando a simplificação severa presente no código atual ([`crates/ampforge-dsp/src/fx/modulation.rs:275–286`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L275-L286)) — que aplica uma única linha de atraso modulada sobre o sinal de banda inteira com uma única velocidade instantânea — e estabelecendo o modelo físico bi-banda fiel ao manual de serviço da Electro Music / Leslie:
+Especificar o contrato técnico, acústico, eletromecânico e de verificação do gabinete rotativo **Leslie Model 147 (`cab.leslie.147_rotary_speaker`)**, diagnosticando a simplificação severa presente no código atual ([`crates/ampforge-dsp/src/fx/modulation.rs:275–286 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L275-L286)) — que aplica uma única linha de atraso modulada sobre o sinal de banda inteira com uma única velocidade instantânea — e estabelecendo o modelo físico bi-banda fiel ao manual de serviço da Electro Music / Leslie:
 1. Estágio amplificador valvulado interno de `40 W` (`12AU7` + par push-pull `2× 6550`);
 2. Crossover passivo LC de **`800 Hz`** dividindo o sinal entre o **Treble Horn Rotor (corneta giratória `Jensen V21`)** e o **Bass Drum Rotor (tambor defletor de madeira acoplado ao woofer de `15"`)**;
 3. **Dois rotores mecanicamente independentes** com velocidades distintas em **`CHORALE` (`Slow`)** e **`TREMOLO` (`Fast`)** e **constantes de inércia de aceleração/desaceleração radicalmente diferentes** (a corneta leve acelera em `~0,8–1,2 s`, enquanto o tambor pesado de madeira leva `~4,0–6,0 s` para atingir rotação máxima!);
@@ -119,7 +123,7 @@ De acordo com o *Leslie Model 147 Service Manual* (`F-01`) e a literatura acadê
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:275–286`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L275-L286) possui simplificações severas que não representam um Leslie 147:
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:275–286 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L275-L286) possui simplificações severas que não representam um Leslie 147:
 
 1. **`FACTUAL_ERROR` (`modulation.rs:275–286` — Ausência de Crossover `800 Hz` e Rotor Único):**
    - O código atual processa o sinal de banda inteira com **uma única linha de atraso** (`delay_ms = 2.0 + sin * depth * 1.5`) e um único multiplicador de amplitude `am = 1.0 - depth * 0.35 * (0.5 + 0.5 * cos)`!
@@ -271,7 +275,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:275–286`](file:/
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Crossover `800 Hz` e dois rotores independentes (`Horn 400 RPM` vs `Drum 342 RPM`) | `F-01`, `F-02` | Spec 074 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:275–286` (SIMPLIFICADO: banda única, rotor único sem crossover `800 Hz`) | Ausente | `SPECIFIED` |
+| Crossover `800 Hz` e dois rotores independentes (`Horn 400 RPM` vs `Drum 342 RPM`) | `F-01`, `F-02` | Spec 074 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:275–286 @ c20cc65` (SIMPLIFICADO: banda única, rotor único sem crossover `800 Hz`) | Ausente | `SPECIFIED` |
 | Inércia mecânica diferencial de aceleração/desaceleração (`Horn ~1 s` vs `Drum ~5 s`) | `F-01`, `F-02` | Spec 074 / `CA-02` | Ausente em `modulation.rs` (mudança de `rate_hz` é instantânea) | Ausente | `SPECIFIED` |
-| Acoplamento Doppler + modulação direcional AM e filtro *off-axis* | `F-02` | Spec 074 / `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:276–285` (Doppler + AM presentes em banda única, sem filtro *off-axis*) | `contract_032_time_mod_fx.rs`, `contract_052_splash_pedals_amp2.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Segurança zero-alloc em tempo real | Spec 053 | Spec 074 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Acoplamento Doppler + modulação direcional AM e filtro *off-axis* | `F-02` | Spec 074 / `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:276–285 @ c20cc65` (Doppler + AM presentes em banda única, sem filtro *off-axis*) | `contract_032_time_mod_fx.rs`, `contract_052_splash_pedals_amp2.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Segurança zero-alloc em tempo real | Spec 053 | Spec 074 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

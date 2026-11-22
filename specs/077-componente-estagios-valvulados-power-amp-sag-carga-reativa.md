@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 077: Componente Compartilhado — Biblioteca de Estágios Valvulados, Power Amp, Fonte/Sag e Carga Reativa
 
 > **Status:** `rascunho`

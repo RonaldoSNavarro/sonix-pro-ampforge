@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 064: Pedal Boss DS-1 Distortion (Revisão 1978–1993 MIJ Toshiba TA7136AP)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Boss DS-1 Distortion (Revisão 1978–1993 com CI SIP Toshiba `TA7136AP`)** como processador modular independente (`pedal.boss.ds1`), eliminando o termo vago "Rev. Clássica", separando-a explicitamente da revisão pós-1994 (`DS-1A` com dual op-amp `Rohm BA728N` / `Mitsubishi M5223AL` / `NJM2904`), e corrigindo a implementação do **Tone Stack Passivo em Ponte Assimétrica (*Scooped Passive Bridge*)** atualmente reduzido a dois biquads em [`crates/ampforge-dsp/src/fx/drive.rs:445–456`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L445-L456).
+Especificar o contrato técnico, topológico, matemático e de verificação do pedal **Boss DS-1 Distortion (Revisão 1978–1993 com CI SIP Toshiba `TA7136AP`)** como processador modular independente (`pedal.boss.ds1`), eliminando o termo vago "Rev. Clássica", separando-a explicitamente da revisão pós-1994 (`DS-1A` com dual op-amp `Rohm BA728N` / `Mitsubishi M5223AL` / `NJM2904`), e corrigindo a implementação do **Tone Stack Passivo em Ponte Assimétrica (*Scooped Passive Bridge*)** atualmente reduzido a dois biquads em [`crates/ampforge-dsp/src/fx/drive.rs:445–456 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L445-L456).
 
 ---
 
@@ -115,8 +119,8 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L445-L456) e [`665-685`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L665-L685) possui as seguintes divergências auditadas:
 
-1. **`FACTUAL_ERROR` (`drive.rs:446` e `668`):** O estágio Transistor Booster `Q2` e a variação dinâmica do filtro passa-altas da perna inversora ($C_7 = 0,47\text{ }\mu\text{F}$ com o potenciômetro split-wiper `DIST`, cujo corte se move de `3,23 Hz` a `72,05 Hz` enquanto o ganho sobe pela razão $\frac{\alpha}{0,047 + (1-\alpha)}$) são substituídos por um simples `self.pre_filter.set_highpass(sr, 70.0, 0.707)` fixo e um ganho linear `1.0 + self.drive * 40.0`!
-2. **`FACTUAL_ERROR` (`drive.rs:448–450`):** O Tone Stack passivo do DS-1 é aproximado por dois biquads de 2ª ordem (`muff_lpf` em `450 Hz` e `muff_hpf` em `1100 Hz`), quando a equação exata de transferência de 2ª ordem derivada por David Yeh (`F-01` §3.2 Fig. 7–8) para a ponte resistivo-capacitiva ($R_{15}=6,8\text{ k}\Omega, C_{11}=22\text{ nF}, C_{12}=100\text{ nF}, R_{16}=2,2\text{ k}\Omega, R_{17}=6,8\text{ k}\Omega, P_{\text{tone}}=20\text{ k}\Omega$) possui coeficientes acoplados ao cursor $\alpha_{\text{tone}}$ que deslocam a frequência do notch entre `~400 Hz` e `~650 Hz`.
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 
 ---
 
@@ -280,8 +284,8 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projet
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Tone Stack passivo em ponte assimétrica ($6,8\text{ k}\Omega / 22\text{ nF} / 100\text{ nF} / 2,2\text{ k}\Omega$) com *mid-scoop* em `~500 Hz` | `F-01` §3.2, `F-02` | Spec 064 / `CA-01`, `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:448–450, 678–682` (usa dois biquads de 2ª ordem em `450 Hz` e `1100 Hz`) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Estágio `TA7136AP` com potenciômetro `DIST` (`100 kΩ`) em configuração *split-wiper* ($G \in [0\text{ dB}, +26,96\text{ dB}]$) | `F-01` §2.2, `F-02` | Spec 064 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:668` (usa ganho linear simples `1.0 + drive * 40.0` e HPF fixo de `70 Hz`) | Ausente | `SPECIFIED` |
+| Tone Stack passivo em ponte assimétrica ($6,8\text{ k}\Omega / 22\text{ nF} / 100\text{ nF} / 2,2\text{ k}\Omega$) com *mid-scoop* em `~500 Hz` | `F-01` §3.2, `F-02` | Spec 064 / `CA-01`, `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:448–450 @ c20cc65, 678–682` (usa dois biquads de 2ª ordem em `450 Hz` e `1100 Hz`) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Estágio `TA7136AP` com potenciômetro `DIST` (`100 kΩ`) em configuração *split-wiper* ($G \in [0\text{ dB}, +26,96\text{ dB}]$) | `F-01` §2.2, `F-02` | Spec 064 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:668 @ c20cc65` (usa ganho linear simples `1.0 + drive * 40.0` e HPF fixo de `70 Hz`) | Ausente | `SPECIFIED` |
 | Estágio Transistor Booster `Q2` (`2SC732`, $C_5 = 68\text{ nF}$, $+17\text{ dB}$ pré-ênfase) | `F-02` §"Transistor Booster" | Spec 064 / `CA-03` | Ausente em `drive.rs` | Ausente | `SPECIFIED` |
-| Hard-clipping shunt de silício (`2× 1S1588`) + capacitor shunt $C_{10} = 10\text{ nF}$ (`7,23 kHz`) | `F-01` §2.2, `F-02` | Spec 064 / §9 | `crates/ampforge-dsp/src/fx/drive.rs:447, 670–675` (LPF fixo em `6500 Hz`) | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 064 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Hard-clipping shunt de silício (`2× 1S1588`) + capacitor shunt $C_{10} = 10\text{ nF}$ (`7,23 kHz`) | `F-01` §2.2, `F-02` | Spec 064 / §9 | `crates/ampforge-dsp/src/fx/drive.rs:447 @ c20cc65, 670–675` (LPF fixo em `6500 Hz`) | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 064 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

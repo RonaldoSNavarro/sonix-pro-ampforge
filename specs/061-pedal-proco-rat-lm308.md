@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 061: Pedal ProCo RAT (Distortion Op-Amp LM308N)
 
 > **Status:** `rascunho`
@@ -43,7 +47,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 | **Fabricante de referência** | Pro Co Sound Inc. (Kalamazoo, MI, EUA — projetado por Scott Burnham e Steve Kiraly) |
 | **Modelo de referência** | ProCo RAT ("The RAT") |
 | **Ano / época / revisão** | 1984–1988 ("Whiteface" / "Blackface" Small-Box; CI `LM308N`, cap de compensação $C_3 = 30\text{ pF}$, diodos `1N914`, JFET `2N5458`) |
-| **Identificador no sistema** | `pedal.proco.rat` (`DriveModel::ProCoRat` / UI slug `rat`) |
+| **Identificador no sistema** | `pedal.proco.rat` (`DriveModel::DriveModel::BlackRodentRat` / UI slug `rat`) |
 | **Papel na cadeia de sinal** | Bloco `DRIVE` pré-amplificador (capaz de operar desde overdrive médio até distortion densa com características de fuzz em `Distortion > 75%`). |
 
 ---
@@ -115,8 +119,8 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L440-L444) e [`567-598`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L567-L598) contém as seguintes divergências auditadas:
 
-1. **`FACTUAL_ERROR` (`drive.rs:440–441`):** O pré-filtro usa apenas um único biquad passa-altas simples em `60 Hz` (`self.pre_filter.set_highpass(sr, 60.0, 0.707)`), omitindo completamente o segundo degrau RC de **`1538,9 Hz`** ($47\text{ }\Omega + 2,2\text{ }\mu\text{F}$) que confere ao RAT até `+22 dB` de ganho extra acima de `1,5 kHz` antes do *slew-rate limiting* do `LM308N`.
-2. **`FACTUAL_ERROR` (`drive.rs:584`):** Após limitar `delta.clamp(-max_delta, max_delta)` com `slew_State`, o código aplica um integrador passa-baixas adicional arbitário (`self.rat_filter_state = self.rat_filter_state * 0.65 + self.slew_state * 0.35;`), que corta agudos independentemente do *slew rate* e do capacitor $C_4 = 100\text{ pF}$.
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 3. **`FACTUAL_ERROR` (`drive.rs:442–443`):** A frequência do controle `FILTER` é calculada como `let fc = 15000.0 * (475.0 / 15000.0).powf(self.tone);` usando um biquad de **2ª ordem** (`Q=0.707`), quando no circuito real o estágio `FILTER` é um filtro RC passivo de **1ª ordem** ($6\text{ dB/oitava}$) cuja frequência de corte varia hiperbolicamente com o potenciômetro logarítmico `100 kΩ` de `32 154 Hz` (`Filter = 0%`) até `475,2 Hz` (`Filter = 100%`).
 
 ---
@@ -279,8 +283,8 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projet
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Duplo ramo HPF na perna inversora: `60,44 Hz` ($560\text{ }\Omega + 4,7\text{ }\mu\text{F}$) e `1538,9 Hz` ($47\text{ }\Omega + 2,2\text{ }\mu\text{F}$) | `F-01` §"Clipping Amplifier" | Spec 061 / `CA-01` | `crates/ampforge-dsp/src/fx/drive.rs:441` (possui apenas HPF simples em `60 Hz`, sem o degrau de `1538,9 Hz`) | Ausente | `SPECIFIED` |
-| Limitação física de Slew Rate (`0,3 V/µs`, $C_3 = 30\text{ pF}$) no `LM308N` | `F-01`, `F-02` | Spec 061 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:574–584` (implementa clamp de derivada seguido de leaky integrator arbitrário `0.65/0.35`) | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Filtro passa-baixas reverso `FILTER` de 1ª ordem RC ($f_c \in [475,2\text{ Hz},\; 32,15\text{ kHz}]$) | `F-01` §"Filter Stage" | Spec 061 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:442–443` (direção reversa implementada, mas usa biquad de 2ª ordem em vez de RC de 1ª ordem) | `contract_031_pedals_dsp.rs` (`test_ca_02_rat_filter_reverso`) | `TESTED` (direção) / `SPECIFIED` (ordem 1ª) |
-| Hard-clipping shunt de silício (`2× 1N914` + $R_6 = 1\text{ k}\Omega$) | `F-01` | Spec 061 / `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:587–596` | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
-| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 061 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Duplo ramo HPF na perna inversora: `60,44 Hz` ($560\text{ }\Omega + 4,7\text{ }\mu\text{F}$) e `1538,9 Hz` ($47\text{ }\Omega + 2,2\text{ }\mu\text{F}$) | `F-01` §"Clipping Amplifier" | Spec 061 / `CA-01` | `crates/ampforge-dsp/src/fx/drive.rs:441 @ c20cc65` (possui apenas HPF simples em `60 Hz`, sem o degrau de `1538,9 Hz`) | Ausente | `SPECIFIED` |
+| Limitação física de Slew Rate (`0,3 V/µs`, $C_3 = 30\text{ pF}$) no `LM308N` | `F-01`, `F-02` | Spec 061 / `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:574–584 @ c20cc65` (implementa clamp de derivada seguido de leaky integrator arbitrário `0.65/0.35`) | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Filtro passa-baixas reverso `FILTER` de 1ª ordem RC ($f_c \in [475,2\text{ Hz},\; 32,15\text{ kHz}]$) | `F-01` §"Filter Stage" | Spec 061 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:442–443 @ c20cc65` (direção reversa implementada, mas usa biquad de 2ª ordem em vez de RC de 1ª ordem) | `contract_031_pedals_dsp.rs` (`test_ca_02_rat_filter_reverso`) | `TESTED` (direção) / `SPECIFIED` (ordem 1ª) |
+| Hard-clipping shunt de silício (`2× 1N914` + $R_6 = 1\text{ k}\Omega$) | `F-01` | Spec 061 / `CA-04` | `crates/ampforge-dsp/src/fx/drive.rs:587–596 @ c20cc65` | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
+| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 061 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:463–491 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

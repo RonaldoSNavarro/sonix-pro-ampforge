@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 066: Rack Compressor FET UREI 1176LN (Peak Limiter Revision D/E)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, topológico, matemático e de verificação do compressor de estúdio **UREI Model 1176LN Solid-State Peak Limiter (Revision D/E Blackface)** como processador modular independente (`rack.urei.1176ln`), fundamentado no manual técnico oficial da UREI (`https://media.uaudio.com/assetlibrary/1/1/1176ln_manual.pdf`, `PRIMARY_OFFICIAL`), separando-o estritamente das outras variantes hoje agrupadas em `CompressorProcessor` (`PedalRossDyna`, `OpticalLa2a`, `VcaMasterBus`), e diagnosticando a diferença entre a topologia real de **realimentação (*feedback*) com divisor JFET `2N5457`** do 1176LN e o detector *feedforward* simplificado atualmente implementado em [`crates/ampforge-dsp/src/fx/dynamics.rs:433–530`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L433-L530).
+Especificar o contrato técnico, topológico, matemático e de verificação do compressor de estúdio **UREI Model 1176LN Solid-State Peak Limiter (Revision D/E Blackface)** como processador modular independente (`rack.urei.1176ln`), fundamentado no manual técnico oficial da UREI (`https://media.uaudio.com/assetlibrary/1/1/1176ln_manual.pdf`, `PRIMARY_OFFICIAL`), separando-o estritamente das outras variantes hoje agrupadas em `CompressorProcessor` (`PedalRossDyna`, `OpticalLa2a`, `VcaMasterBus`), e diagnosticando a diferença entre a topologia real de **realimentação (*feedback*) com divisor JFET `2N5457`** do 1176LN e o detector *feedforward* simplificado atualmente implementado em [`crates/ampforge-dsp/src/fx/dynamics.rs:433–530 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L433-L530).
 
 ---
 
@@ -112,7 +116,7 @@ De acordo com o manual oficial de operação e serviço da UREI (`F-01`, Seçõe
 O código atual em [`crates/ampforge-dsp/src/fx/dynamics.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/dynamics.rs#L211-L551) possui as seguintes divergências auditadas:
 
 1. **`MODEL_COUPLING` (`dynamics.rs:212–217`):** O `CompressorProcessor` agrupa 4 arquiteturas físicas incompatíveis (`PedalRossDyna`, `Fet1176`, `OpticalLa2a`, `VcaMasterBus`) dentro de um único método `process_sample`. Esta Spec isola exclusivamente o contrato do **`rack.urei.1176ln` (`Fet1176`)**.
-2. **`FACTUAL_ERROR` (`dynamics.rs:480` — Detector Feedforward vs Feedback):** Na linha `480`, o detector de nível do `Fet1176` calcula `let det_level = driven.abs();` diretamente sobre o sinal de entrada antes da atenuação (`feedforward`), aplicando depois uma fórmula estática de compressor digital (`over_db * (1.0 - 1.0 / effective_ratio)`). No 1176LN real (`F-01` Fig. 3-1), a malha é **feedback**: o detector retifica a saída **pós-atenuação JFET e pós-pré-amplificador de `+26 dB`**, realimentando a porta do JFET `Q1` ($R_{\text{DS}}(V_{\text{GS}})$ em divisor com $R_5 = 27\text{ k}\Omega$).
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 3. **`FACTUAL_ERROR` (`controls.registry.ts:575` vs `F-01` p. 1-2):** No registro de UI (`pedal.comp.attack`), a faixa de `comp.attack_ms` está declarada como `0.02 .. 50 ms`, enquanto no `1176LN` real o tempo máximo de Attack é **`0,80 ms` (`800 µs`)**. Para manter compatibilidade com os demais modelos de `CompressorModel` sem violar a física do `1176LN`, quando o processador `rack.urei.1176ln` está selecionado, a constante de tempo física do capacitor de carga do detector JFET deve mapear a excursão do controle para a faixa documentada da UREI (`0,02 ms` a `0,80 ms`, ou aceitar o valor em `ms` grampeado à faixa física do circuito 1176LN quando em modo estrito 1176LN).
 
 ---
@@ -275,9 +279,9 @@ O código atual em [`crates/ampforge-dsp/src/fx/dynamics.rs`](file:///g:/Dev/Pro
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Controle `INPUT` (`sustain`) governa a compressão e `OUTPUT` (`level`) atua fora da malha de detecção | `F-01` Fig. 3-1 p. 3-1 | Spec 066 / `CA-01` | `crates/ampforge-dsp/src/fx/dynamics.rs:437–527` | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Ratios selecionáveis `4:1`, `8:1`, `12:1`, `20:1` com deslocamento de limiar e inclinação | `F-01` p. 1-2, p. 3-2 | Spec 066 / `CA-02` | `crates/ampforge-dsp/src/fx/dynamics.rs:451–489` | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
-| Modo *All-Buttons In* (`"all"`) com saturação JFET e platô de ataque | `F-01` §3 | Spec 066 / `CA-03` | `crates/ampforge-dsp/src/fx/dynamics.rs:451–457, 503–510` | `contract_031_pedals_dsp.rs` (`test_ca_06_comp_1176_all_buttons_and_ratios`) | `TESTED` |
-| Attack ultra-rápido (`20 µs` a `800 µs`) e Release (`50 ms` a `1100 ms`) | `F-01` p. 1-2 §1.5 | Spec 066 / `CA-04` | `crates/ampforge-dsp/src/fx/dynamics.rs:394–402` | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Topologia de malha fechada *Feedback Sidechain* no divisor JFET $R_5 = 27\text{ k}\Omega / Q_1$ | `F-01` Fig. 3-1 | Spec 066 / §7.1, §9 | `crates/ampforge-dsp/src/fx/dynamics.rs:480` (atualmente usa detector *feedforward* sobre `driven.abs()`) | Ausente | `SPECIFIED` |
-| Execução zero-alloc em tempo real | Spec 053 | Spec 066 / `CA-05` | `crates/ampforge-dsp/src/fx/dynamics.rs:433–530` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Controle `INPUT` (`sustain`) governa a compressão e `OUTPUT` (`level`) atua fora da malha de detecção | `F-01` Fig. 3-1 p. 3-1 | Spec 066 / `CA-01` | `crates/ampforge-dsp/src/fx/dynamics.rs:437–527 @ c20cc65` | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Ratios selecionáveis `4:1`, `8:1`, `12:1`, `20:1` com deslocamento de limiar e inclinação | `F-01` p. 1-2, p. 3-2 | Spec 066 / `CA-02` | `crates/ampforge-dsp/src/fx/dynamics.rs:451–489 @ c20cc65` | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
+| Modo *All-Buttons In* (`"all"`) com saturação JFET e platô de ataque | `F-01` §3 | Spec 066 / `CA-03` | `crates/ampforge-dsp/src/fx/dynamics.rs:451–457 @ c20cc65, 503–510` | `contract_031_pedals_dsp.rs` (`test_ca_06_comp_1176_all_buttons_and_ratios`) | `TESTED` |
+| Attack ultra-rápido (`20 µs` a `800 µs`) e Release (`50 ms` a `1100 ms`) | `F-01` p. 1-2 §1.5 | Spec 066 / `CA-04` | `crates/ampforge-dsp/src/fx/dynamics.rs:394–402 @ c20cc65` | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Topologia de malha fechada *Feedback Sidechain* no divisor JFET $R_5 = 27\text{ k}\Omega / Q_1$ | `F-01` Fig. 3-1 | Spec 066 / §7.1, §9 | `crates/ampforge-dsp/src/fx/dynamics.rs:480 @ c20cc65` (atualmente usa detector *feedforward* sobre `driven.abs()`) | Ausente | `SPECIFIED` |
+| Execução zero-alloc em tempo real | Spec 053 | Spec 066 / `CA-05` | `crates/ampforge-dsp/src/fx/dynamics.rs:433–530 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

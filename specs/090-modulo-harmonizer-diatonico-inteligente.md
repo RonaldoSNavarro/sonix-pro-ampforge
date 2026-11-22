@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 090: Módulo Harmonizer Diatônico Inteligente (Smart Pitch Shifter por Tonalidade e Escala)
 
 > **Status:** `rascunho`
@@ -221,6 +225,6 @@ Quando a nota tocada estiver fora da escala (nota cromática de passagem), o mot
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Tabela diatônica exata (`Major`, `Natural Minor`, `Harmonic Minor`, `Dorian`, `Mixolydian`) com detector em tempo real | `F-01`, `F-02` | Spec 090 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/pitch.rs:329–352` | `contract_042_pitch_wah.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Tabela diatônica exata (`Major`, `Natural Minor`, `Harmonic Minor`, `Dorian`, `Mixolydian`) com detector em tempo real | `F-01`, `F-02` | Spec 090 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/pitch.rs:329–352 @ c20cc65` | `contract_042_pitch_wah.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Histerese anti-vibrato (`±25 cents`) e dueto balanceado `1:1` | `F-02` | Spec 090 / `CA-03` | Parcial em `pitch.rs` | Ausente | `SPECIFIED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 090 / `CA-04` | `crates/ampforge-dsp/src/fx/pitch.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

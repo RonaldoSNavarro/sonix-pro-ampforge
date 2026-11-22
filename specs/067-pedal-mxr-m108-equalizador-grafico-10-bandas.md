@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 067: Pedal MXR M108 Ten Band Graphic Equalizer
 
 > **Status:** `rascunho` (`bloqueio parcial documental` no esquema elétrico dos giradores `MC33179`)
@@ -28,7 +32,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 ## 3. Fora de escopo
 
 - **Equalizador Gráfico de 5 Bandas Mesa/Boogie Mark Series (`80 Hz, 240 Hz, 750 Hz, 2200 Hz, 6600 Hz`):** Movido integralmente para a **[Spec 085](085-eq-grafico-5-bandas-mesa-boogie-mark.md)**.
-- **Módulo Equalizador Paramétrico Digital de 8 Bandas (`Eq8Processor`):** Movido integralmente para a **[Spec 086](086-modulo-equalizador-parametrico-8-bandas.md)**.
+- **Módulo Equalizador Paramétrico Digital de 8 Bandas (`EqProcessor (EqMode::Parametric8Band)`):** Movido integralmente para a **[Spec 086](086-modulo-equalizador-parametrico-8-bandas.md)**.
 - **MXR M108S (revisão moderna em alumínio prateado com dupla saída `OUT 1 / OUT 2` e circuito de redução de ruído atualizado):** Documentado por contraste na Seção 6, mantendo o `M108` clássico como referência primária do identificador `pedal.mxr.m108_10band_eq`.
 
 ---
@@ -41,7 +45,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 | **Fabricante de referência** | Dunlop Manufacturing, Inc. / MXR Innovations (Benicia, CA, EUA) |
 | **Modelo de referência** | MXR M108 Ten Band Graphic EQ |
 | **Ano / época / revisão** | Revisão M108 (`18 V` DC adapter `ECB004`, 12 faders iluminados por LED: `GAIN`, 10 frequências ISO por oitava, `VOLUME`) |
-| **Identificador no sistema** | `pedal.mxr.m108_10band_eq` (UI `pedal.eq.*` / backend `eq.*` & `GraphicEqProcessor`) |
+| **Identificador no sistema** | `pedal.mxr.m108_10band_eq` (UI `pedal.eq.*` / backend `eq.*` & `EqProcessor (EqMode::Graphic10BandPedal)`) |
 | **Papel na cadeia de sinal** | Bloco `EQ` (modelagem de espectro pré-drive/pré-amp ou escultura tonal pós-pré-amplificador no FX Loop). |
 
 ---
@@ -111,11 +115,11 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 
 O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L117-L228) e [`apps/sonix-app/ui/src/controls.registry.ts:799–883`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/apps/sonix-app/ui/src/controls.registry.ts#L799-L883) apresenta as seguintes divergências auditadas:
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** A Spec 067 original agrupava `GraphicEqProcessor` (M108 10-Band + Mesa 5-Band) e `Eq8Processor` (8-Band Parametric). Agora a Spec 067 trata exclusivamente do **MXR M108 (`pedal.mxr.m108_10band_eq`)**, enquanto o Mesa 5-Band foi movido para a **Spec 085** e o Paramétrico de 8 Bandas para a **Spec 086**.
-2. **`FACTUAL_ERROR` (`eq.rs:131, 166`):** Em `GraphicEqProcessor`, o limite de ganho das bandas está codificado como `gain_db.clamp(-15.0, 15.0)` (`±15 dB`) e o $Q$ proporcional usa `gain_db.abs() / 15.0`. Porém, tanto o manual oficial da Dunlop (`F-01` p. 2, `F-02` p. 2) quanto o registro de controles da própria UI do AMPFORGE (`controls.registry.ts:815–879`, `range: [-12, 12]`) especificam que o MXR M108 opera estritamente em **`±12,0 dB`**!
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** A Spec 067 original agrupava `EqProcessor (EqMode::Graphic10BandPedal)` (M108 10-Band + Mesa 5-Band) e `EqProcessor (EqMode::Parametric8Band)` (8-Band Parametric). Agora a Spec 067 trata exclusivamente do **MXR M108 (`pedal.mxr.m108_10band_eq`)**, enquanto o Mesa 5-Band foi movido para a **Spec 085** e o Paramétrico de 8 Bandas para a **Spec 086**.
+2. **`FACTUAL_ERROR` (`eq.rs:131, 166`):** Em `EqProcessor (EqMode::Graphic10BandPedal)`, o limite de ganho das bandas está codificado como `gain_db.clamp(-15.0, 15.0)` (`±15 dB`) e o $Q$ proporcional usa `gain_db.abs() / 15.0`. Porém, tanto o manual oficial da Dunlop (`F-01` p. 2, `F-02` p. 2) quanto o registro de controles da própria UI do AMPFORGE (`controls.registry.ts:815–879`, `range: [-12, 12]`) especificam que o MXR M108 opera estritamente em **`±12,0 dB`**!
 3. **`ARCHITECTURE_CONFLICT` (`controls.registry.ts:799–883` vs `eq.rs:131`):**
-   - No `controls.registry.ts:799–883`, o pedal visual `pedal.eq.*` mapeia as 10 bandas (`31 Hz` a `16 kHz`) para as chaves `eq.b1.gain_db` .. `eq.b8.gain_db` (com um comentário na linha `866` notando que `eq.b9.gain_db` e `eq.b10.gain_db` foram adicionadas para cobrir `8 kHz` e `16 kHz` além das 8 bandas originais de `Eq8Processor`).
-   - Além disso, o MXR M108 real possui **12 sliders** (`GAIN` de entrada `±12 dB`, 10 frequências, e `VOLUME` de saída `±12 dB`), enquanto `GraphicEqProcessor` (`eq.rs:124–129`) possui apenas `output_level_db` (faltando `input_gain_db`), e `controls.registry.ts` não expõe os sliders `GAIN` e `VOLUME` do M108.
+   - No `controls.registry.ts:799–883`, o pedal visual `pedal.eq.*` mapeia as 10 bandas (`31 Hz` a `16 kHz`) para as chaves `eq.b1.gain_db` .. `eq.b8.gain_db` (com um comentário na linha `866` notando que `eq.b9.gain_db` e `eq.b10.gain_db` foram adicionadas para cobrir `8 kHz` e `16 kHz` além das 8 bandas originais de `EqProcessor (EqMode::Parametric8Band)`).
+   - Além disso, o MXR M108 real possui **12 sliders** (`GAIN` de entrada `±12 dB`, 10 frequências, e `VOLUME` de saída `±12 dB`), enquanto `EqProcessor (EqMode::Graphic10BandPedal)` (`eq.rs:124–129`) possui apenas `output_level_db` (faltando `input_gain_db`), e `controls.registry.ts` não expõe os sliders `GAIN` e `VOLUME` do M108.
 
 ---
 
@@ -243,7 +247,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](file:///g:/Dev/Projetos/
 
 ## 18. Arquivos, módulos e testes afetados
 
-- `crates/ampforge-dsp/src/fx/eq.rs` (`GraphicEqProcessor` e futuro `crates/ampforge-dsp/src/fx/pedals/mxr_m108_eq.rs`)
+- `crates/ampforge-dsp/src/fx/eq.rs` (`EqProcessor (EqMode::Graphic10BandPedal)` e futuro `crates/ampforge-dsp/src/fx/pedals/mxr_m108_eq.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.eq.*`)
 - Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
@@ -277,9 +281,9 @@ O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](file:///g:/Dev/Projetos/
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| 10 frequências centrais ISO (`31.25 Hz` a `16 kHz`) e transparência em `0 dB` | `F-01` p. 2, `F-02` p. 2 | Spec 067 / `CA-01` | `crates/ampforge-dsp/src/fx/eq.rs:107–109` (`MXR_10_FREQS`) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
-| Faixa oficial de Cut/Boost de **`±12,0 dB`** nas 10 bandas | `F-01` p. 2, `F-02` p. 2 | Spec 067 / `CA-02` | `crates/ampforge-dsp/src/fx/eq.rs:131` (divergente: usa `clamp(-15.0, 15.0)` no DSP, embora `controls.registry.ts:815–879` use `[-12, 12]`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
-| Banco de filtros *Proportional-Q* ($Q \in [1,2;\; 2,6]$) | `F-03` | Spec 067 / `CA-03` | `crates/ampforge-dsp/src/fx/eq.rs:166–168` | `contract_031_pedals_dsp.rs` | `TESTED` |
-| Controles independentes `INPUT GAIN` (`±12 dB`) e `OUTPUT VOLUME` (`±12 dB`) | `F-01` p. 1–2 | Spec 067 / `CA-04` | `crates/ampforge-dsp/src/fx/eq.rs:126` (possui `output_level_db`, mas falta `input_gain_db` e falta exposição no `controls.registry.ts`) | Ausente | `SPECIFIED` |
+| 10 frequências centrais ISO (`31.25 Hz` a `16 kHz`) e transparência em `0 dB` | `F-01` p. 2, `F-02` p. 2 | Spec 067 / `CA-01` | `crates/ampforge-dsp/src/fx/eq.rs:107–109 @ c20cc65` (`MXR_10_FREQS`) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `TESTED` |
+| Faixa oficial de Cut/Boost de **`±12,0 dB`** nas 10 bandas | `F-01` p. 2, `F-02` p. 2 | Spec 067 / `CA-02` | `crates/ampforge-dsp/src/fx/eq.rs:131 @ c20cc65` (divergente: usa `clamp(-15.0, 15.0)` no DSP, embora `controls.registry.ts:815–879` use `[-12, 12]`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
+| Banco de filtros *Proportional-Q* ($Q \in [1,2;\; 2,6]$) | `F-03` | Spec 067 / `CA-03` | `crates/ampforge-dsp/src/fx/eq.rs:166–168 @ c20cc65` | `contract_031_pedals_dsp.rs` | `TESTED` |
+| Controles independentes `INPUT GAIN` (`±12 dB`) e `OUTPUT VOLUME` (`±12 dB`) | `F-01` p. 1–2 | Spec 067 / `CA-04` | `crates/ampforge-dsp/src/fx/eq.rs:126 @ c20cc65` (possui `output_level_db`, mas falta `input_gain_db` e falta exposição no `controls.registry.ts`) | Ausente | `SPECIFIED` |
 | Esquema elétrico de serviço dos 10 giradores `MC33179` da Dunlop | Não publicado em `M108.pdf` | Spec 067 / §6.2 | N/A | N/A | `PENDING` |
-| Execução zero-alloc em tempo real | Spec 053 | Spec 067 / `CA-05` | `crates/ampforge-dsp/src/fx/eq.rs:208–227` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Execução zero-alloc em tempo real | Spec 053 | Spec 067 / `CA-05` | `crates/ampforge-dsp/src/fx/eq.rs:208–227 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

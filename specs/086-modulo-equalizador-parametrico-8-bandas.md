@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 086: Módulo Equalizador Paramétrico Digital de 8 Bandas (Studio EQ)
 
 > **Status:** `rascunho`
@@ -13,7 +17,7 @@
 
 ## 1. Objetivo
 
-Especificar o contrato técnico, matemático e de verificação do **Módulo Equalizador Paramétrico Digital de 8 Bandas (`module.eq.parametric_8band`)**, atualmente implementado em `Eq8Processor` ([`crates/ampforge-dsp/src/fx/eq.rs:1–92`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L1-L92)), desacoplando-o definitivamente do pedal analógico **MXR M108** (**[Spec 067](067-pedal-mxr-m108-equalizador-grafico-10-bandas.md)**) e do **Mesa/Boogie 5-Band** (**[Spec 085](085-eq-grafico-5-bandas-mesa-boogie-mark.md)**), e introduzindo a especificação de **compensação de *Nyquist cramping*** (Orfanidis / Massberg) e precisão `f64` para operação cirúrgica de estúdio (`20 Hz – 20 kHz`).
+Especificar o contrato técnico, matemático e de verificação do **Módulo Equalizador Paramétrico Digital de 8 Bandas (`module.eq.parametric_8band`)**, atualmente implementado em `EqProcessor (EqMode::Parametric8Band)` ([`crates/ampforge-dsp/src/fx/eq.rs:1–92 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L1-L92)), desacoplando-o definitivamente do pedal analógico **MXR M108** (**[Spec 067](067-pedal-mxr-m108-equalizador-grafico-10-bandas.md)**) e do **Mesa/Boogie 5-Band** (**[Spec 085](085-eq-grafico-5-bandas-mesa-boogie-mark.md)**), e introduzindo a especificação de **compensação de *Nyquist cramping*** (Orfanidis / Massberg) e precisão `f64` para operação cirúrgica de estúdio (`20 Hz – 20 kHz`).
 
 ---
 
@@ -44,7 +48,7 @@ Especificar o contrato técnico, matemático e de verificação do **Módulo Equ
 | **Fabricante de referência** | SONIX PRO // AMPFORGE™ (Arquitetura Digital de Estúdio baseada em RBJ Audio EQ Cookbook & Orfanidis) |
 | **Modelo de referência** | 8-Band Parametric Studio Equalizer (`module.eq.parametric_8band`) |
 | **Ano / época / revisão** | 2026 (Revisão Modular v2 — Spec 086) |
-| **Identificador no sistema** | `module.eq.parametric_8band` (`Eq8Processor` em `crates/ampforge-dsp/src/fx/eq.rs:1–92`) |
+| **Identificador no sistema** | `module.eq.parametric_8band` (`EqProcessor (EqMode::Parametric8Band)` em `crates/ampforge-dsp/src/fx/eq.rs:1–92 @ c20cc65`) |
 | **Papel na cadeia de sinal** | Bloco utilitário/mixagem de estúdio pós-gabinete IR (ou pré-amp), ideal para limpeza cirúrgica (`HPF 80 Hz`, `LPF 10 kHz`, notch em `4,1 kHz`). |
 
 ---
@@ -83,8 +87,8 @@ Especificar o contrato técnico, matemático e de verificação do **Módulo Equ
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** `Eq8Processor` (`crates/ampforge-dsp/src/fx/eq.rs:1–92`) estava indevidamente misturado na Spec 067 com o pedal MXR M108.
-2. **`FACTUAL_ERROR` (`eq.rs:1–92`):** `Eq8Processor` utiliza coeficientes RBJ simples em `f32` sem proteção contra *Nyquist cramping* (`Orfanidis`) e sem precisão `f64` nos estados de baixa frequência (`20 Hz, Q = 16`).
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** `EqProcessor (EqMode::Parametric8Band)` (`crates/ampforge-dsp/src/fx/eq.rs:1–92 @ c20cc65`) estava indevidamente misturado na Spec 067 com o pedal MXR M108.
+2. **`FACTUAL_ERROR` (`eq.rs:1–92`):** `EqProcessor (EqMode::Parametric8Band)` utiliza coeficientes RBJ simples em `f32` sem proteção contra *Nyquist cramping* (`Orfanidis`) e sem precisão `f64` nos estados de baixa frequência (`20 Hz, Q = 16`).
 
 ---
 
@@ -180,7 +184,7 @@ Especificar o contrato técnico, matemático e de verificação do **Módulo Equ
 
 ## 18. Arquivos, módulos e testes afetados
 
-- `crates/ampforge-dsp/src/fx/eq.rs` (`Eq8Processor` e futuro `crates/ampforge-dsp/src/fx/eq/parametric_8band.rs`)
+- `crates/ampforge-dsp/src/fx/eq.rs` (`EqProcessor (EqMode::Parametric8Band)` e futuro `crates/ampforge-dsp/src/fx/eq/parametric_8band.rs`)
 
 ---
 
@@ -201,7 +205,7 @@ Especificar o contrato técnico, matemático e de verificação do **Módulo Equ
 
 ## 21. Histórico de decisões
 
-- **2026-11-20:** Criada a Spec 086 na rodada corretiva para isolar o `Eq8Processor` paramétrico digital da Spec 067 (MXR M108).
+- **2026-11-20:** Criada a Spec 086 na rodada corretiva para isolar o `EqProcessor (EqMode::Parametric8Band)` paramétrico digital da Spec 067 (MXR M108).
 
 ---
 
@@ -209,6 +213,6 @@ Especificar o contrato técnico, matemático e de verificação do **Módulo Equ
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| 8 bandas paramétricas (`Bell`, `Shelf`, `HPF`, `LPF`, `Notch`, `±18 dB`, `Q 0.2..16`) em `f64` | `F-01` | Spec 086 / `CA-01`, `CA-03` | `crates/ampforge-dsp/src/fx/eq.rs:1–92` (atualmente em `f32`) | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| 8 bandas paramétricas (`Bell`, `Shelf`, `HPF`, `LPF`, `Notch`, `±18 dB`, `Q 0.2..16`) em `f64` | `F-01` | Spec 086 / `CA-01`, `CA-03` | `crates/ampforge-dsp/src/fx/eq.rs:1–92 @ c20cc65` (atualmente em `f32`) | `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Compensação de *Nyquist cramping* (Orfanidis) em `Bell` de alta frequência | `F-02` | Spec 086 / `CA-02` | Ausente em `eq.rs` | Ausente | `SPECIFIED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 086 / `CA-04` | `crates/ampforge-dsp/src/fx/eq.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

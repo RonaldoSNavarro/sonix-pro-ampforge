@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 073: Módulo de Tremolo Óptico (Opto-LDR Shunt Attenuator — Estilo Fender AB763)
 
 > **Status:** `rascunho`
@@ -43,7 +47,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 | **Fabricante de referência** | Referência topológica: Fender Electric Instrument Co. (Circuito `AB763` Vibrato/Opto-Isolator "Roach" `022999`, 1963–1967) |
 | **Modelo de referência** | Opto-LDR Shunt Attenuator Tremolo (`module.mod.optical_tremolo`) |
 | **Ano / época / revisão** | 1963–1967 (Circuito `AB763` Opto-Isolator: Lâmpada Néon + Célula Fotoresistiva CdS + Resistor Série `220 kΩ`) |
-| **Identificador no sistema** | `module.mod.optical_tremolo` (`ModModel::TremoloOptical` / UI `pedal.tremolo.*`) |
+| **Identificador no sistema** | `module.mod.optical_tremolo` (`ModModel::ModModel::OpticalBiasTremolo` / UI `pedal.tremolo.*`) |
 | **Papel na cadeia de sinal** | Bloco `MOD` (`mod_1`), classicamente após o estágio de ganho do pré-amplificador (e antes ou depois do Reverb). |
 
 ---
@@ -94,10 +98,10 @@ Especificar o contrato técnico, topológico, matemático e de verificação **e
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:258–266`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L258-L266) apresenta as seguintes divergências auditadas:
+O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:258–266 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L258-L266) apresenta as seguintes divergências auditadas:
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** A Spec 073 original combinava `TremoloOptical` e `TremoloBias` em um único documento. O `TremoloBias` foi separado para a **[Spec 088](088-modulo-tremolo-modulacao-bias.md)**.
-2. **`FACTUAL_ERROR` (`modulation.rs:259–265`):** O código atual modela `TremoloOptical` simplesmente como `let target = 1.0 - self.depth * mod_val.powf(1.5);` suavizado por um único coeficiente simétrico (`0.002` a cada amostra, independente de `sample_rate` e idêntico para subida e descida!). Isso viola duas propriedades físicas:
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** A Spec 073 original combinava `ModModel::OpticalBiasTremolo` e `TremoloBias` em um único documento. O `TremoloBias` foi separado para a **[Spec 088](088-modulo-tremolo-modulacao-bias.md)**.
+2. **`FACTUAL_ERROR` (`modulation.rs:259–265`):** O código atual modela `ModModel::OpticalBiasTremolo` simplesmente como `let target = 1.0 - self.depth * mod_val.powf(1.5);` suavizado por um único coeficiente simétrico (`0.002` a cada amostra, independente de `sample_rate` e idêntico para subida e descida!). Isso viola duas propriedades físicas:
    - A constante de tempo do filtro `0.002` não escala com `sample_rate` (fica $2\times$ mais rápida em `96 kHz` do que em `48 kHz`);
    - O fotoresistor CdS tem **ataque rápido** ($\tau_{\text{att}} \approx 8\text{ ms}$) quando a lâmpada acende (queda de ganho) e **recuperação lenta** ($\tau_{\text{rel}} \approx 40\text{ ms}$) quando a lâmpada apaga (retorno ao ganho unitário), e a função de transferência do divisor resistivo é hiperbólica $\frac{R_{\text{LDR}}}{R_s + R_{\text{LDR}}}$, não linear.
 
@@ -245,7 +249,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:258–266`](file:/
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Divisor resistivo shunt-LDR ($R_s = 220\text{ k}\Omega$, atenuação profunda $\ge 18\text{ dB}$, ganho passivo $\le 1,0$) | `F-01`, `F-02` | Spec 073 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:258–266` | `contract_032_time_mod_fx.rs`, `contract_052_splash_pedals_amp2.rs` | `TESTED` |
-| Inércia fotoquímica assimétrica CdS ($\tau_{\text{att}} = 8\text{ ms} < \tau_{\text{rel}} = 40\text{ ms}$) invariante a `sample_rate` | `F-02` | Spec 073 / `CA-02` | `crates/ampforge-dsp/src/fx/modulation.rs:264` (BUG: coeficiente fixo simétrico `0.002` sem escalonamento por $f_s$) | Ausente | `SPECIFIED` |
-| Pureza espectral ôhmica do atenuador CdS (`THD <= 0,1%`) | `F-01`, `F-02` | Spec 073 / `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:265` | `contract_032_time_mod_fx.rs` | `TESTED` |
-| Segurança zero-alloc em tempo real | Spec 053 | Spec 073 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Divisor resistivo shunt-LDR ($R_s = 220\text{ k}\Omega$, atenuação profunda $\ge 18\text{ dB}$, ganho passivo $\le 1,0$) | `F-01`, `F-02` | Spec 073 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:258–266 @ c20cc65` | `contract_032_time_mod_fx.rs`, `contract_052_splash_pedals_amp2.rs` | `TESTED` |
+| Inércia fotoquímica assimétrica CdS ($\tau_{\text{att}} = 8\text{ ms} < \tau_{\text{rel}} = 40\text{ ms}$) invariante a `sample_rate` | `F-02` | Spec 073 / `CA-02` | `crates/ampforge-dsp/src/fx/modulation.rs:264 @ c20cc65` (BUG: coeficiente fixo simétrico `0.002` sem escalonamento por $f_s$) | Ausente | `SPECIFIED` |
+| Pureza espectral ôhmica do atenuador CdS (`THD <= 0,1%`) | `F-01`, `F-02` | Spec 073 / `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:265 @ c20cc65` | `contract_032_time_mod_fx.rs` | `TESTED` |
+| Segurança zero-alloc em tempo real | Spec 053 | Spec 073 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

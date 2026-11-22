@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 072: Pedal Shin-ei Uni-Vibe (1968 4-Stage Staggered Photo-Optical Phase Shifter)
 
 > **Status:** `rascunho`
@@ -15,7 +19,7 @@
 
 Especificar o contrato técnico, topológico, matemático e de verificação do pedal foto-óptico **Shin-ei / Univox Uni-Vibe (1968, projetado por Fumio Mieda)** como processador modular independente (`pedal.shinei.univibe`), corrigindo:
 1. O link quebrado `uvtech.htm` para a URL válida verificada da análise de R. G. Keen no GEOFEX (`http://www.geofex.com/Article_Folders/univibe/univtech.htm`, HTTP 200); e
-2. O **erro factual grave** na implementação atual ([`crates/ampforge-dsp/src/fx/modulation.rs:247`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L247)), que usa multiplicadores igualmente espaçados em meia-oitava `[1.0, 1.41, 2.0, 2.83]` (razão total de apenas `2,83 : 1`), quando no esquema elétrico real do Shin-ei Uni-Vibe os 4 capacitores de deslocamento de fase são **`15 nF`, `220 nF`, `470 pF` e `4,7 nF`** — uma razão escalonada assimétrica (*staggered*) de **`468,08 : 1`** ($220\,000\text{ pF} / 470\text{ pF}$)!
+2. O **erro factual grave** na implementação atual ([`crates/ampforge-dsp/src/fx/modulation.rs:247 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/modulation.rs#L247)), que usa multiplicadores igualmente espaçados em meia-oitava `[1.0, 1.41, 2.0, 2.83]` (razão total de apenas `2,83 : 1`), quando no esquema elétrico real do Shin-ei Uni-Vibe os 4 capacitores de deslocamento de fase são **`15 nF`, `220 nF`, `470 pF` e `4,7 nF`** — uma razão escalonada assimétrica (*staggered*) de **`468,08 : 1`** ($220\,000\text{ pF} / 470\text{ pF}$)!
 
 ---
 
@@ -260,7 +264,7 @@ Conforme demonstrado na análise clássica de R. G. Keen (`F-01`, *The Technolog
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| 4 estágios deslocadores de fase com capacitores escalonados reais (`15 nF, 220 nF, 470 pF, 4.7 nF` $\Rightarrow$ razão `1 : 14,67 : 46,81 : 468,09`) | `F-01` | Spec 072 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:247` (ERRO FACTUAL: usa `[1.0, 1.41, 2.0, 2.83]`) | `contract_032_time_mod_fx.rs` | `SPECIFIED` |
-| Envoltória termo-óptica assimétrica (*Incandescent Lamp + CdS LDR throb*) | `F-01` | Spec 072 / `CA-02` | `crates/ampforge-dsp/src/fx/modulation.rs:246` (`mod_val.powf(1.6)` sem histerese attack/release do CdS) | `contract_032_time_mod_fx.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Operação nos modos `CHORUS` (`mix = 0.50`, Dry+Wet) e `VIBRATO` (`mix = 1.00`, 100% Wet) | `F-01` | Spec 072 / `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:256` | `contract_052_splash_pedals_amp2.rs` | `TESTED` |
-| Segurança zero-alloc em tempo real | Spec 053 | Spec 072 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| 4 estágios deslocadores de fase com capacitores escalonados reais (`15 nF, 220 nF, 470 pF, 4.7 nF` $\Rightarrow$ razão `1 : 14,67 : 46,81 : 468,09`) | `F-01` | Spec 072 / `CA-01` | `crates/ampforge-dsp/src/fx/modulation.rs:247 @ c20cc65` (ERRO FACTUAL: usa `[1.0, 1.41, 2.0, 2.83]`) | `contract_032_time_mod_fx.rs` | `SPECIFIED` |
+| Envoltória termo-óptica assimétrica (*Incandescent Lamp + CdS LDR throb*) | `F-01` | Spec 072 / `CA-02` | `crates/ampforge-dsp/src/fx/modulation.rs:246 @ c20cc65` (`mod_val.powf(1.6)` sem histerese attack/release do CdS) | `contract_032_time_mod_fx.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Operação nos modos `CHORUS` (`mix = 0.50`, Dry+Wet) e `VIBRATO` (`mix = 1.00`, 100% Wet) | `F-01` | Spec 072 / `CA-03` | `crates/ampforge-dsp/src/fx/modulation.rs:256 @ c20cc65` | `contract_052_splash_pedals_amp2.rs` | `TESTED` |
+| Segurança zero-alloc em tempo real | Spec 053 | Spec 072 / `CA-04` | `crates/ampforge-dsp/src/fx/modulation.rs:179–294 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

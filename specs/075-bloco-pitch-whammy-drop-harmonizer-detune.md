@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 075: Pedal DigiTech Whammy (Expression Pitch Shifter Monofônico/Polifônico — ±2 Oitavas)
 
 > **Status:** `rascunho`
@@ -251,7 +255,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/pitch.rs`](file:///g:/Dev/Projet
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Transposição nos intervalos `±24 semitons` (`+12`, `+24`, `-12`) | `F-01`, `F-02` | Spec 075 / `CA-01` | `crates/ampforge-dsp/src/fx/pitch.rs:285–315` | `contract_042_pitch_wah.rs`, `contract_052_splash_pedals_amp2.rs` | `TESTED` |
-| Varredura contínua do pedal de expressão (`0.0 -> 1.0`) com suavização anti-zipper e janela complementar `sin²` | `F-01`, `F-02` | Spec 075 / `CA-02` | `crates/ampforge-dsp/src/fx/pitch.rs:171, 289` (usa janela `sin` sem suavização dedicada em `expression`) | `contract_042_pitch_wah.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Transposição nos intervalos `±24 semitons` (`+12`, `+24`, `-12`) | `F-01`, `F-02` | Spec 075 / `CA-01` | `crates/ampforge-dsp/src/fx/pitch.rs:285–315 @ c20cc65` | `contract_042_pitch_wah.rs`, `contract_052_splash_pedals_amp2.rs` | `TESTED` |
+| Varredura contínua do pedal de expressão (`0.0 -> 1.0`) com suavização anti-zipper e janela complementar `sin²` | `F-01`, `F-02` | Spec 075 / `CA-02` | `crates/ampforge-dsp/src/fx/pitch.rs:171 @ c20cc65, 289` (usa janela `sin` sem suavização dedicada em `expression`) | `contract_042_pitch_wah.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Filtro passa-baixas anti-aliasing adaptativo ($f_c = 0,44 f_s / r$) para transposições ascendentes (`+12 / +24 st`) | `F-02` | Spec 075 / `CA-03` | Ausente em `pitch.rs` | Ausente | `SPECIFIED` |
-| Segurança zero-alloc em tempo real | Spec 053 | Spec 075 / `CA-04` | `crates/ampforge-dsp/src/fx/pitch.rs:265–370` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Segurança zero-alloc em tempo real | Spec 053 | Spec 075 / `CA-04` | `crates/ampforge-dsp/src/fx/pitch.rs:265–370 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 079: Componente Compartilhado — Oversampling Polifásico e Anti-Aliasing (2×, 4×, 8×)
 
 > **Status:** `rascunho`
@@ -228,7 +232,7 @@ O código atual em [`crates/ampforge-dsp/src/oversampling.rs`](file:///g:/Dev/Pr
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Passband `20 Hz – 18 kHz` com ripple `<= ±0,25 dB` | `F-01`, `F-02` | Spec 079 / `CA-01` | `crates/ampforge-dsp/src/oversampling.rs:1–316` | Ausente (sem teste dedicado de ripple DFT) | `IMPLEMENTED_UNVERIFIED` |
+| Passband `20 Hz – 18 kHz` com ripple `<= ±0,25 dB` | `F-01`, `F-02` | Spec 079 / `CA-01` | `crates/ampforge-dsp/src/oversampling.rs:1–316 @ c20cc65` | Ausente (sem teste dedicado de ripple DFT) | `IMPLEMENTED_UNVERIFIED` |
 | Supressão de aliasing (`>= 65 dB` abaixo da fundamental `5 kHz` em `tanh(20x)`) | `F-01`, `F-02` | Spec 079 / `CA-02` | `crates/ampforge-dsp/src/oversampling.rs` | `contract_039_amps_fidelity.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Atraso de grupo `<= 6,0 amostras` em `8×` `PolyphaseIir` | `F-02` | Spec 079 / `CA-03` | `crates/ampforge-dsp/src/oversampling.rs` | Ausente | `IMPLEMENTED_UNVERIFIED` |
 | Modo opcional `PolyphaseFir` (`>= 96 dB` stopband, fase linear) | `F-01` | Spec 079 / §2 | Ausente em `oversampling.rs` | Ausente | `SPECIFIED` |

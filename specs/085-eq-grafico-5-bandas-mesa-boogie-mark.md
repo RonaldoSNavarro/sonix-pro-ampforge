@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 085: Equalizador Gráfico de 5 Bandas Mesa/Boogie Mark Series (80 Hz – 6,6 kHz)
 
 > **Status:** `rascunho` (`bloqueio parcial documental` nos valores exatos das bobinas indutoras de fábrica Mark IIC+ vs Mark IV)
@@ -32,7 +36,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 ## 3. Fora de escopo
 
 - **MXR M108 Ten Band Graphic EQ (`31,25 Hz – 16 kHz`):** Coberto exclusivamente na **[Spec 067](067-pedal-mxr-m108-equalizador-grafico-10-bandas.md)**.
-- **Equalizador Paramétrico de 8 Bandas (`Eq8Processor`):** Coberto exclusivamente na **[Spec 086](086-modulo-equalizador-parametrico-8-bandas.md)**.
+- **Equalizador Paramétrico de 8 Bandas (`EqProcessor (EqMode::Parametric8Band)`):** Coberto exclusivamente na **[Spec 086](086-modulo-equalizador-parametrico-8-bandas.md)**.
 - Circuito completo do amplificador Mesa/Boogie Mark IIC+ / Mark IV (pré-amp de cascata com Tone Stack pré-ganho).
 
 ---
@@ -45,7 +49,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 | **Fabricante de referência** | Mesa Engineering / Mesa/Boogie (Randall Smith, Petaluma, CA, EUA) |
 | **Modelo de referência** | Mesa/Boogie Mark Series 5-Band Graphic EQ (`Mark IIC+ / Mark III / Mark IV / Five-Band Graphic`) |
 | **Ano / época / revisão** | 1984–1993 (`80 / 240 / 750 / 2200 / 6600 Hz`, estágio discreto pós-pré-amp antes do inversor de fase) |
-| **Identificador no sistema** | `amp.mesa.mark_5band_eq` (`GraphicEqModel::Mesa5Band` em `crates/ampforge-dsp/src/fx/eq.rs:95`) |
+| **Identificador no sistema** | `amp.mesa.mark_5band_eq` (`GraphicEqModel::Mesa5Band` em `crates/ampforge-dsp/src/fx/eq.rs:95 @ c20cc65`) |
 | **Papel na cadeia de sinal** | Bloco `EQ` pós-pré-amplificador (no FX Loop ou entre pré-amp e power-amp, exatamente onde reside nos amplificadores Mark Series!). |
 
 ---
@@ -87,7 +91,7 @@ Nos amplificadores Mesa/Boogie Mark Series, o Tone Stack passivo rotativo (`Bass
 
 ### 7.1. Auditoria do código atual e classificação dos achados
 
-1. **`MODEL_COUPLING` (corrigido nesta revisão):** Em [`crates/ampforge-dsp/src/fx/eq.rs:95, 112`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L95-L115), `MESA_5_FREQS = [80.0, 240.0, 750.0, 2200.0, 6600.0]` estava acoplado dentro da mesma struct `GraphicEqProcessor` que o MXR M108 (Spec 067). Esta Spec estabelece seu contrato isolado (`amp.mesa.mark_5band_eq`).
+1. **`MODEL_COUPLING` (corrigido nesta revisão):** Em [`crates/ampforge-dsp/src/fx/eq.rs:95 @ c20cc65, 112`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/eq.rs#L95-L115), `MESA_5_FREQS = [80.0, 240.0, 750.0, 2200.0, 6600.0]` estava acoplado dentro da mesma struct `EqProcessor (EqMode::Graphic10BandPedal)` que o MXR M108 (Spec 067). Esta Spec estabelece seu contrato isolado (`amp.mesa.mark_5band_eq`).
 
 ---
 
@@ -206,7 +210,7 @@ Nos amplificadores Mesa/Boogie Mark Series, o Tone Stack passivo rotativo (`Bass
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| 5 frequências oficiais (`80, 240, 750, 2200, 6600 Hz`) com `±12,0 dB` e transparência em `0 dB` | `F-01` | Spec 085 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/eq.rs:95, 112` (atualmente limitado a `±15 dB` dentro de `GraphicEqProcessor`) | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
-| *Proportional-Q* largo (`0,95..1,90`) em módulo isolado | `F-02` | Spec 085 / `CA-03` | `crates/ampforge-dsp/src/fx/eq.rs:166` | Ausente | `SPECIFIED` |
+| 5 frequências oficiais (`80, 240, 750, 2200, 6600 Hz`) com `±12,0 dB` e transparência em `0 dB` | `F-01` | Spec 085 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/eq.rs:95 @ c20cc65, 112` (atualmente limitado a `±15 dB` dentro de `EqProcessor (EqMode::Graphic10BandPedal)`) | `contract_031_pedals_dsp.rs` | `IMPLEMENTED_UNVERIFIED` |
+| *Proportional-Q* largo (`0,95..1,90`) em módulo isolado | `F-02` | Spec 085 / `CA-03` | `crates/ampforge-dsp/src/fx/eq.rs:166 @ c20cc65` | Ausente | `SPECIFIED` |
 | Valores nominais das 5 bobinas indutoras da PCB `Mark IIC+` / `Mark IV` | Sem esquema oficial de fábrica | Spec 085 / §6.2 | N/A | N/A | `PENDING` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 085 / `CA-04` | `crates/ampforge-dsp/src/fx/eq.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 080: Componente Compartilhado — Gabinete, Convolução IR Zero-Latency e Microfonação
 
 > **Status:** `rascunho`
@@ -16,7 +20,7 @@
 Especificar o contrato técnico, matemático, de memória em tempo real e de verificação do **Componente de Gabinete, Convolução IR Zero-Latency e Microfonação (`component.cab.ir_convolution_and_mics`)** em [`crates/ampforge-dsp/src/cab.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/cab.rs#L1-L1206), corrigindo três pontos críticos identificados na auditoria:
 1. **Definição matemática precisa de "Convolução Particionada Zero-Latency":** A Partição `0` (`h[0..B-1]`) é computada por convolução FIR direta no domínio do tempo (ou bloco particionado sem latência adicional de enquadramento), enquanto as partições de cauda `1..P-1` operam via *Frequency-Domain Delay Line (FDL)* com FFT de tamanho `2B` (`Overlap-Save` / `Overlap-Add`), garantindo **`0` amostras de latência algorítmica**;
 2. **Reconciliação da divergência do filtro do microfone `SM57` (`cab.rs:1084` vs `docs/cab-microfones-fontes.md`):** Documentação rigorosa dos 7 microfones clássicos (`SM57`, `R121`, `U87`, `MD421`, `E906`, `C414`, `SM7B`) com base em seus datasheets oficiais (`PRIMARY_COMPONENT`), registrando a divergência verificada no `SM57` (`5600 Hz, +4,0 dB, Q=2,5` no código atual `cab.rs:1084` vs curva publicada pela Shure `4,5–6,0 kHz, +5,0 dB`);
-3. **Diagnóstico do vazamento de memória intencional (`std::mem::forget`) em [`crates/ampforge-dsp/src/cab.rs:1199`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/cab.rs#L1199):** O código atual evita desalocar a IR antiga na thread de áudio chamando `std::mem::forget(old_ir)` — o que satisfaz `zero-dealloc` no callback ao custo de **vazar memória permanentemente a cada troca de IR ou preset**! Esta Spec especifica a devolução da IR substituída por fila SPSC *lock-free* para coleta (*garbage reclamation*) na Control Thread.
+3. **Diagnóstico do vazamento de memória intencional (`std::mem::forget`) em [`crates/ampforge-dsp/src/cab.rs:1199 @ c20cc65`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/cab.rs#L1199):** O código atual evita desalocar a IR antiga na thread de áudio chamando `std::mem::forget(old_ir)` — o que satisfaz `zero-dealloc` no callback ao custo de **vazar memória permanentemente a cada troca de IR ou preset**! Esta Spec especifica a devolução da IR substituída por fila SPSC *lock-free* para coleta (*garbage reclamation*) na Control Thread.
 
 ---
 
@@ -261,8 +265,8 @@ O código atual em [`crates/ampforge-dsp/src/cab.rs`](file:///g:/Dev/Projetos/Si
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Convolução particionada zero-latency (`B=128` direto + `N=256` FDL) com erro `<= -100 dB` | `F-01` | Spec 080 / `CA-01` | `crates/ampforge-dsp/src/cab.rs:1–700` | `contract_037_ir_realtime.rs` | `TESTED` |
-| Troca de IR com crossfade `15 ms` + fila de reciclagem lock-free **sem `std::mem::forget`** | Spec 053, Spec 084 | Spec 080 / `CA-02` | `crates/ampforge-dsp/src/cab.rs:1199` (RISCO: usa `std::mem::forget`, vazando memória a cada troca de IR) | `contract_044_sdd_integrity.rs` (verifica zero-alloc, não verifica leak) | `SPECIFIED` |
-| Banco de 7 microfones calibrados por datasheets (`SM57`, `R121`, `U87`, `MD421`, `E906`, `C414`, `SM7B`) | `F-02`–`F-04` | Spec 080 / `CA-03` | `crates/ampforge-dsp/src/cab.rs:1080–1150` | `contract_037_ir_realtime.rs` | `IMPLEMENTED_UNVERIFIED` |
-| Controles `Axis`, `Distance`, `Phase Invert`, `Blend`, `Low/High Cut` | Spec 014 | Spec 080 / `CA-04` | `crates/ampforge-dsp/src/cab.rs:950–1180` | `contract_040_pedals_parity.rs` | `TESTED` |
+| Convolução particionada zero-latency (`B=128` direto + `N=256` FDL) com erro `<= -100 dB` | `F-01` | Spec 080 / `CA-01` | `crates/ampforge-dsp/src/cab.rs:1–700 @ c20cc65` | `contract_037_ir_realtime.rs` | `TESTED` |
+| Troca de IR com crossfade `15 ms` + fila de reciclagem lock-free **sem `std::mem::forget`** | Spec 053, Spec 084 | Spec 080 / `CA-02` | `crates/ampforge-dsp/src/cab.rs:1199 @ c20cc65` (RISCO: usa `std::mem::forget`, vazando memória a cada troca de IR) | `contract_044_sdd_integrity.rs` (verifica zero-alloc, não verifica leak) | `SPECIFIED` |
+| Banco de 7 microfones calibrados por datasheets (`SM57`, `R121`, `U87`, `MD421`, `E906`, `C414`, `SM7B`) | `F-02`–`F-04` | Spec 080 / `CA-03` | `crates/ampforge-dsp/src/cab.rs:1080–1150 @ c20cc65` | `contract_037_ir_realtime.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Controles `Axis`, `Distance`, `Phase Invert`, `Blend`, `Low/High Cut` | Spec 014 | Spec 080 / `CA-04` | `crates/ampforge-dsp/src/cab.rs:950–1180 @ c20cc65` | `contract_040_pedals_parity.rs` | `TESTED` |
 | Segurança zero-alloc em tempo real | Spec 053 | Spec 080 / `CA-05` | `crates/ampforge-dsp/src/cab.rs` | `contract_044_sdd_integrity.rs` | `TESTED` |

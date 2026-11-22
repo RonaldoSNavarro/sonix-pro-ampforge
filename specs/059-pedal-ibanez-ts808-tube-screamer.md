@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 059: Pedal Ibanez TS808 Tube Screamer (Overdrive Analógico JRC4558D)
 
 > **Status:** `rascunho`
@@ -114,9 +118,9 @@ O comportamento clássico do **TS808** decorre de quatro propriedades elétricas
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/fx/drive.rs#L428-L536) possui as seguintes divergências auditadas:
 
-1. **`FACTUAL_ERROR` (`drive.rs:429–431, 515–518`):** O filtro passa-altas de `720 Hz` (`self.pre_filter`) é aplicado **em série antes** do estágio de clipping (`let x = self.pre_filter.process(input as f64)`) e depois somado artificialmente a `input * 0.25 * (1.0 - self.drive * 0.5)`. No circuito real (Yeh DAFx-07 Eq. 1–4), o HPF de `720,48 Hz` está na **perna inversora** do op-amp não-inversor, o que significa que o sinal limpo de faixa completa ($V_{\text{in}}$) nunca é filtrado pelo HPF de `720 Hz` — apenas a corrente que atravessa os diodos $I_{\text{diode}}$ é filtrada em `720 Hz`! Filtrar `input` em série antes do clipping remove indevidamente os graves limpos do sinal $V_{\text{in}}$.
-2. **`FACTUAL_ERROR` (`drive.rs:431`):** O capacitor de `51 pF` na malha de realimentação não é modelado em función de $R_{\text{drive}}$ (`51 kΩ..551 kΩ`); em vez disso, há apenas um `post_filter` fixo em `4500 Hz` (`drive.rs:431`).
-3. **`FACTUAL_ERROR` (`drive.rs:432–434`):** O controle `Tone` usa apenas um único biquad passa-baixas simples (`set_lowpass(sr, 720.0 + self.tone * 4280.0, 0.707)`), omitindo completamente o LPF passivo fixo de `723,43 Hz` ($R_7=1\text{ k}\Omega, C_5=220\text{ nF}$) combinado com o zero/polo ativo de `3,29 kHz` ($C_6=220\text{ nF}, R_8=220\text{ }\Omega$) do segundo estágio `JRC4558D`.
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
+- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 4. **`SOURCE_INVALID` (corrigido nesta revisão):** O link direto `https://www.electrosmash.com/tube-screamer-analysis` falha na resolução DNS atual; substituído pelo link direto verificado no Wayback Machine (`F-02`) e suplementado pelo artigo primário DAFx-07 de David Yeh (`F-01`).
 
 ---
@@ -303,8 +307,8 @@ O segundo estágio é modelado exatamente pela função de transferência analó
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| HPF `720,48 Hz` ($4,7\text{ k}\Omega + 47\text{ nF}$) na perna inversora preservando soma limpa unitária $V_{\text{out1}} = V_{\text{in}} + V_d$ | `F-01` §2.1, `F-02` | Spec 059 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:429, 515–518` (aplica HPF em série no sinal e soma `0.25 * input` ad-hoc) | `contract_031_pedals_dsp.rs` | `SPECIFIED` |
-| Clipping simétrico `1S1588` na malha de feedback com $R_f \in [51\text{ k}\Omega, 551\text{ k}\Omega]$ | `F-01` §2.1, `F-04` | Spec 059 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:519–533` (`asinh` aproximado) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| HPF `720,48 Hz` ($4,7\text{ k}\Omega + 47\text{ nF}$) na perna inversora preservando soma limpa unitária $V_{\text{out1}} = V_{\text{in}} + V_d$ | `F-01` §2.1, `F-02` | Spec 059 / `CA-01`, `CA-02` | `crates/ampforge-dsp/src/fx/drive.rs:429 @ c20cc65, 515–518` (aplica HPF em série no sinal e soma `0.25 * input` ad-hoc) | `contract_031_pedals_dsp.rs` | `SPECIFIED` |
+| Clipping simétrico `1S1588` na malha de feedback com $R_f \in [51\text{ k}\Omega, 551\text{ k}\Omega]$ | `F-01` §2.1, `F-04` | Spec 059 / `CA-03` | `crates/ampforge-dsp/src/fx/drive.rs:519–533 @ c20cc65` (`asinh` aproximado) | `contract_031_pedals_dsp.rs`, `contract_040_pedals_parity.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Capacitor de feedback $C_4 = 51\text{ pF}$ dependente de $R_{\text{drive}}$ | `F-01` §2.1, `F-02` | Spec 059 / `CA-04` | Ausente em `drive.rs` (usa LPF fixo de `4,5 kHz` na linha `431`) | Ausente | `SPECIFIED` |
-| Estágio de Tone passivo (`723,43 Hz`) + ativo `IC1B` (`3294 Hz`, pot `20 kΩ` W-taper) | `F-01` §3.1, `F-02` | Spec 059 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:432–434` (usa biquad LPF simples `720..5000 Hz`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
-| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 059 / `CA-06` | `crates/ampforge-dsp/src/fx/drive.rs:463–491` | `contract_044_sdd_integrity.rs` | `TESTED` |
+| Estágio de Tone passivo (`723,43 Hz`) + ativo `IC1B` (`3294 Hz`, pot `20 kΩ` W-taper) | `F-01` §3.1, `F-02` | Spec 059 / `CA-05` | `crates/ampforge-dsp/src/fx/drive.rs:432–434 @ c20cc65` (usa biquad LPF simples `720..5000 Hz`) | `contract_040_pedals_parity.rs` | `SPECIFIED` |
+| Execução zero-alloc em tempo real com oversampling `8×` | Spec 053, Spec 079 | Spec 059 / `CA-06` | `crates/ampforge-dsp/src/fx/drive.rs:463–491 @ c20cc65` | `contract_044_sdd_integrity.rs` | `TESTED` |

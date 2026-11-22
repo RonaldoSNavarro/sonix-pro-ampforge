@@ -1,3 +1,7 @@
+---
+status: rascunho
+---
+
 # Spec 078: Componente Compartilhado — Solvers Analíticos de Redes Passivas de Tone Stack
 
 > **Status:** `rascunho` (`bloqueio parcial documental` no solver Mesa Rectifier Rev F até confirmação do esquema oficial)
@@ -245,7 +249,7 @@ executada em **Forma Direta II Transposta (`f64`)** para imunidade a ruído de q
 
 | Requisito | Fonte | Spec / CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Solver `FMV` de 3ª ordem (Yeh DAFx-06) em `f64` com $R_{\text{src}}$ parametrizado (`1,3 kΩ` vs `38 kΩ`) | `F-01` Eq. 2–13 | Spec 078 / `CA-01`, `CA-04` | `crates/ampforge-dsp/src/tonestack.rs:1–401` (implementa 3ª ordem, precisa expor `R_src` por amplificador) | `contract_039_amps_fidelity.rs` | `IMPLEMENTED_UNVERIFIED` |
+| Solver `FMV` de 3ª ordem (Yeh DAFx-06) em `f64` com $R_{\text{src}}$ parametrizado (`1,3 kΩ` vs `38 kΩ`) | `F-01` Eq. 2–13 | Spec 078 / `CA-01`, `CA-04` | `crates/ampforge-dsp/src/tonestack.rs:1–401 @ c20cc65` (implementa 3ª ordem, precisa expor `R_src` por amplificador) | `contract_039_amps_fidelity.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Passividade estrita (`|H(f)| <= 1,0`) em todos os 27 vértices de operação | Teorema da passividade | Spec 078 / `CA-02` | `crates/ampforge-dsp/src/tonestack.rs` | `contract_039_amps_fidelity.rs` | `TESTED` |
 | Solver dedicado `VoxTopBoost (OS/010)` sem pot `Mid` físico + solver `James/Baxandall` | `F-02`, Spec 058 | Spec 078 / `CA-03` | Parcial em `tonestack.rs` (usa modelo FMV adaptado) | `contract_039_amps_fidelity.rs` | `SPECIFIED` |
 | Calibração exata de `MesaRectifierToneStackSolver (Rev F)` | Spec 057 §6.2 | Spec 078 / §6.2 | `tonestack.rs` (valores aproximados de Rev G) | N/A | `PENDING` |

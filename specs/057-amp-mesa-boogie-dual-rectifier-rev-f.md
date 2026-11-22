@@ -41,7 +41,7 @@ dependencias: [053, 077, 078, 079]
   1. **Origem do modo `Pushed` (`REVISION_MISMATCH`):** O modo `Pushed` **não existe** no Dual Rectifier Rev F de 2 canais (1992); ele pertence ao Canal 1 do **Dual Rectifier de 3 canais (2000)**. No AMPFORGE, `pushed` já faz parte do contrato público da Spec 031 (`CA-5`) e `controls.registry.ts:316`. Portanto, fica classificado explicitamente como **Extensão de Compatibilidade (originária da versão 3-Channel 2000)** e não como característica física da Rev F de 1992.
   2. **Capacitor de Treble `C1` (`250 pF` vs `470 pF` vs `500–680 pF`) e Resistor `R_slope` (`39 kΩ` vs `47 kΩ`):**
      - `docs/amps/voicing-fontes.md:39` declarava `R_slope = 39 kΩ, C1 = 250 pF`;
-     - `crates/ampforge-dsp/src/tonestack.rs:94–101` implementa `ToneStackTopology::MesaMarkPreGain` com `R_slope = 39 kΩ, C1 = 470 pF` (valores do Soldano SLO-100);
+     - `crates/ampforge-dsp/src/tonestack.rs:94–101 @ c20cc65` implementa `ToneStackTopology::MesaMarkPreGain` com `R_slope = 39 kΩ, C1 = 470 pF` (valores do Soldano SLO-100);
      - Transcrições comunitárias da placa `RF-1F` (`SECONDARY_TECHNICAL`) indicam `R_slope = 47 kΩ` e capacitores de agudos distintos entre o canal Orange (`600 pF` / `680 pF`) e o canal Red (`500 pF` / `680 pF` comutado por LDR).
      - **Decisão de auditoria:** Como não há esquema primário oficial da Mesa/Boogie para a placa `RF-1F` no repositório e as fontes secundárias divergem entre si, a definição final de `C1` e `R_slope` permanece **`BLOCKED` (`PENDING` em CA-7)** até obtenção de esquema primário `RF-1F` verificado ou medição em hardware Rev F.
   3. **Potenciômetro de Graves `R_bass` (`250 kΩ` vs `1 MΩ` vs `25 kΩ`):**
@@ -153,9 +153,9 @@ dependencias: [053, 077, 078, 079]
 ## 22. Matriz de rastreabilidade
 | Requisito | Fonte | Spec/CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Cascata de 2 a 4 estágios (`Clean, Pushed [ext. 3ch], Vintage, Modern`) | F1, F2 | `Spec 057 / CA-1` | `crates/ampforge-dsp/src/amp.rs:1516–1541` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` (`ca_5`) | `TESTED` |
-| Chave `Bold / Spongy` (Variac reduzindo tensão B+) | F1 | `Spec 057 / CA-2` | `crates/ampforge-dsp/src/amp.rs:1252–1261` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` (`ca_5`) | `TESTED` |
-| Chave `Rectifier Select` (`Silicon Diode` vs `Dual 5U4GB`) | F1 | `Spec 057 / CA-3` | `crates/ampforge-dsp/src/modshop.rs:64–95`, `amp.rs:344` | `crates/ampforge-dsp/tests/contract_021_workbench_live.rs` | `TESTED` |
-| Desconexão de NFB global (`eff_nfb = 0`) no modo `Modern` | F1 | `Spec 057 / CA-4` | `crates/ampforge-dsp/src/amp.rs:1150–1158` | `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs` (`test_ca_08`) | `TESTED` |
-| Valores exatos do Tone Stack da placa `RF-1F` (`C1`, `R_slope`, `R_bass`) | F3 (divergente) | `Spec 057 / CA-7` | `crates/ampforge-dsp/src/tonestack.rs:94–107` (usa valores SLO `39k/470pF/250k`) | Sem fonte primária `RF-1F` | `BLOCKED` |
-| Topologia RC passiva do `Presence` no canal Red `Modern` fora do loop NFB | F1, F3 | `Spec 057 / CA-7` | `crates/ampforge-dsp/src/amp.rs:1162` *(anula Presence em Modern)* | Sem esquema primário `RF-1F` | `BLOCKED` |
+| Cascata de 2 a 4 estágios (`Clean, Pushed [ext. 3ch], Vintage, Modern`) | F1, F2 | `Spec 057 / CA-1` | `crates/ampforge-dsp/src/amp.rs:1516–1541 @ c20cc65` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` (`ca_5`) | `TESTED` |
+| Chave `Bold / Spongy` (Variac reduzindo tensão B+) | F1 | `Spec 057 / CA-2` | `crates/ampforge-dsp/src/amp.rs:1252–1261 @ c20cc65` | `crates/ampforge-dsp/tests/contract_031_authentic_amps.rs` (`ca_5`) | `TESTED` |
+| Chave `Rectifier Select` (`Silicon Diode` vs `Dual 5U4GB`) | F1 | `Spec 057 / CA-3` | `crates/ampforge-dsp/src/modshop.rs:64–95 @ c20cc65`, `amp.rs:344` | `crates/ampforge-dsp/tests/contract_021_workbench_live.rs` | `TESTED` |
+| Desconexão de NFB global (`eff_nfb = 0`) no modo `Modern` | F1 | `Spec 057 / CA-4` | `crates/ampforge-dsp/src/amp.rs:1150–1158 @ c20cc65` | `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs` (`test_ca_08`) | `TESTED` |
+| Valores exatos do Tone Stack da placa `RF-1F` (`C1`, `R_slope`, `R_bass`) | F3 (divergente) | `Spec 057 / CA-7` | `crates/ampforge-dsp/src/tonestack.rs:94–107 @ c20cc65` (usa valores SLO `39k/470pF/250k`) | Sem fonte primária `RF-1F` | `BLOCKED` |
+| Topologia RC passiva do `Presence` no canal Red `Modern` fora do loop NFB | F1, F3 | `Spec 057 / CA-7` | `crates/ampforge-dsp/src/amp.rs:1162 @ c20cc65` *(anula Presence em Modern)* | Sem esquema primário `RF-1F` | `BLOCKED` |
