@@ -30,13 +30,6 @@ fn audio_taper(x: f64) -> f64 {
     (0.01 * 100.0f64.powf(u) - 0.01) / 0.99
 }
 
-#[inline]
-fn map_pot_mid_10pct(x: f64) -> f64 {
-    let u = x.clamp(0.0, 1.0);
-    // Smooth linear/10%-log hybrid for vintage Mid controls
-    0.35 * u + 0.65 * audio_taper(u)
-}
-
 // DECISAO_SONIX_RECTO_*: esquema primário Dual Rectifier Rev F (`RF-1F`) permanece bloqueado na Spec 057 §5/§18;
 // mantém os valores pós-ganho cathode-follower compatíveis com a tabela da Spec 057 onde documentado (39 kΩ slope,
 // 22 nF / 22 nF) e decisão explícita nos itens com divergência secundária (C1 = 470 pF, R_bass = 250 kΩ, R_mid = 25 kΩ).
@@ -64,6 +57,7 @@ pub fn resolved_fmv_components(
             // Marshall 1959 / 2203 cathode-follower fed FMV stack (33k, 470pF, 22nF, 22nF, 220k Treble, 22k Mid)
             r_treble: 220_000.0,
             r_bass: 1_000_000.0,
+            // PENDENTE: valor do pot Middle (22 kΩ vs 25 kΩ) pendente de revisão primária; mantido 22 kΩ (AUD-26).
             r_mid: 22_000.0,
             r_slope: 33_000.0,
             r_load: 1_000_000.0,
@@ -72,7 +66,7 @@ pub fn resolved_fmv_components(
             c3: 22e-9,
             t_pos: 0.25 * t + 0.75 * audio_taper(t),
             b_pos: audio_taper(b),
-            m_pos: map_pot_mid_10pct(m),
+            m_pos: audio_taper(m),
         },
         ToneStackTopology::FenderTmbMidScoop => FmvComponents {
             // Fender Twin Reverb AB763 (100k, 250pF, 0.1uF=100nF, 0.047uF=47nF, 10k Mid)
@@ -115,7 +109,7 @@ pub fn resolved_fmv_components(
             c3: DECISAO_SONIX_RECTO_C3,
             t_pos: audio_taper(t),
             b_pos: audio_taper(b),
-            m_pos: map_pot_mid_10pct(m),
+            m_pos: audio_taper(m),
         },
         ToneStackTopology::PassiveJamesBaxandall => FmvComponents {
             // James passive Baxandall style modeled on dual-shelf FMV-compatible bounds

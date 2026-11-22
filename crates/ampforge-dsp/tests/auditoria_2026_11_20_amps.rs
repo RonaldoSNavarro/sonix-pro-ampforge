@@ -2,7 +2,7 @@ use ampforge_dsp::amp::{AmpChannelMode, AmpInputJack, AmpModelId, WhiteBoxAmpPro
 use ampforge_dsp::modshop::ToneStackTopology;
 use ampforge_dsp::tonestack::{
     analog_tonestack_magnitude_db, analog_tonestack_magnitude_db_for_components,
-    resolved_fmv_components, PassiveToneStack,
+    resolved_fmv_components, FmvComponents, PassiveToneStack,
 };
 use std::f64::consts::PI;
 
@@ -416,6 +416,77 @@ fn aud_25_impedancia_menor_mais_ressonante() {
             g4 > g8 && g8 > g16 && (g4 - g8) >= 1.0 && (g8 - g16) >= 1.0,
             "AUD-25 {:?} @ res={:.1} Hz deve obedecer 4 > 8 > 16 (>= 1 dB/degrau): 4Ω={:.2}, 8Ω={:.2}, 16Ω={:.2}",
             model, res_hz, g4, g8, g16
+        );
+    }
+}
+
+/// Forma fechada de Yeh & Smith (DAFx-06) independente de `tonestack.rs` para validar `AUD-26`
+fn independent_yeh_fmv_db(
+    r1: f64, r2: f64, r3: f64, r4: f64,
+    c1: f64, c2: f64, c3: f64,
+    t: f64, l: f64, m: f64,
+    freq_hz: f64,
+) -> f64 {
+    let b1 = t * c1 * r1 + m * c3 * r3 + l * (c1 * r2 + c2 * r2) + (c1 * r3 + c2 * r3);
+    let b2 = t * (c1 * c2 * r1 * r4 + c1 * c3 * r1 * r4)
+        - m * m * (c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + m * (c1 * c3 * r1 * r3 + c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + l * (c1 * c2 * r1 * r2 + c1 * c2 * r2 * r4 + c1 * c3 * r2 * r4)
+        + l * m * (c1 * c3 * r2 * r3 + c2 * c3 * r2 * r3)
+        + (c1 * c2 * r1 * r3 + c1 * c2 * r3 * r4 + c1 * c3 * r3 * r4);
+    let b3 = l * m * (c1 * c2 * c3 * r1 * r2 * r3 + c1 * c2 * c3 * r2 * r3 * r4)
+        - m * m * (c1 * c2 * c3 * r1 * r3 * r3 + c1 * c2 * c3 * r3 * r3 * r4)
+        + m * (c1 * c2 * c3 * r1 * r3 * r3 + c1 * c2 * c3 * r3 * r3 * r4)
+        + t * c1 * c2 * c3 * r1 * r3 * r4
+        - t * m * c1 * c2 * c3 * r1 * r3 * r4
+        + t * l * c1 * c2 * c3 * r1 * r2 * r4;
+
+    let a0 = 1.0;
+    let a1 = (c1 * r1 + c1 * r3 + c2 * r3 + c2 * r4 + c3 * r4) + m * c3 * r3 + l * (c1 * r2 + c2 * r2);
+    let a2 = m * (c1 * c3 * r1 * r3 - c2 * c3 * r3 * r4 + c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + l * m * (c1 * c3 * r2 * r3 + c2 * c3 * r2 * r3)
+        - m * m * (c1 * c3 * r3 * r3 + c2 * c3 * r3 * r3)
+        + l * (c1 * c2 * r2 * r4 + c1 * c2 * r1 * r2 + c1 * c3 * r2 * r4 + c2 * c3 * r2 * r4)
+        + (c1 * c2 * r1 * r4 + c1 * c3 * r1 * r4 + c1 * c2 * r3 * r4 + c1 * c2 * r1 * r3 + c1 * c3 * r3 * r4 + c2 * c3 * r3 * r4);
+    let a3 = l * m * (c1 * c2 * c3 * r1 * r2 * r3 + c1 * c2 * c3 * r2 * r3 * r4)
+        - m * m * (c1 * c2 * c3 * r1 * r3 * r3 + c1 * c2 * c3 * r3 * r3 * r4)
+        + m * (c1 * c2 * c3 * r3 * r3 * r4 + c1 * c2 * c3 * r1 * r3 * r3 - c1 * c2 * c3 * r1 * r3 * r4)
+        + l * c1 * c2 * c3 * r1 * r2 * r4
+        + c1 * c2 * c3 * r1 * r3 * r4;
+
+    let w = 2.0 * PI * freq_hz;
+    let w2 = w * w;
+    let w3 = w2 * w;
+    let n_re = -b2 * w2;
+    let n_im = b1 * w - b3 * w3;
+    let d_re = a0 - a2 * w2;
+    let d_im = a1 * w - a3 * w3;
+    let mag = ((n_re * n_re + n_im * n_im) / (d_re * d_re + d_im * d_im)).sqrt();
+    20.0 * mag.max(1e-12).log10()
+}
+
+#[test]
+fn aud_26_middle_10pct_log() {
+    let base = resolved_fmv_components(ToneStackTopology::MarshallCathodeFollower, 5.0, 5.0, 5.0);
+    let no_load = FmvComponents { r_load: f64::INFINITY, ..base };
+    let t = 0.25 * 0.5 + 0.75 * 0.0909090909;
+    let l = 0.0909090909;
+    let m = 0.0909;
+
+    for k in 0..=32 {
+        let f = 20.0 * 2.0f64.powf((k as f64) / 3.0);
+        if f > 20_000.5 { break; }
+        let prod_db = analog_tonestack_magnitude_db_for_components(no_load, f);
+        let yeh_db = independent_yeh_fmv_db(
+            220_000.0, 1_000_000.0, 22_000.0, 33_000.0,
+            470e-12, 22e-9, 22e-9,
+            t, l, m, f,
+        );
+        let err = (prod_db - yeh_db).abs();
+        assert!(
+            err <= 0.05,
+            "AUD-26 Marshall Middle=5 (taper 10% log m=0.0909) @ {:.1} Hz: prod={:.4} vs yeh={:.4} (erro={:.4} dB > 0.05)",
+            f, prod_db, yeh_db, err
         );
     }
 }
