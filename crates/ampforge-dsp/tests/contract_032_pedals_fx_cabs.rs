@@ -294,24 +294,25 @@ fn test_ca_05_re201_12_modes_wet_eq_and_spring_only_mode_12() {
     let mut out1 = vec![0.0f32; len];
     d1.process(&impulse, &mut out1);
 
-    let mut d5 = DelayProcessor::new(DelayModel::MultiHeadTapeEcho);
-    d5.set_sample_rate(sr);
-    d5.set_delay_time_ms(120.0);
-    d5.set_feedback_pct(25.0);
-    d5.set_mix_pct(50.0);
-    d5.set_reverb_volume(5.0);
-    d5.set_re201_mode(5);
-    let mut out5 = vec![0.0f32; len];
-    d5.process(&impulse, &mut out5);
+    // Nota: Mode 5 (H1+mola) e Mode 8 (H1+H2+mola) após tabela única RE-201 (AUD-28)
+    let mut d8 = DelayProcessor::new(DelayModel::MultiHeadTapeEcho);
+    d8.set_sample_rate(sr);
+    d8.set_delay_time_ms(120.0);
+    d8.set_feedback_pct(25.0);
+    d8.set_mix_pct(50.0);
+    d8.set_reverb_volume(5.0);
+    d8.set_re201_mode(8);
+    let mut out8 = vec![0.0f32; len];
+    d8.process(&impulse, &mut out8);
 
     // Head 1 em 120 ms (5760 amostras), Head 2 em ~230.4 ms (11059 amostras):
-    // Mode 5 (H1+H2+mola) gera tap distinto em ~230 ms onde Mode 1 não tem cabeça
+    // Mode 8 (H1+H2+mola) gera tap distinto em ~230 ms onde Mode 1 não tem cabeça
     let head2_m1 = out1[10800..11300].iter().map(|x| x.abs()).fold(0.0f32, f32::max);
-    let head2_m5 = out5[10800..11300].iter().map(|x| x.abs()).fold(0.0f32, f32::max);
+    let head2_m8 = out8[10800..11300].iter().map(|x| x.abs()).fold(0.0f32, f32::max);
     assert!(
-        head2_m5 > 0.10 && head2_m1 < 0.02,
-        "Mode 5 multi-head deve produzir tap rítmico da cabeça 2 em ~230 ms ausente no Mode 1 (m1={}, m5={})",
-        head2_m1, head2_m5
+        head2_m8 > 0.10 && head2_m1 < 0.02,
+        "Mode 8 multi-head deve produzir tap rítmico da cabeça 2 em ~230 ms ausente no Mode 1 (m1={}, m8={})",
+        head2_m1, head2_m8
     );
 
     // 2. Bass & Treble atuam somente nas repetições (sinal seco imediato em impulse[0] permanece idêntico)

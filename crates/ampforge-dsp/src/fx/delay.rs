@@ -1,6 +1,18 @@
 //! crates/ampforge-dsp/src/fx/delay.rs
 //! Processadores de Delay (Roland RE-201 Space Echo 12 Modos, BBD, Digital, Ducking e Spillover) (Spec 007, 024, 032)
 
+use super::reverb::{ReverbModel, ReverbProcessor};
+
+pub const DECISAO_SONIX_RE201_HEAD2_RATIO: f32 = 1.92;
+pub const DECISAO_SONIX_RE201_HEAD3_RATIO: f32 = 2.83;
+pub const DECISAO_SONIX_RE201_ORDEM_PARES: [(bool, bool, bool); 3] = [
+    (true, true, false),  // Modo 8: H1+H2
+    (false, true, true),  // Modo 9: H2+H3
+    (true, false, true),  // Modo 10: H1+H3
+];
+pub const DECISAO_SONIX_RE201_WOW_CENTS: f32 = 3.0;
+pub const DECISAO_SONIX_RE201_WOW_HZ: f32 = 1.15;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DelayModel {
     MultiHeadTapeEcho,
@@ -96,8 +108,6 @@ impl WetBiquad {
     }
 }
 
-const SPRING_LENS: [usize; 4] = [397, 463, 557, 641];
-
 pub struct DelayProcessor {
     pub model: DelayModel,
     sample_rate: f32,
@@ -112,10 +122,10 @@ pub struct DelayProcessor {
     tone_treble: f32,
     wet_bass_bq: WetBiquad,
     wet_treble_bq: WetBiquad,
-    spring_combs: [[f32; 2048]; 4],
-    spring_pos: [usize; 4],
-    spring_lp: [f32; 4],
+    spring_reverb: ReverbProcessor,
     wow_phase: f32,
+    wow_peak: f32,
+    wow_gate: f32,
     current_delay_samples: f32,
     bbd_fb_lp: f32,
     // Ducking
@@ -138,12 +148,16 @@ pub struct DelayProcessor {
     rev_grain_ready: bool,
     // Contador O(1) para invalidar caudas sem memset no callback RT
     samples_since_clear: usize,
-    spring_samples_since_clear: usize,
 }
 
 impl DelayProcessor {
     pub fn new(model: DelayModel) -> Self {
         let max_samples = (4.0 * 96000.0) as usize;
+        let mut spring_reverb = ReverbProcessor::new(ReverbModel::TubeSpringReverb);
+        spring_reverb.set_predelay_ms(0.0);
+        spring_reverb.set_decay_time_s(2.5);
+        spring_reverb.set_damping(3.5);
+        spring_reverb.set_mix_pct(100.0);
         let mut p = Self {
             model,
             sample_rate: 48000.0,
@@ -157,10 +171,10 @@ impl DelayProcessor {
             tone_treble: 5.0,
             wet_bass_bq: WetBiquad::default(),
             wet_treble_bq: WetBiquad::default(),
-            spring_combs: [[0.0; 2048]; 4],
-            spring_pos: [0; 4],
-            spring_lp: [0.0; 4],
+            spring_reverb,
             wow_phase: 0.0,
+            wow_peak: 0.0,
+            wow_gate: 0.0,
             current_delay_samples: -1.0,
             bbd_fb_lp: 0.0,
             ducking_enabled: false,
@@ -178,7 +192,6 @@ impl DelayProcessor {
             rev_write_pos: 0,
             rev_grain_ready: false,
             samples_since_clear: usize::MAX,
-            spring_samples_since_clear: usize::MAX,
         };
         p.update_wet_eq();
         p
@@ -186,6 +199,7 @@ impl DelayProcessor {
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
+        self.spring_reverb.set_sample_rate(self.sample_rate);
         self.update_wet_eq();
     }
 
@@ -277,8 +291,10 @@ impl DelayProcessor {
     pub fn reset_state(&mut self) {
         self.clear_tail();
         self.write_pos = 0;
-        self.spring_pos = [0; 4];
         self.ducking_envelope = 0.0;
+        self.wow_phase = 0.0;
+        self.wow_peak = 0.0;
+        self.wow_gate = 0.0;
         self.wet_bass_bq.z1 = 0.0;
         self.wet_bass_bq.z2 = 0.0;
         self.wet_treble_bq.z1 = 0.0;
@@ -296,8 +312,7 @@ impl DelayProcessor {
     pub fn clear_tail(&mut self) {
         // O(1): evita memset de ~3 MB no callback de áudio
         self.samples_since_clear = 0;
-        self.spring_samples_since_clear = 0;
-        self.spring_lp.fill(0.0);
+        self.spring_reverb.clear_tail();
         self.rev_write_pos = 0;
         self.rev_grain_ready = false;
         self.bbd_fb_lp = 0.0;
@@ -324,30 +339,6 @@ impl DelayProcessor {
         s0 * (1.0 - d_frac) + s1 * d_frac
     }
 
-    #[inline(always)]
-    fn step_spring(&mut self, x: f32, fb_gain: f32) -> f32 {
-        let scale = self.sample_rate / 48000.0;
-        let lp_alpha = 1.0 - (-2.0 * std::f32::consts::PI * 8000.0 / self.sample_rate).exp();
-        let mut sum = 0.0f32;
-        for c in 0..4 {
-            let len = ((SPRING_LENS[c] as f32 * scale).round() as usize).clamp(1, 2047);
-            let pos = self.spring_pos[c] % len;
-            let y = if self.spring_samples_since_clear < len {
-                0.0
-            } else {
-                self.spring_combs[c][pos]
-            };
-            self.spring_lp[c] =
-                crate::denormal::flush_f32(self.spring_lp[c] + lp_alpha * (y - self.spring_lp[c]));
-            self.spring_combs[c][pos] =
-                crate::denormal::flush_f32((x + self.spring_lp[c] * fb_gain).clamp(-1.5, 1.5));
-            self.spring_pos[c] = if pos + 1 >= len { 0 } else { pos + 1 };
-            sum += y;
-        }
-        self.spring_samples_since_clear = self.spring_samples_since_clear.saturating_add(1);
-        sum * 0.25
-    }
-
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), output.len());
 
@@ -362,25 +353,42 @@ impl DelayProcessor {
         let buf_len = self.buffer.len();
         let feedback_gain = self.feedback_pct / 100.0;
 
-        // Pesos das 3 cabeças e reverb interno por modo RE-201
-        let (h1_w, h2_w, h3_w, spring_on, echo_on) = if self.model == DelayModel::MultiHeadTapeEcho {
-            match self.re201_mode {
-                1 => (1.0, 0.0, 0.0, false, true),
-                2 => (0.0, 1.0, 0.0, false, true),
-                3 => (0.0, 0.0, 1.0, false, true),
-                4 => (0.0, 0.55, 0.55, false, true),
-                5 => (0.55, 0.55, 0.0, true, true),
-                6 => (0.55, 0.0, 0.55, true, true),
-                7 => (0.0, 0.55, 0.55, true, true),
-                8 => (0.4, 0.35, 0.35, true, true),
-                9 => (0.6, 0.45, 0.0, true, true),
-                10 => (0.0, 0.5, 0.5, true, true),
-                11 => (0.45, 0.4, 0.35, true, true),
-                12 => (0.0, 0.0, 0.0, true, false), // Modo 12 RE-201: Reverb Only
-                _ => (1.0, 0.0, 0.0, false, true),
-            }
+        // Tabela única dos 12 modos RE-201 com ganho 1/√n para cabeças ativas (AUD-28):
+        // 1..4 só eco; 5..7 cabeça única + mola; 8..10 pares + mola; 11 todas + mola; 12 só mola.
+        let (h1_on, h2_on, h3_on, spring_on, echo_on) =
+            if self.model == DelayModel::MultiHeadTapeEcho {
+                match self.re201_mode {
+                    1 => (true, false, false, false, true),
+                    2 => (false, true, false, false, true),
+                    3 => (false, false, true, false, true),
+                    4 => (false, true, true, false, true),
+                    5 => (true, false, false, true, true),
+                    6 => (false, true, false, true, true),
+                    7 => (false, false, true, true, true),
+                    8 => {
+                        let (a, b, c) = DECISAO_SONIX_RE201_ORDEM_PARES[0];
+                        (a, b, c, true, true)
+                    }
+                    9 => {
+                        let (a, b, c) = DECISAO_SONIX_RE201_ORDEM_PARES[1];
+                        (a, b, c, true, true)
+                    }
+                    10 => {
+                        let (a, b, c) = DECISAO_SONIX_RE201_ORDEM_PARES[2];
+                        (a, b, c, true, true)
+                    }
+                    11 => (true, true, true, true, true),
+                    12 => (false, false, false, true, false), // Modo 12 RE-201: Reverb Only
+                    _ => (true, false, false, false, true),
+                }
+            } else {
+                (true, false, false, false, true)
+            };
+        let n_active = (h1_on as u8 + h2_on as u8 + h3_on as u8) as f32;
+        let head_w = if n_active > 0.0 {
+            1.0 / n_active.sqrt()
         } else {
-            (1.0, 0.0, 0.0, false, true)
+            0.0
         };
 
         let spring_mix = if spring_on {
@@ -388,12 +396,16 @@ impl DelayProcessor {
         } else {
             0.0
         };
-        let wow_step = 2.0 * std::f32::consts::PI * 1.15 / self.sample_rate;
-        let wow_depth_samples = if self.model == DelayModel::MultiHeadTapeEcho && self.re201_mode > 1 {
-            0.35
+        let wow_step = 2.0 * std::f32::consts::PI * DECISAO_SONIX_RE201_WOW_HZ / self.sample_rate;
+        let wow_depth_samples = if self.model == DelayModel::MultiHeadTapeEcho && echo_on {
+            let r_peak = 2.0f32.powf(DECISAO_SONIX_RE201_WOW_CENTS / 1200.0) - 1.0;
+            r_peak * self.sample_rate
+                / (2.0 * std::f32::consts::PI * DECISAO_SONIX_RE201_WOW_HZ)
         } else {
             0.0
         };
+        let wow_peak_rel = (-1.0 / (self.sample_rate * 0.200)).exp();
+        let wow_gate_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.002)).exp();
 
         let threshold_lin = 10.0f32.powf(self.ducking_threshold_db / 20.0);
         let max_duck_gain = 10.0f32.powf(self.ducking_attenuation_db / 20.0);
@@ -445,31 +457,53 @@ impl DelayProcessor {
             };
             self.duck_mult += d_alpha * (target_duck_mult - self.duck_mult);
 
+            let abs_raw = in_sample.abs();
+            if abs_raw > self.wow_peak {
+                self.wow_peak = crate::denormal::flush_f32(abs_raw);
+            } else {
+                self.wow_peak = crate::denormal::flush_f32(self.wow_peak * wow_peak_rel);
+            }
+            let active_flag = if abs_raw > self.wow_peak * 1e-4 && abs_raw > 1e-9 {
+                1.0f32
+            } else {
+                0.0f32
+            };
+            self.wow_gate = crate::denormal::flush_f32(
+                self.wow_gate + wow_gate_alpha * (active_flag - self.wow_gate),
+            );
+            let wow_scale = ((self.wow_gate - 0.15) / 0.35).clamp(0.0, 1.0);
+
             self.wow_phase += wow_step;
             if self.wow_phase >= 2.0 * std::f32::consts::PI {
                 self.wow_phase -= 2.0 * std::f32::consts::PI;
             }
-            let wow = self.wow_phase.sin() * wow_depth_samples;
+            let wow = self.wow_phase.sin() * wow_depth_samples * wow_scale;
 
             let mut echo_eq = 0.0f32;
             if echo_on {
                 match self.model {
                     DelayModel::MultiHeadTapeEcho => {
                         let mut acc = 0.0f32;
-                        if h1_w > 0.0 {
-                            acc += h1_w
+                        if h1_on {
+                            acc += head_w
                                 * self.read_delay_tap((self.current_delay_samples + wow).max(1.0));
                         }
-                        if h2_w > 0.0 {
-                            acc += h2_w
+                        if h2_on {
+                            acc += head_w
                                 * self.read_delay_tap(
-                                    (self.current_delay_samples * 1.92 + wow).max(1.0),
+                                    (self.current_delay_samples
+                                        * DECISAO_SONIX_RE201_HEAD2_RATIO
+                                        + wow)
+                                        .max(1.0),
                                 );
                         }
-                        if h3_w > 0.0 {
-                            acc += h3_w
+                        if h3_on {
+                            acc += head_w
                                 * self.read_delay_tap(
-                                    (self.current_delay_samples * 2.83 + wow).max(1.0),
+                                    (self.current_delay_samples
+                                        * DECISAO_SONIX_RE201_HEAD3_RATIO
+                                        + wow)
+                                        .max(1.0),
                                 );
                         }
                         let b = self.wet_bass_bq.process(acc);
@@ -548,22 +582,26 @@ impl DelayProcessor {
                 }
             }
 
-            // Mola interna nos modos 5-12
+            // Mola interna em paralelo ao eco nos modos 5-12 usando TubeSpringReverb (AUD-28)
             let spring_wet = if spring_mix > 0.0001 {
-                self.step_spring(in_sample + echo_eq * 0.25, 0.78) * spring_mix * 1.6
+                let mut spring_out = 0.0f32;
+                self.spring_reverb.process(
+                    std::slice::from_ref(&in_sample),
+                    std::slice::from_mut(&mut spring_out),
+                );
+                spring_out * spring_mix
             } else {
                 0.0
             };
             self.samples_since_clear = self.samples_since_clear.saturating_add(1);
 
-            let wet = (echo_eq + spring_wet) * self.duck_mult;
             let out_s = if self.bypassed && self.spillover_enabled {
-                input[i] + wet * wet_ratio
+                input[i] + (echo_eq * wet_ratio + spring_wet) * self.duck_mult
             } else if !echo_on {
-                // Mode 12: Direct signal + Spring Reverb (echo_volume silencioso para eco, reverb_volume comanda a mola)
+                // Mode 12: Direct signal + Spring Reverb (reverb_volume comanda a mola)
                 input[i] * (1.0 - 0.35 * spring_mix) + spring_wet * self.duck_mult
             } else {
-                input[i] * dry_ratio + wet * wet_ratio
+                input[i] * dry_ratio + (echo_eq * wet_ratio + spring_wet) * self.duck_mult
             };
             output[i] = crate::denormal::flush_f32(out_s);
         }
