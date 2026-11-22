@@ -31,6 +31,6 @@ pub use errors::{DspEngineError, InvalidAudioConfigError};
 pub use queue::{DspCommand, SpscCommandQueue, SpscTelemetryQueue, TelemetrySnapshot};
 pub use smoother::{OnePoleSmoother, ParamSmoother};
 pub use oversampling::{HalfBandOversampler, OversamplingFactor};
-pub use precision::{IirBiquad64, MixedPrecisionSolver};
+pub use precision::IirBiquad64;
 pub use cpu::CpuMonitor;
 pub use engine::DspEngine;

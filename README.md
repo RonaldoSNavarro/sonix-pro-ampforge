@@ -4,7 +4,7 @@
 [![Status: In Development](https://img.shields.io/badge/Status-Em%20Desenvolvimento-orange.svg)](#-status-do-projeto--convite-a-colaboradores)
 [![Rust: 2021](https://img.shields.io/badge/Rust-2021%20Edition-black?logo=rust)](https://www.rust-lang.org/)
 [![Tauri: v2](https://img.shields.io/badge/Tauri-v2-blue?logo=tauri)](https://tauri.app/)
-[![Tests: Passing](https://img.shields.io/badge/Tests-Passing%20(100%25)-brightgreen.svg)](#-testes-e-qualidade)
+[![Tests: Contract Suite](https://img.shields.io/badge/Tests-Contract%20Suite-brightgreen.svg)](#-testes-e-qualidade)
 
 Simulador de alta fidelidade para guitarra com pedaleira multi-efeitos, amplificadores valvulados clássicos com **modelagem White-Box** (100% algorítmica em nível de circuito analógico discreto), motor DSP de tempo real em **Rust** (*Zero-Alloc & Lock-Free*) e interface skeuomórfica fotorrealista acelerada por hardware em **Tauri v2**.
 
@@ -19,7 +19,7 @@ Simulador de alta fidelidade para guitarra com pedaleira multi-efeitos, amplific
 Buscamos construir uma plataforma de referência em simulação de instrumentos em código aberto. Sua participação é muito bem-vinda em diversas frentes:
 
 - 🎸 **Músicos e Produtores:** Teste de usabilidade, comparação de timbres com equipamentos físicos, criação de presets de fábrica e relatórios de experiência.
-- 🎛️ **Engenheiros de DSP e Áudio:** Otimizações algorítmicas, aperfeiçoamento de solvers Newton-Raphson, novos modelos de caixas/microfones e filtros analógicos.
+- 🎛️ **Engenheiros de DSP e Áudio:** Otimizações algorítmicas, aperfeiçoamento da função analítica de triodo `u / √(1 + (k·u)²)` (`amp.rs`), novos modelos de caixas/microfones e filtros analógicos.
 - 🦀 **Desenvolvedores Rust:** Aprimoramento de concorrência lock-free, suporte a drivers de áudio de baixa latência (WASAPI/ASIO) e integração de plugins DAW VST3/CLAP.
 - 🎨 **Desenvolvedores Frontend e UI/UX:** Aprimoramentos no Design System skeuomórfico, renderização fluida em Canvas/WebGL, gráficos de osciloscópio CRT e responsividade.
 
@@ -31,9 +31,9 @@ Para saber como configurar seu ambiente, reportar problemas ou submeter um Pull 
 
 ### 1. Motor DSP Nativo em Rust (`ampforge-dsp`)
 - **Zero-Alloc Realtime Audio Safety:** Nenhuma alocação de heap (`Vec`, `Box`, `String`) ou trava de concorrência (*mutexes/locks*) ocorre dentro do loop de processamento de áudio em tempo real.
-- **Processamento de Alta Precisão:** Solvers iterativos de ponto flutuante de 64 bits para triodos e pentodos com equações físicas não lineares.
-- **Oversampling Polifásico FIR:** Fatores selecionáveis de 2x, 4x e 8x com filtros FIR simétricos e atenuação de stopband > 96 dB para eliminação completa de aliasing em estágios de saturação pesada.
-- **Latência Ultrabaixa:** Latência algorítmica de núcleo inferior a 1,5 ms a 48 kHz.
+- **Processamento de Alta Precisão:** Modelagem analítica de triodo em `f64` pela função `u / √(1 + (k·u)²)` com normalização `DECISAO_SONIX_PREAMP_STAGE_NORM` (`crates/ampforge-dsp/src/amp.rs`, verificado em `contract_039_amps_fidelity.rs`).
+- **Oversampling Elíptico IIR de 8ª Ordem:** Fatores selecionáveis de 2x, 4x e 8x (`crates/ampforge-dsp/src/os_filters.rs`, atenuação de banda de rejeição >= 60 dB verificada em `auditoria_2026_11_20_artefatos.rs::aud_14_banda_de_rejeicao`). O `HalfBandOversampler` FIR 127-tap (>= 96 dB) permanece apenas em biblioteca (`docs/biblioteca-sem-uso-em-producao.md`).
+- **Telemetria de Latência Real:** A telemetria calcula `estimated_roundtrip_ms = driver_input_latency_ms + driver_output_latency_ms + (algorithmic_latency_samples / sample_rate) * 1000.0` (`crates/sonix-desktop/src/audio.rs`, ex.: 12 amostras algorítmicas = 0,25 ms @ 48 kHz + buffers do driver WASAPI).
 
 ### 2. Amplificadores Valvulados Clássicos (White-Box)
 Modelagem rigorosa dos esquemas elétricos originais:
@@ -55,7 +55,8 @@ Modelagem rigorosa dos esquemas elétricos originais:
 - **Roland RE-201 Space Echo:** Simulação fiel do mecanismo de fita de 3 cabeças de reprodução, saturação analógica de fita, mola interna e 12 modos de chaveamento originais.
 - **Reverbs:** Tube Spring (mola valvulada com dispersão all-pass) e algoritmo Freeverb (Jezar) — voicing Plate, Hall, Chamber e Shimmer granular (+12 semitons).
 - **Modulações:** Boss CE-2 BBD Chorus, Chorus 3 vozes (mono), MXR Phase 90, Through-Zero Flanger com feedback, Tremolo Óptico LDR (ataque 5 ms / soltura 60 ms) e Rotary Speaker dual-rotor (LR4 800 Hz).
-- **Pitch & Afinador:** Afinador com visual estroboscópico (detecção YIN 38 Hz – 1,4 kHz, cobre E1 = 41,2 Hz; B0 = 30,9 Hz fora da faixa) e modo polifônico de 6 cordas, além de bloco de Harmonizador Diatônico.
+- **Pitch & Afinador:** Afinador com visual estroboscópico (detecção YIN 38 Hz – 1,4 kHz, cobre E1 = 41,2 Hz; B0 = 30,9 Hz fora da faixa, verificado em `crates/ampforge-dsp/tests/auditoria_2026_11_20_afinador.rs`) e modo polifônico de 6 cordas, além de bloco de Harmonizador Diatônico.
+- **Tabela Única de Parâmetros:** Todo parâmetro do backend nasce da `PARAMS_TABLE` única (`crates/sonix-desktop/src/params.rs`) e gera `apps/sonix-app/ui/src/params.generated.ts` (verificado em `tests/contract/auditoria-2026-11-20-parametros.test.js`).
 
 ### 5. Gabinete Virtual & Convolução de IR
 - **Convolução de IR Zero-Latency:** Convolução particionada no domínio do tempo e da frequência para carregamento de Impulse Responses WAV (.wav) sem adição de latência.
@@ -126,11 +127,17 @@ O executável otimizado estará disponível no diretório de saída do Cargo.
 O projeto adota a metodologia **Spec Driven Development (SDD)** com **TDD Estrito**. Toda implementação é coberta por testes automatizados antes de ser integrada:
 
 ```bash
-# Executa todos os testes unitários e de contrato do workspace Rust:
-cargo test --workspace
+# Executa todos os testes unitários e de contrato do workspace Rust (exceto 013::ca2 sem hardware WASAPI físico):
+cargo test --workspace --locked -- --test-threads=1
 
 # Executa a suíte de contratos de integração e interface (Node.js):
 node --test tests/contract/
+
+# Executa o E2E da UI desktop construída (Playwright):
+npm run test:e2e
+
+# Verifica citações e front-matter das specs (001..092):
+python tools/verificar_specs.py
 ```
 
 Todas as 50 especificações arquiteturais possuem rastreabilidade completa e critérios de aceite auditáveis. Para mais detalhes, consulte o [Índice de Especificações (specs/README.md)](specs/README.md).

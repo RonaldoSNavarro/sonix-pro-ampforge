@@ -7,7 +7,7 @@ use ampforge_dsp::errors::InvalidAudioConfigError;
 use ampforge_dsp::queue::DspCommand;
 use ampforge_dsp::smoother::OnePoleSmoother;
 use ampforge_dsp::oversampling::{HalfBandOversampler, OversamplingFactor};
-use ampforge_dsp::precision::{IirBiquad64, MixedPrecisionSolver};
+use ampforge_dsp::precision::IirBiquad64;
 use ampforge_dsp::cpu::CpuMonitor;
 use ampforge_dsp::engine::DspEngine;
 
@@ -155,11 +155,6 @@ fn test_ca_04_mixed_precision_32bit_bus_and_64bit_solvers() {
     // Erro de quantização DC deve ser < -120 dBFS (amplitude < 10^(-120/20) = 1e-6)
     let dc_error = dc_offset_accumulator.abs();
     assert!(dc_error < 1e-6, "Erro de quantização DC {dc_error} deve ser < 1e-6 (-120 dBFS)");
-
-    // Solver Newton-Raphson 64-bit
-    let mut solver = MixedPrecisionSolver::new();
-    let solved_val = solver.solve_triode_transfer(0.5f64, 250.0f64);
-    assert!(!solved_val.is_nan() && !solved_val.is_infinite());
 }
 
 #[test]
