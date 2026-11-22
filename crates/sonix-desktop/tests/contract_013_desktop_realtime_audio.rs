@@ -52,25 +52,42 @@ fn test_ca_02_physical_audio_device_enumeration_wasapi_default_duplex() {
 
     assert!(!devices.is_empty(), "Deve enumerar dispositivos físicos de áudio");
 
+    let devices_summary = devices
+        .iter()
+        .map(|d| {
+            format!(
+                "nome={:?}, is_input={}, supported_sample_rates={:?}, supported_buffer_sizes={:?}",
+                d.name, d.is_input, d.supported_sample_rates, d.supported_buffer_sizes
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n  ");
+
     // Verifica que existe pelo menos um dispositivo com suporte a duplex ou par entrada/saída
     let input_dev = devices.iter().find(|d| d.is_input);
     let output_dev = devices.iter().find(|d| !d.is_input);
 
-    assert!(input_dev.is_some(), "Deve detectar dispositivo físico de entrada (Microfone P2/Line-in)");
-    assert!(output_dev.is_some(), "Deve detectar dispositivo físico de saída (Alto-falantes/Fones)");
+    assert!(
+        input_dev.is_some(),
+        "Deve detectar dispositivo físico de entrada (Microfone P2/Line-in). Dispositivos enumerados:\n  {devices_summary}"
+    );
+    assert!(
+        output_dev.is_some(),
+        "Deve detectar dispositivo físico de saída (Alto-falantes/Fones). Dispositivos enumerados:\n  {devices_summary}"
+    );
 
     let input = input_dev.unwrap();
     assert!(
         input.supported_sample_rates.contains(&44100)
             || input.supported_sample_rates.contains(&48000)
             || input.supported_sample_rates.contains(&96000),
-        "Dispositivo de entrada deve suportar taxas de amostragem padrão (44.1k, 48k ou 96k)"
+        "Dispositivo de entrada deve suportar taxas de amostragem padrão (44.1k, 48k ou 96k). Dispositivos enumerados:\n  {devices_summary}"
     );
     assert!(
         input.supported_buffer_sizes.contains(&64)
             || input.supported_buffer_sizes.contains(&128)
             || input.supported_buffer_sizes.contains(&256),
-        "Dispositivo deve suportar buffers de baixa latência (64, 128 ou 256)"
+        "Dispositivo deve suportar buffers de baixa latência (64, 128 ou 256). Dispositivos enumerados:\n  {devices_summary}"
     );
 }
 
