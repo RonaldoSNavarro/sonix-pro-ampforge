@@ -5203,17 +5203,23 @@ impl RealtimeDspChain {
             DagBlockKind::Amp1 => {
                 ran_amp1 = true;
                 if self.amp_enabled {
-                    let mut sub_off = 0usize;
-                    while sub_off < len {
-                        let sub_end = (sub_off + 16).min(len);
-                        let mut g = self.gain_smoother.current_value();
-                        for _ in sub_off..sub_end {
-                            g = self.gain_smoother.next_sample();
-                        }
+                    if (self.gain_smoother.target() - self.gain_smoother.current_value()).abs() < 1e-12 {
+                        let g = self.gain_smoother.current_value();
                         self.amp.panel_mut().set_input_gain(g as f32);
-                        self.amp
-                            .process(&input_slice[sub_off..sub_end], &mut output_slice[sub_off..sub_end]);
-                        sub_off = sub_end;
+                        self.amp.process(input_slice, output_slice);
+                    } else {
+                        let mut sub_off = 0usize;
+                        while sub_off < len {
+                            let sub_end = (sub_off + 16).min(len);
+                            let mut g = self.gain_smoother.current_value();
+                            for _ in sub_off..sub_end {
+                                g = self.gain_smoother.next_sample();
+                            }
+                            self.amp.panel_mut().set_input_gain(g as f32);
+                            self.amp
+                                .process(&input_slice[sub_off..sub_end], &mut output_slice[sub_off..sub_end]);
+                            sub_off = sub_end;
+                        }
                     }
                 } else {
                     for _ in 0..len {
