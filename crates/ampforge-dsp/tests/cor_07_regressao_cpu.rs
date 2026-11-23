@@ -1,33 +1,65 @@
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::cell::Cell;
 
 use ampforge_dsp::amp::{AmpModelId, WhiteBoxAmpProcessor};
 use ampforge_dsp::cab::VirtualCabProcessor;
 use ampforge_dsp::fx::{DriveModel, DriveProcessor};
 
+// COR-09: contador por thread, mesmo esquema da Spec 037 CA-7
+// (contract_037_realtime_safety.rs). Só conta o que acontece no thread
+// que ligou a contagem; o executor de testes e os demais casos do binário
+// não interferem.
 struct CountingAlloc;
-static COUNTING_ACTIVE: AtomicBool = AtomicBool::new(false);
-static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-static TEST_SERIAL: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    static COUNTING_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static THREAD_ALLOCS: Cell<usize> = const { Cell::new(0) };
+    static THREAD_DEALLOCS: Cell<usize> = const { Cell::new(0) };
+}
 
 #[global_allocator]
 static GLOBAL: CountingAlloc = CountingAlloc;
 
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING_ACTIVE.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        COUNTING_ACTIVE.with(|active| {
+            if active.get() {
+                THREAD_ALLOCS.with(|c| c.set(c.get() + 1));
+            }
+        });
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if COUNTING_ACTIVE.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        COUNTING_ACTIVE.with(|active| {
+            if active.get() {
+                THREAD_DEALLOCS.with(|c| c.set(c.get() + 1));
+            }
+        });
         unsafe { System.dealloc(ptr, layout) }
     }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        COUNTING_ACTIVE.with(|active| {
+            if active.get() {
+                THREAD_ALLOCS.with(|c| c.set(c.get() + 1));
+                THREAD_DEALLOCS.with(|c| c.set(c.get() + 1));
+            }
+        });
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+fn measure_allocs<F: FnOnce()>(f: F) -> (usize, usize) {
+    THREAD_ALLOCS.with(|c| c.set(0));
+    THREAD_DEALLOCS.with(|c| c.set(0));
+    COUNTING_ACTIVE.with(|a| a.set(true));
+    f();
+    COUNTING_ACTIVE.with(|a| a.set(false));
+    (
+        THREAD_ALLOCS.with(|c| c.get()),
+        THREAD_DEALLOCS.with(|c| c.get()),
+    )
 }
 
 fn gen_signal(len: usize, sr: f32) -> Vec<f32> {
@@ -42,7 +74,6 @@ fn gen_signal(len: usize, sr: f32) -> Vec<f32> {
 
 #[test]
 fn cor_07_zero_alloc() {
-    let _guard = TEST_SERIAL.lock().unwrap();
     let sr = 96_000.0;
     let block = 32;
     let mut cab = VirtualCabProcessor::new();
@@ -63,24 +94,19 @@ fn cor_07_zero_alloc() {
     drive.process(&inp, &mut out);
     amp.process(&inp, &mut out);
 
-    ALLOC_COUNT.store(0, Ordering::SeqCst);
-    COUNTING_ACTIVE.store(true, Ordering::SeqCst);
-    for _ in 0..2000 {
-        drive.process(&inp, &mut out);
-        amp.process(&inp, &mut out);
-        cab.process(&inp, &mut out);
-    }
-    COUNTING_ACTIVE.store(false, Ordering::SeqCst);
-    assert_eq!(
-        ALLOC_COUNT.load(Ordering::SeqCst),
-        0,
-        "COR-07 zero_alloc falhou em Drive/Amp/Cab"
-    );
+    let (allocs, deallocs) = measure_allocs(|| {
+        for _ in 0..2000 {
+            drive.process(&inp, &mut out);
+            amp.process(&inp, &mut out);
+            cab.process(&inp, &mut out);
+        }
+    });
+    assert_eq!(allocs, 0, "COR-09 zero_alloc: alocações em Drive/Amp/Cab");
+    assert_eq!(deallocs, 0, "COR-09 zero_alloc: desalocações em Drive/Amp/Cab");
 }
 
 #[test]
 fn cor_07_cab_speaker_fir_saida_igual() {
-    let _guard = TEST_SERIAL.lock().unwrap();
     let sr = 48_000.0;
     let mut cab = VirtualCabProcessor::new();
     cab.set_sample_rate(sr);
@@ -113,7 +139,6 @@ fn cor_07_cab_speaker_fir_saida_igual() {
 
 #[test]
 fn cor_07_drive_ts808_saida_igual() {
-    let _guard = TEST_SERIAL.lock().unwrap();
     let sr = 48_000.0;
     let mut drive = DriveProcessor::new(DriveModel::GreenScreamer808);
     drive.set_sample_rate(sr);
@@ -144,7 +169,6 @@ fn cor_07_drive_ts808_saida_igual() {
 
 #[test]
 fn cor_07_amp_saida_igual() {
-    let _guard = TEST_SERIAL.lock().unwrap();
     let sr = 48_000.0;
     let mut amp = WhiteBoxAmpProcessor::new(AmpModelId::UsTwinBlackface65);
     amp.set_sample_rate(sr);
