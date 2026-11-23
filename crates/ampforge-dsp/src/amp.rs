@@ -512,6 +512,7 @@ struct AmpCore {
     adaa_s3_prev: f64,
     adaa_s4_prev: f64,
     adaa_power_prev: f64,
+    adaa_power_f_prev: f64,
     interp_hist: [f64; 8],
     aa_filters: [BiquadFilter; 4],
     ai_filters: [BiquadFilter; 4],
@@ -535,6 +536,88 @@ struct AmpCore {
     sm_cut: crate::smoother::ParamSmoother,
     sm_speaker_res_hz: crate::smoother::ParamSmoother,
     has_processed: bool,
+    cached_subblock: Option<AmpSubblockCache>,
+}
+
+#[derive(Clone, Copy)]
+struct AmpSubblockCache {
+    model_id: AmpModelId,
+    os_factor: usize,
+    fs_base: f64,
+    sm_bass: f32,
+    sm_middle: f32,
+    sm_treble: f32,
+    sm_presence: f32,
+    sm_master: f32,
+    sm_volume_2: f32,
+    sm_cut: f32,
+    sm_res_hz: f64,
+    input_gain: f32,
+    output_level_db: f32,
+    channel_mode: AmpChannelMode,
+    channel_toggle: AmpChannelVoicing,
+    bright_switch: bool,
+    input_jack: AmpInputJack,
+    jumpered: bool,
+    spongy: bool,
+    impedance_ohms: u8,
+    power: bool,
+    standby: bool,
+    vibrato_speed: f32,
+    vibrato_depth: f32,
+    ac30_vib_trem_mode: Ac30VibTremMode,
+    reverb: f32,
+    mod_nfb: f32,
+    mod_tonestack: ToneStackTopology,
+    mod_xformer_sat: f32,
+    mod_sag: f32,
+    mod_rectifier: RectifierType,
+    mod_power_tube: PowerTube,
+    mod_preamp_tube: PreampTube,
+    mod_preamp_plate_v: f32,
+    mod_triode_asym: f32,
+    mod_bias_ma: f32,
+    // Computed values
+    ts_recovery: f64,
+    eff_nfb: f64,
+    pre_gain_lin: f64,
+    vol2_lin: f64,
+    lead_mult: f64,
+    bright_effective_boost: f64,
+    input_pad: f64,
+    power_tube_headroom: f64,
+    variac_scale: f64,
+    spongy_power_atten: f64,
+    plexi_ch1_on: bool,
+    plexi_ch2_on: bool,
+    power_saturation_drive: f64,
+    target_tube_gain: f64,
+    ef86_knee: f64,
+    tube_alpha: f64,
+    v1_headroom: f64,
+    asym: f64,
+    bias_ma_f: f64,
+    crossover_depth: f64,
+    bias_warm_drive: f64,
+    alpha_bright: f64,
+    alpha_ch2: f64,
+    alpha_standby: f64,
+    alpha_cut: f64,
+    alpha_hp_loose: f64,
+    alpha_hp_tight: f64,
+    alpha_miller: f64,
+    xf_val: f64,
+    sag_amt: f64,
+    ri: f64,
+    alpha_sag_att: f64,
+    alpha_sag_rel: f64,
+    alpha_ac30_brilliant_hp: f64,
+    out_lin: f64,
+    live_target: f64,
+    lfo_inc: f64,
+    is_ac30_vib: bool,
+    trem_depth: f64,
+    rev_mix: f64,
 }
 
 pub struct WhiteBoxAmpProcessor {
@@ -966,6 +1049,7 @@ impl AmpCore {
             adaa_s3_prev: 0.0,
             adaa_s4_prev: 0.0,
             adaa_power_prev: 0.0,
+            adaa_power_f_prev: 0.0,
             interp_hist: [0.0; 8],
             aa_filters: [BiquadFilter::default(); 4],
             ai_filters: [BiquadFilter::default(); 4],
@@ -989,6 +1073,7 @@ impl AmpCore {
             sm_cut: crate::smoother::ParamSmoother::new(48000.0, 0.020, 5.0),
             sm_speaker_res_hz: crate::smoother::ParamSmoother::new(48000.0, 0.020, 98.0),
             has_processed: false,
+            cached_subblock: None,
         };
         s.update_aa_filters();
         s
@@ -1030,6 +1115,7 @@ impl AmpCore {
         self.adaa_s3_prev = 0.0;
         self.adaa_s4_prev = 0.0;
         self.adaa_power_prev = 0.0;
+        self.adaa_power_f_prev = 0.0;
         self.interp_hist = [0.0; 8];
         self.update_aa_filters();
         self.sag_state = 0.0;
@@ -1051,6 +1137,7 @@ impl AmpCore {
         self.sm_cut.reset(self.panel.cut as f64);
         self.sm_speaker_res_hz.reset(self.speaker_resonance_hz as f64);
         self.has_processed = false;
+        self.cached_subblock = None;
     }
 
     /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
@@ -1252,243 +1339,399 @@ impl AmpCore {
         let sm_cut = self.sm_cut.current() as f32;
         let sm_res_hz = (self.sm_speaker_res_hz.current() as f32).clamp(50.0, 200.0) as f64;
 
-        let ts_topo = self.resolve_tonestack_topology(self.model_id);
-        let ts_recovery = Self::tonestack_recovery_gain(ts_topo);
-        self.passive_tonestack.update(
-            ts_topo,
-            sm_bass,
-            sm_middle,
-            sm_treble,
-            sr,
-        );
-        self.jcm800_peaking.update(sr);
-        self.plexi_bright_cap.update(self.panel.input_gain as f64, sr);
-
-        // Effective NFB: Dual Rectifier Modern mode disconnects global NFB per Rev-F schematic
-        let eff_nfb = if self.model_id == AmpModelId::CaliDualRectoRevF
-            && self.panel.channel_mode == AmpChannelMode::Modern
-        {
-            0.0
+        let cache_hit = if let Some(c) = self.cached_subblock {
+            c.model_id == self.model_id
+                && c.os_factor == os_factor
+                && c.fs_base == fs_base
+                && c.sm_bass == sm_bass
+                && c.sm_middle == sm_middle
+                && c.sm_treble == sm_treble
+                && c.sm_presence == sm_presence
+                && c.sm_master == sm_master
+                && c.sm_volume_2 == sm_volume_2
+                && c.sm_cut == sm_cut
+                && c.sm_res_hz == sm_res_hz
+                && c.input_gain == self.panel.input_gain
+                && c.output_level_db == self.panel.output_level_db
+                && c.channel_mode == self.panel.channel_mode
+                && c.channel_toggle == self.panel.channel_toggle
+                && c.bright_switch == self.panel.bright_switch
+                && c.input_jack == self.panel.input_jack
+                && c.jumpered == self.panel.jumpered
+                && c.spongy == self.panel.spongy
+                && c.impedance_ohms == self.panel.impedance_ohms
+                && c.power == self.panel.power
+                && c.standby == self.panel.standby
+                && c.vibrato_speed == self.panel.vibrato_speed
+                && c.vibrato_depth == self.panel.vibrato_depth
+                && c.ac30_vib_trem_mode == self.panel.ac30_vib_trem_mode
+                && c.reverb == self.panel.reverb
+                && c.mod_nfb == self.mod_settings.nfb
+                && c.mod_tonestack == self.mod_settings.tonestack
+                && c.mod_xformer_sat == self.mod_settings.xformer_sat
+                && c.mod_sag == self.mod_settings.sag
+                && c.mod_rectifier == self.mod_settings.rectifier
+                && c.mod_power_tube == self.mod_settings.power_tube
+                && c.mod_preamp_tube == self.mod_settings.preamp_tube
+                && c.mod_preamp_plate_v == self.mod_settings.preamp_plate_v
+                && c.mod_triode_asym == self.mod_settings.triode_asym
+                && c.mod_bias_ma == self.mod_settings.bias_ma
         } else {
-            self.mod_settings.nfb as f64
+            false
         };
-        let nfb_scale = (eff_nfb / 10.0).clamp(0.0, 1.0);
 
-        // Feedback loop filter: Presence (>2 kHz) modulated by NFB loop somente nos modelos com Presence real
-        if self.model_id.has_presence() {
-            let presence_nfb_scale = if self.model_id == AmpModelId::CaliDualRectoRevF
+        let c = if cache_hit {
+            self.cached_subblock.unwrap()
+        } else {
+            let ts_topo = self.resolve_tonestack_topology(self.model_id);
+            let ts_recovery = Self::tonestack_recovery_gain(ts_topo);
+            self.passive_tonestack.update(
+                ts_topo,
+                sm_bass,
+                sm_middle,
+                sm_treble,
+                sr,
+            );
+            self.jcm800_peaking.update(sr);
+            self.plexi_bright_cap.update(self.panel.input_gain as f64, sr);
+
+            // Effective NFB: Dual Rectifier Modern mode disconnects global NFB per Rev-F schematic
+            let eff_nfb = if self.model_id == AmpModelId::CaliDualRectoRevF
                 && self.panel.channel_mode == AmpChannelMode::Modern
             {
-                DECISAO_SONIX_RECTO_MODERN_PRESENCE
+                0.0
             } else {
-                nfb_scale
+                self.mod_settings.nfb as f64
             };
-            let pres_db = (sm_presence as f64 / 10.0) * 10.0 * presence_nfb_scale;
-            self.presence_filter
-                .update_coeffs(BiquadFilter::peaking(4000.0, pres_db, 1.4, sr));
-        }
+            let nfb_scale = (eff_nfb / 10.0).clamp(0.0, 1.0);
 
-        // Subtle power-section/transformer voicing per model
-        let (v1_cur, v2_cur) = if self.mod_settings.tonestack != ToneStackTopology::Model {
-            match self.mod_settings.tonestack {
-                ToneStackTopology::FenderTmbMidScoop => (
-                    BiquadFilter::identity(),
-                    BiquadFilter::high_shelf(5500.0, 2.5, sr),
-                ),
-                ToneStackTopology::MarshallCathodeFollower => (
-                    BiquadFilter::peaking(1600.0, 2.5, 1.2, sr),
-                    BiquadFilter::low_shelf(120.0, -1.5, sr),
-                ),
-                ToneStackTopology::VoxTopBoost => (
-                    BiquadFilter::peaking(2800.0, 2.5, 1.2, sr),
-                    BiquadFilter::low_shelf(110.0, -3.0, sr),
-                ),
-                ToneStackTopology::PassiveJamesBaxandall => (
-                    BiquadFilter::low_shelf(100.0, 1.5, sr),
-                    BiquadFilter::high_shelf(4000.0, 1.5, sr),
-                ),
-                ToneStackTopology::RectoPostGain | ToneStackTopology::MesaMarkPreGain => (
-                    BiquadFilter::peaking(750.0, -2.5, 1.1, sr),
-                    BiquadFilter::peaking(85.0, 3.0, 1.4, sr),
-                ),
-                ToneStackTopology::Model => Self::create_voicing_filters(self.model_id, sr),
+            // Feedback loop filter: Presence (>2 kHz) modulated by NFB loop somente nos modelos com Presence real
+            if self.model_id.has_presence() {
+                let presence_nfb_scale = if self.model_id == AmpModelId::CaliDualRectoRevF
+                    && self.panel.channel_mode == AmpChannelMode::Modern
+                {
+                    DECISAO_SONIX_RECTO_MODERN_PRESENCE
+                } else {
+                    nfb_scale
+                };
+                let pres_db = (sm_presence as f64 / 10.0) * 10.0 * presence_nfb_scale;
+                self.presence_filter
+                    .update_coeffs(BiquadFilter::peaking(4000.0, pres_db, 1.4, sr));
             }
-        } else {
-            Self::create_voicing_filters(self.model_id, sr)
-        };
-        self.voicing_filter1.update_coeffs(v1_cur);
-        self.voicing_filter2.update_coeffs(v2_cur);
 
-        let pre_gain_db = -44.0 + (self.panel.input_gain as f64 / 10.0) * 62.0;
-        let pre_gain_lin = 10.0f64.powf(pre_gain_db / 20.0);
-
-        let vol2_gain_db = -44.0 + (sm_volume_2 as f64 / 10.0) * 62.0;
-        let vol2_lin = if sm_volume_2 <= 0.05 {
-            0.0
-        } else {
-            10.0f64.powf(vol2_gain_db / 20.0)
-        };
-
-        let lead_mult = match self.panel.channel_toggle {
-            AmpChannelVoicing::Norm => 1.0,
-            AmpChannelVoicing::HighLead => 2.5,
-        };
-
-        // Bright switch físico (Twin AB763; o bright cap 5000 pF do Plexi atua exclusivamente no ramo Volume I)
-        let bright_effective_boost = if self.panel.bright_switch {
-            let pot_ratio = (10.0 - self.panel.input_gain) / 10.0;
-            (pot_ratio as f64) * 0.95
-        } else {
-            0.0
-        };
-
-        let input_pad = if self.panel.input_jack.is_low_pad() {
-            0.5 // Divisor resistivo exato 68k / (68k + 68k) = -6,0206 dB
-        } else {
-            1.0
-        };
-
-        // Power tube & secondary impedance physical scaling
-        let power_tube_headroom = match self.mod_settings.power_tube {
-            PowerTube::El34 => 1.0,
-            PowerTube::Tube6L6Gc => 1.18,
-            PowerTube::Tube6V6 => 0.85,
-            PowerTube::Kt88 => 1.35,
-            PowerTube::El84 => 0.78,
-        };
-        let variac_scale = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
-            0.80
-        } else {
-            1.0
-        };
-        let spongy_power_atten = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
-            0.86
-        } else {
-            1.0
-        };
-
-        let is_plexi_jumpered = self.panel.jumpered || self.panel.input_jack == AmpInputJack::Jumpered;
-        let plexi_ch1_on = is_plexi_jumpered || !self.panel.input_jack.is_normal_channel();
-        let plexi_ch2_on = is_plexi_jumpered || self.panel.input_jack.is_normal_channel();
-
-        let calc_power_drive = |model: AmpModelId, gain: f32, vol2: f32, master: f32, ch_mode: AmpChannelMode| -> f64 {
-            match model {
-                AmpModelId::BritPlexi1959 => {
-                    // Plexi 1959SLP has no Master Volume; power drive comes from Vol I & Vol II of active channel(s)
-                    let g1_drive = if plexi_ch1_on { (gain as f64 / 10.0) * 18.0 } else { 0.0 };
-                    let g2_drive = if plexi_ch2_on { (vol2 as f64 / 10.0) * 6.0 } else { 0.0 };
-                    (1.0 + g1_drive + g2_drive) / power_tube_headroom
+            // Subtle power-section/transformer voicing per model
+            let (v1_cur, v2_cur) = if self.mod_settings.tonestack != ToneStackTopology::Model {
+                match self.mod_settings.tonestack {
+                    ToneStackTopology::FenderTmbMidScoop => (
+                        BiquadFilter::identity(),
+                        BiquadFilter::high_shelf(5500.0, 2.5, sr),
+                    ),
+                    ToneStackTopology::MarshallCathodeFollower => (
+                        BiquadFilter::peaking(1600.0, 2.5, 1.2, sr),
+                        BiquadFilter::low_shelf(120.0, -1.5, sr),
+                    ),
+                    ToneStackTopology::VoxTopBoost => (
+                        BiquadFilter::peaking(2800.0, 2.5, 1.2, sr),
+                        BiquadFilter::low_shelf(110.0, -3.0, sr),
+                    ),
+                    ToneStackTopology::PassiveJamesBaxandall => (
+                        BiquadFilter::low_shelf(100.0, 1.5, sr),
+                        BiquadFilter::high_shelf(4000.0, 1.5, sr),
+                    ),
+                    ToneStackTopology::RectoPostGain | ToneStackTopology::MesaMarkPreGain => (
+                        BiquadFilter::peaking(750.0, -2.5, 1.1, sr),
+                        BiquadFilter::peaking(85.0, 3.0, 1.4, sr),
+                    ),
+                    ToneStackTopology::Model => Self::create_voicing_filters(self.model_id, sr),
                 }
-                AmpModelId::UsTwinBlackface65 => {
-                    (0.55 + (gain as f64 / 10.0) * 1.65) / power_tube_headroom
+            } else {
+                Self::create_voicing_filters(self.model_id, sr)
+            };
+            self.voicing_filter1.update_coeffs(v1_cur);
+            self.voicing_filter2.update_coeffs(v2_cur);
+
+            let pre_gain_db = -44.0 + (self.panel.input_gain as f64 / 10.0) * 62.0;
+            let pre_gain_lin = 10.0f64.powf(pre_gain_db / 20.0);
+
+            let vol2_gain_db = -44.0 + (sm_volume_2 as f64 / 10.0) * 62.0;
+            let vol2_lin = if sm_volume_2 <= 0.05 {
+                0.0
+            } else {
+                10.0f64.powf(vol2_gain_db / 20.0)
+            };
+
+            let lead_mult = match self.panel.channel_toggle {
+                AmpChannelVoicing::Norm => 1.0,
+                AmpChannelVoicing::HighLead => 2.5,
+            };
+
+            let bright_effective_boost = if self.panel.bright_switch {
+                let pot_ratio = (10.0 - self.panel.input_gain) / 10.0;
+                (pot_ratio as f64) * 0.95
+            } else {
+                0.0
+            };
+
+            let input_pad = if self.panel.input_jack.is_low_pad() {
+                0.5
+            } else {
+                1.0
+            };
+
+            let power_tube_headroom = match self.mod_settings.power_tube {
+                PowerTube::El34 => 1.0,
+                PowerTube::Tube6L6Gc => 1.18,
+                PowerTube::Tube6V6 => 0.85,
+                PowerTube::Kt88 => 1.35,
+                PowerTube::El84 => 0.78,
+            };
+            let variac_scale = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
+                0.80
+            } else {
+                1.0
+            };
+            let spongy_power_atten = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
+                0.86
+            } else {
+                1.0
+            };
+
+            let is_plexi_jumpered = self.panel.jumpered || self.panel.input_jack == AmpInputJack::Jumpered;
+            let plexi_ch1_on = is_plexi_jumpered || !self.panel.input_jack.is_normal_channel();
+            let plexi_ch2_on = is_plexi_jumpered || self.panel.input_jack.is_normal_channel();
+
+            let calc_power_drive = |model: AmpModelId, gain: f32, vol2: f32, master: f32, ch_mode: AmpChannelMode| -> f64 {
+                match model {
+                    AmpModelId::BritPlexi1959 => {
+                        let g1_drive = if plexi_ch1_on { (gain as f64 / 10.0) * 18.0 } else { 0.0 };
+                        let g2_drive = if plexi_ch2_on { (vol2 as f64 / 10.0) * 6.0 } else { 0.0 };
+                        (1.0 + g1_drive + g2_drive) / power_tube_headroom
+                    }
+                    AmpModelId::UsTwinBlackface65 => {
+                        (0.55 + (gain as f64 / 10.0) * 1.65) / power_tube_headroom
+                    }
+                    AmpModelId::CaliDualRectoRevF => {
+                        let master_pot = master as f64 / 10.0;
+                        let m_mult = match ch_mode {
+                            AmpChannelMode::Clean => 0.55,
+                            AmpChannelMode::Vintage => 1.35,
+                            AmpChannelMode::Modern => 1.75,
+                        };
+                        (0.02 + master_pot.powi(3) * 3.0 * m_mult) / power_tube_headroom
+                    }
+                    AmpModelId::UkAc30TopBoost => {
+                        (1.2 + (gain as f64 / 10.0) * 5.0 + (vol2 as f64 / 10.0) * 1.6) / power_tube_headroom
+                    }
+                    AmpModelId::BritJcm800_2203 => {
+                        let master_pot = master as f64 / 10.0;
+                        (0.25 + master_pot.powi(3) * 28.0) / power_tube_headroom
+                    }
                 }
-                AmpModelId::CaliDualRectoRevF => {
-                    let master_pot = master as f64 / 10.0;
-                    let m_mult = match ch_mode {
-                        AmpChannelMode::Clean => 0.55,
-                        AmpChannelMode::Vintage => 1.35,
-                        AmpChannelMode::Modern => 1.75,
-                    };
-                    (0.02 + master_pot.powi(3) * 3.0 * m_mult) / power_tube_headroom
-                }
-                AmpModelId::UkAc30TopBoost => {
-                    // AC30 Top Boost clássico (JMI OS/010 / OS/056) não possui Master Volume:
-                    // excitação do estágio EL84 em Classe A é governada pelos volumes dos canais (Brilliant e Normal).
-                    (1.2 + (gain as f64 / 10.0) * 5.0 + (vol2 as f64 / 10.0) * 1.6) / power_tube_headroom
-                }
-                AmpModelId::BritJcm800_2203 => {
-                    let master_pot = master as f64 / 10.0;
-                    (0.25 + master_pot.powi(3) * 28.0) / power_tube_headroom
-                }
-            }
+            };
+
+            let power_saturation_drive = calc_power_drive(
+                self.model_id,
+                self.panel.input_gain,
+                sm_volume_2,
+                sm_master,
+                self.panel.channel_mode,
+            );
+
+            let (target_tube_gain, ef86_knee) = match self.mod_settings.preamp_tube {
+                PreampTube::Ax7A => (1.0f64, 1.0f64),
+                PreampTube::At7 => (0.58f64, 0.85f64),
+                PreampTube::Ay7 => (0.45f64, 0.78f64),
+                PreampTube::Ef86 => (1.22f64, 1.35f64),
+            };
+            let tube_alpha = (1.0 / (fs_base * 0.008)).clamp(0.0005, 0.05);
+            let v1_headroom = ((self.mod_settings.preamp_plate_v as f64 / 250.0) * variac_scale).max(0.1);
+            let asym = self.mod_settings.triode_asym as f64;
+            let bias_ma_f = self.mod_settings.bias_ma as f64;
+            let bias_deficit = ((32.0 - bias_ma_f) / 12.0).clamp(0.0, 1.0);
+            let crossover_depth = bias_deficit * 0.72;
+            let bias_warm_drive = 1.0 + ((bias_ma_f - 40.0).max(0.0) / 24.0).min(0.25);
+
+            let alpha_bright = (1.0 - (-2.0 * std::f64::consts::PI * 1200.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
+            let alpha_ch2 = (1.0 - (-2.0 * std::f64::consts::PI * 310.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
+            let alpha_standby = (1.0 - (-1.0 / (fs_base.max(1.0) * 0.00014)).exp()).clamp(0.001, 0.99);
+
+            let imp_factor = match self.panel.impedance_ohms {
+                4 => 1.24,
+                8 => 1.0,
+                _ => 0.78,
+            };
+            let eff_nfb_damping = (eff_nfb / imp_factor).clamp(0.0, 10.0);
+            let res_boost_db = ((10.0 - eff_nfb_damping) / 10.0) * 5.0 * imp_factor;
+            let res_hz = sm_res_hz;
+            self.speaker_res_filter
+                .update_coeffs(BiquadFilter::peaking(res_hz, res_boost_db, 2.0, sr));
+
+            let fc_cut_hz = 18000.0 * (750.0f64 / 18000.0).powf((sm_cut as f64 / 10.0).clamp(0.0, 1.0));
+            let alpha_cut = (2.0 * std::f64::consts::PI * fc_cut_hz / sr).clamp(0.005, 0.99);
+
+            let alpha_hp_loose = (2.0 * std::f64::consts::PI * 45.0 / sr).clamp(0.0001, 0.25);
+            let alpha_hp_tight = (2.0 * std::f64::consts::PI * 115.0 / sr).clamp(0.0001, 0.35);
+            let alpha_miller = (2.0 * std::f64::consts::PI * 7500.0 / sr).clamp(0.01, 0.90);
+
+            let xf_val = self.mod_settings.xformer_sat as f64;
+            let sag_amt = self.mod_settings.sag as f64;
+            let ri = self.mod_settings.rectifier.internal_resistance();
+            let tau_att = self.mod_settings.rectifier.attack_time_sec();
+            let tau_rel = self.mod_settings.rectifier.release_time_sec();
+            let alpha_sag_att = 1.0 - (-1.0 / (sr * tau_att)).exp();
+            let alpha_sag_rel = 1.0 - (-1.0 / (sr * tau_rel)).exp();
+            let alpha_ac30_brilliant_hp = 1.0
+                - (-2.0 * std::f64::consts::PI * DECISAO_SONIX_AC30_BRILLIANT_HP_HZ / sr).exp();
+
+            let out_lin = 10.0f64.powf(self.panel.output_level_db as f64 / 20.0);
+            let live_target = if self.panel.power && !self.panel.standby { 1.0 } else { 0.0 };
+
+            let lfo_hz = 1.5 + (self.panel.vibrato_speed as f64 / 10.0) * 8.0;
+            let lfo_inc = (2.0 * std::f64::consts::PI * lfo_hz) / fs_base.max(1.0);
+            let is_twin_vibrato_ch = self.model_id == AmpModelId::UsTwinBlackface65
+                && !self.panel.input_jack.is_normal_channel();
+            let is_ac30_vibtrem_ch = self.model_id == AmpModelId::UkAc30TopBoost
+                && self.panel.input_jack == AmpInputJack::Vibrato;
+            let is_ac30_trem = is_ac30_vibtrem_ch
+                && self.panel.ac30_vib_trem_mode == Ac30VibTremMode::Tremolo
+                && self.panel.vibrato_depth > 0.01;
+            let is_ac30_vib = is_ac30_vibtrem_ch
+                && self.panel.ac30_vib_trem_mode == Ac30VibTremMode::Vibrato
+                && self.panel.vibrato_depth > 0.01;
+            let trem_depth = if is_twin_vibrato_ch || is_ac30_trem {
+                (self.panel.vibrato_depth as f64 / 10.0).clamp(0.0, 1.0) * 0.70
+            } else {
+                0.0
+            };
+            let rev_mix = if is_twin_vibrato_ch {
+                (self.panel.reverb as f64 / 10.0).clamp(0.0, 1.0) * 3.10
+            } else {
+                0.0
+            };
+
+            let built = AmpSubblockCache {
+                model_id: self.model_id,
+                os_factor,
+                fs_base,
+                sm_bass,
+                sm_middle,
+                sm_treble,
+                sm_presence,
+                sm_master,
+                sm_volume_2,
+                sm_cut,
+                sm_res_hz,
+                input_gain: self.panel.input_gain,
+                output_level_db: self.panel.output_level_db,
+                channel_mode: self.panel.channel_mode,
+                channel_toggle: self.panel.channel_toggle,
+                bright_switch: self.panel.bright_switch,
+                input_jack: self.panel.input_jack,
+                jumpered: self.panel.jumpered,
+                spongy: self.panel.spongy,
+                impedance_ohms: self.panel.impedance_ohms,
+                power: self.panel.power,
+                standby: self.panel.standby,
+                vibrato_speed: self.panel.vibrato_speed,
+                vibrato_depth: self.panel.vibrato_depth,
+                ac30_vib_trem_mode: self.panel.ac30_vib_trem_mode,
+                reverb: self.panel.reverb,
+                mod_nfb: self.mod_settings.nfb,
+                mod_tonestack: self.mod_settings.tonestack,
+                mod_xformer_sat: self.mod_settings.xformer_sat,
+                mod_sag: self.mod_settings.sag,
+                mod_rectifier: self.mod_settings.rectifier,
+                mod_power_tube: self.mod_settings.power_tube,
+                mod_preamp_tube: self.mod_settings.preamp_tube,
+                mod_preamp_plate_v: self.mod_settings.preamp_plate_v,
+                mod_triode_asym: self.mod_settings.triode_asym,
+                mod_bias_ma: self.mod_settings.bias_ma,
+                ts_recovery,
+                eff_nfb,
+                pre_gain_lin,
+                vol2_lin,
+                lead_mult,
+                bright_effective_boost,
+                input_pad,
+                power_tube_headroom,
+                variac_scale,
+                spongy_power_atten,
+                plexi_ch1_on,
+                plexi_ch2_on,
+                power_saturation_drive,
+                target_tube_gain,
+                ef86_knee,
+                tube_alpha,
+                v1_headroom,
+                asym,
+                bias_ma_f,
+                crossover_depth,
+                bias_warm_drive,
+                alpha_bright,
+                alpha_ch2,
+                alpha_standby,
+                alpha_cut,
+                alpha_hp_loose,
+                alpha_hp_tight,
+                alpha_miller,
+                xf_val,
+                sag_amt,
+                ri,
+                alpha_sag_att,
+                alpha_sag_rel,
+                alpha_ac30_brilliant_hp,
+                out_lin,
+                live_target,
+                lfo_inc,
+                is_ac30_vib,
+                trem_depth,
+                rev_mix,
+            };
+            self.cached_subblock = Some(built);
+            built
         };
 
-        let power_saturation_drive = calc_power_drive(
-            self.model_id,
-            self.panel.input_gain,
-            sm_volume_2,
-            sm_master,
-            self.panel.channel_mode,
-        );
-
-        let (target_tube_gain, ef86_knee) = match self.mod_settings.preamp_tube {
-            PreampTube::Ax7A => (1.0f64, 1.0f64),
-            PreampTube::At7 => (0.58f64, 0.85f64),
-            PreampTube::Ay7 => (0.45f64, 0.78f64),
-            PreampTube::Ef86 => (1.22f64, 1.35f64),
-        };
-        let tube_alpha = (1.0 / (fs_base * 0.008)).clamp(0.0005, 0.05);
-        let v1_headroom = ((self.mod_settings.preamp_plate_v as f64 / 250.0) * variac_scale).max(0.1);
-        let asym = self.mod_settings.triode_asym as f64;
-        let bias_ma_f = self.mod_settings.bias_ma as f64;
-        let bias_deficit = ((32.0 - bias_ma_f) / 12.0).clamp(0.0, 1.0);
-        let crossover_depth = bias_deficit * 0.72;
+        let ts_recovery = c.ts_recovery;
+        let eff_nfb = c.eff_nfb;
+        let pre_gain_lin = c.pre_gain_lin;
+        let vol2_lin = c.vol2_lin;
+        let lead_mult = c.lead_mult;
+        let bright_effective_boost = c.bright_effective_boost;
+        let input_pad = c.input_pad;
+        let power_tube_headroom = c.power_tube_headroom;
+        let variac_scale = c.variac_scale;
+        let spongy_power_atten = c.spongy_power_atten;
+        let plexi_ch1_on = c.plexi_ch1_on;
+        let plexi_ch2_on = c.plexi_ch2_on;
+        let power_saturation_drive = c.power_saturation_drive;
+        let target_tube_gain = c.target_tube_gain;
+        let ef86_knee = c.ef86_knee;
+        let tube_alpha = c.tube_alpha;
+        let v1_headroom = c.v1_headroom;
+        let asym = c.asym;
+        let bias_ma_f = c.bias_ma_f;
+        let crossover_depth = c.crossover_depth;
         let crossover_width = 0.18;
-        let bias_warm_drive = 1.0 + ((bias_ma_f - 40.0).max(0.0) / 24.0).min(0.25);
-
-        // Sample-rate-invariant coefficients for base-rate filters (Spec 039 CA-4)
-        let alpha_bright = (1.0 - (-2.0 * std::f64::consts::PI * 1200.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
-        let alpha_ch2 = (1.0 - (-2.0 * std::f64::consts::PI * 310.0 / fs_base.max(1.0)).exp()).clamp(0.001, 0.99);
-        let alpha_standby = (1.0 - (-1.0 / (fs_base.max(1.0) * 0.00014)).exp()).clamp(0.001, 0.99);
-
-        // Fonte: Marshall 1959HW Owners Manual p. 3 (Tonal Note 3, PRIMARY_OFFICIAL):
-        // NFB retirado da saída do falante; impedância menor (4 Ω) reduz tensão de NFB/amortecimento e aumenta ressonância.
-        let imp_factor = match self.panel.impedance_ohms {
-            4 => 1.24,
-            8 => 1.0,
-            _ => 0.78,
-        };
-        let eff_nfb_damping = (eff_nfb / imp_factor).clamp(0.0, 10.0);
-        let res_boost_db = ((10.0 - eff_nfb_damping) / 10.0) * 5.0 * imp_factor;
-        let res_hz = sm_res_hz;
-        self.speaker_res_filter
-            .update_coeffs(BiquadFilter::peaking(res_hz, res_boost_db, 2.0, sr));
-
-        // AC30 Tone Cut filter alpha (shunt LPF after LTP PI before EL84 power stage)
-        let fc_cut_hz = 18000.0 * (750.0f64 / 18000.0).powf((sm_cut as f64 / 10.0).clamp(0.0, 1.0));
-        let alpha_cut = (2.0 * std::f64::consts::PI * fc_cut_hz / sr).clamp(0.005, 0.99);
-
-        // Interstage coupling alphas at OS sample rate
-        let alpha_hp_loose = (2.0 * std::f64::consts::PI * 45.0 / sr).clamp(0.0001, 0.25);
-        let alpha_hp_tight = (2.0 * std::f64::consts::PI * 115.0 / sr).clamp(0.0001, 0.35);
-        let alpha_miller = (2.0 * std::f64::consts::PI * 7500.0 / sr).clamp(0.01, 0.90);
-
-        let xf_val = self.mod_settings.xformer_sat as f64;
-        let sag_amt = self.mod_settings.sag as f64;
-        let ri = self.mod_settings.rectifier.internal_resistance();
-        let tau_att = self.mod_settings.rectifier.attack_time_sec();
-        let tau_rel = self.mod_settings.rectifier.release_time_sec();
-        let alpha_sag_att = 1.0 - (-1.0 / (sr * tau_att)).exp();
-        let alpha_sag_rel = 1.0 - (-1.0 / (sr * tau_rel)).exp();
-        let alpha_ac30_brilliant_hp = 1.0
-            - (-2.0 * std::f64::consts::PI * DECISAO_SONIX_AC30_BRILLIANT_HP_HZ / sr).exp();
-
-        let out_lin = 10.0f64.powf(self.panel.output_level_db as f64 / 20.0);
-        let live_target = if self.panel.power && !self.panel.standby { 1.0 } else { 0.0 };
-
-        // Tremolo LFO frequency (1.5 Hz to 9.5 Hz)
-        let lfo_hz = 1.5 + (self.panel.vibrato_speed as f64 / 10.0) * 8.0;
-        let lfo_inc = (2.0 * std::f64::consts::PI * lfo_hz) / fs_base.max(1.0);
-        let is_twin_vibrato_ch = self.model_id == AmpModelId::UsTwinBlackface65
-            && !self.panel.input_jack.is_normal_channel();
-        let is_ac30_vibtrem_ch = self.model_id == AmpModelId::UkAc30TopBoost
-            && self.panel.input_jack == AmpInputJack::Vibrato;
-        let is_ac30_trem = is_ac30_vibtrem_ch
-            && self.panel.ac30_vib_trem_mode == Ac30VibTremMode::Tremolo
-            && self.panel.vibrato_depth > 0.01;
-        let is_ac30_vib = is_ac30_vibtrem_ch
-            && self.panel.ac30_vib_trem_mode == Ac30VibTremMode::Vibrato
-            && self.panel.vibrato_depth > 0.01;
-        let trem_depth = if is_twin_vibrato_ch || is_ac30_trem {
-            (self.panel.vibrato_depth as f64 / 10.0).clamp(0.0, 1.0) * 0.70
-        } else {
-            0.0
-        };
-        let rev_mix = if is_twin_vibrato_ch {
-            (self.panel.reverb as f64 / 10.0).clamp(0.0, 1.0) * 3.10
-        } else {
-            0.0
-        };
+        let bias_warm_drive = c.bias_warm_drive;
+        let alpha_bright = c.alpha_bright;
+        let alpha_ch2 = c.alpha_ch2;
+        let alpha_standby = c.alpha_standby;
+        let alpha_cut = c.alpha_cut;
+        let alpha_hp_loose = c.alpha_hp_loose;
+        let alpha_hp_tight = c.alpha_hp_tight;
+        let alpha_miller = c.alpha_miller;
+        let xf_val = c.xf_val;
+        let sag_amt = c.sag_amt;
+        let ri = c.ri;
+        let alpha_sag_att = c.alpha_sag_att;
+        let alpha_sag_rel = c.alpha_sag_rel;
+        let alpha_ac30_brilliant_hp = c.alpha_ac30_brilliant_hp;
+        let out_lin = c.out_lin;
+        let live_target = c.live_target;
+        let lfo_inc = c.lfo_inc;
+        let is_ac30_vib = c.is_ac30_vib;
+        let trem_depth = c.trem_depth;
+        let rev_mix = c.rev_mix;
 
         // COR-12: constantes por sub-bloco içadas para fora do laço de amostras e de oversampling
         let v1b_drive_plexi = triode_stage_gain(100_000.0, 1_000_000.0, 0.0) / DECISAO_SONIX_PREAMP_STAGE_NORM;
@@ -1740,6 +1983,7 @@ impl AmpCore {
                 };
                 let dp = power_in - self.adaa_power_prev;
                 let power_sat_raw = if dp.abs() < 1e-5 {
+                    self.adaa_power_f_prev = f64::NAN;
                     power_in.tanh()
                 } else {
                     let f1 = if power_in.abs() > 20.0 {
@@ -1747,11 +1991,14 @@ impl AmpCore {
                     } else {
                         power_in.cosh().ln()
                     };
-                    let f0 = if self.adaa_power_prev.abs() > 20.0 {
+                    let f0 = if !self.adaa_power_f_prev.is_nan() {
+                        self.adaa_power_f_prev
+                    } else if self.adaa_power_prev.abs() > 20.0 {
                         self.adaa_power_prev.abs() - std::f64::consts::LN_2
                     } else {
                         self.adaa_power_prev.cosh().ln()
                     };
+                    self.adaa_power_f_prev = f1;
                     (f1 - f0) / dp
                 };
                 self.adaa_power_prev = power_in;
