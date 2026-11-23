@@ -247,6 +247,7 @@ fn rodar_cenario(
         "blocos_acima_50": blocos_acima_50,
         "blocos_acima_100": blocos_acima_100,
         "subnormais": subnormais,
+        "prioridade": "tempo_real",
     });
 
     if cenario == "silencio" {
@@ -317,6 +318,20 @@ fn main() {
             std::process::exit(2);
         }
     }
+
+    // COR-11: antes de medir qualquer cenário (inclusive o `ruido`), o thread de
+    // medição recebe a mesma prioridade de tempo real que o cpal (`realtime`)
+    // dá ao thread de áudio do WASAPI. Sem fallback: se falhar, aborta.
+    let _rt_handle = match audio_thread_priority::promote_current_thread_to_real_time(
+        bloco as u32,
+        sr,
+    ) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Falha ao promover o thread de medição para tempo real: {e:?}");
+            std::process::exit(3);
+        }
+    };
 
     if cenario == "ruido" {
         let (_, _, mut report) = rodar_cenario("ruido", sr, bloco, None);

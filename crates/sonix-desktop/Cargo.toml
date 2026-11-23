@@ -15,10 +15,16 @@ serde_json = "1.0"
 getrandom = "0.3"
 midir = "0.11"
 
+[dev-dependencies]
+# COR-11: a bancada_auditoria promove o thread de medição com a mesma função
+# que o cpal (feature `realtime`) usa no thread de áudio do WASAPI. Mesma
+# versão que o Cargo.lock resolve para o cpal.
+audio_thread_priority = { version = "0.35", default-features = false }
+
 [features]
 default = ["dev-http", "host-audio"]
 dev-http = []
-host-audio = ["dep:cpal"]
+host-audio = ["dep:cpal", "cpal/realtime"]
 asio = ["host-audio", "cpal/asio"]
 fault-injection = []
 
