@@ -1832,15 +1832,15 @@ impl AmpCore {
 
             // Keep parallel Normal channel low/mid contour state updated for Plexi Ch II
             // Note: s_in already includes input_pad (-6 dB on Low2), do not apply input_pad twice.
-            self.bright2_state =
-                crate::denormal::flush_f64(self.bright2_state + alpha_ch2 * (s_in - self.bright2_state));
-            let ch2_hp = s_in - self.bright2_state;
-            let s_ch2_base = (s_in * 0.65 + self.bright2_state * 0.70 - ch2_hp * 0.10) * vol2_lin;
-
-            for k in 0..7 {
-                self.interp_hist[k] = self.interp_hist[k + 1];
-            }
-            self.interp_hist[7] = s_in;
+            let s_ch2_base = if self.model_id == AmpModelId::BritPlexi1959 {
+                self.bright2_state = crate::denormal::flush_f64(
+                    self.bright2_state + alpha_ch2 * (s_in - self.bright2_state),
+                );
+                let ch2_hp = s_in - self.bright2_state;
+                (s_in * 0.65 + self.bright2_state * 0.70 - ch2_hp * 0.10) * vol2_lin
+            } else {
+                0.0
+            };
 
             // Bias-vary Tremolo LFO modulation per base sample
             self.lfo_phase += lfo_inc;
@@ -1864,10 +1864,12 @@ impl AmpCore {
             let mut sub_count = 0usize;
 
             let raw_drive_jcm = pre_gain_lin * lead_mult * tube_gain;
-            let base_drive_jcm = {
+            let base_drive_jcm = if self.model_id == AmpModelId::BritJcm800_2203 {
                 let r = raw_drive_jcm / 18.5;
                 let r2 = r * r;
                 raw_drive_jcm / (1.0 + r2 * r2).sqrt().sqrt()
+            } else {
+                0.0
             };
 
             for step in (0..8).step_by(step_stride) {
