@@ -647,16 +647,25 @@ impl DriveProcessor {
         let vf_n = (vf_neg as f64).max(1e-6);
         let out_gain = self.out_level_taper();
 
+        // COR-12: cópia local dos filtros em registradores/stack durante o bloco (sem aliasing com self)
+        let mut os_hist = self.os_hist;
+        let mut os_ai_lp = self.os_ai_lp;
+        let mut os_aa_lp = self.os_aa_lp;
+        let mut os_u_prev = self.os_u_prev;
+        let mut ts_fb_bq_os = self.ts_fb_bq_os;
+        let mut ts_post_lp_os = self.ts_post_lp_os;
+        let mut ts_tone_biquad = self.ts_tone_biquad;
+
         for i in 0..input.len() {
             let clipped = Self::step_oversample_sub(
-                &mut self.os_hist,
-                &mut self.os_ai_lp,
-                &mut self.os_aa_lp,
-                &mut self.os_u_prev,
+                &mut os_hist,
+                &mut os_ai_lp,
+                &mut os_aa_lp,
+                &mut os_u_prev,
                 2,
                 input[i],
                 |us| {
-                    let v_fb = self.ts_fb_bq_os.process(us);
+                    let v_fb = ts_fb_bq_os.process(us);
                     let v_clip = if v_fb >= 0.0 {
                         let r = v_fb / vf_p;
                         let r2 = r * r;
@@ -671,12 +680,20 @@ impl DriveProcessor {
                         v_fb / (1.0 + r8).sqrt().sqrt().sqrt()
                     };
                     let v_stage = us + v_clip;
-                    self.ts_post_lp_os.process(v_stage)
+                    ts_post_lp_os.process(v_stage)
                 },
             );
-            let toned = self.ts_tone_biquad.process(clipped);
+            let toned = ts_tone_biquad.process(clipped);
             output[i] = toned * out_gain;
         }
+
+        self.os_hist = os_hist;
+        self.os_ai_lp = os_ai_lp;
+        self.os_aa_lp = os_aa_lp;
+        self.os_u_prev = os_u_prev;
+        self.ts_fb_bq_os = ts_fb_bq_os;
+        self.ts_post_lp_os = ts_post_lp_os;
+        self.ts_tone_biquad = ts_tone_biquad;
     }
 
     /// Klon Centaur: potenciômetro duplo clean-blend + clipping suave de germânio + 18V charge pump headroom

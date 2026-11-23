@@ -68,7 +68,7 @@ pub enum MicModel {
     C414,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MicSlotConfig {
     pub model: MicModel,
     pub position_cap_to_edge: f32, // 0.0 (Cap) to 1.0 (Edge)
@@ -963,6 +963,18 @@ pub struct VirtualCabProcessor {
     speaker_hist_pos: usize,
     fir_model: SpeakerCabModel,
     fir_sr: f32,
+    cached_no_ir: Option<CabNoIrCache>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CabNoIrCache {
+    sr: f32,
+    speaker_model: SpeakerCabModel,
+    hicut_hz: f64,
+    mics: [MicSlotConfig; 2],
+    total_gain: [f64; 2],
+    d_int: [usize; 2],
+    d_frac: [f32; 2],
 }
 
 impl Default for VirtualCabProcessor {
@@ -1024,6 +1036,7 @@ impl VirtualCabProcessor {
             speaker_hist_pos: 0,
             fir_model: spk,
             fir_sr: 48000.0,
+            cached_no_ir: None,
         };
         s.update_filters();
         s
@@ -1303,119 +1316,171 @@ impl VirtualCabProcessor {
             return;
         }
 
-        self.update_filters();
         let sr = self.sample_rate as f64;
+        let hicut_cur = self.hicut_smoother.current();
+        let cache_hit = self.cached_no_ir.as_ref().is_some_and(|c| {
+            c.sr == self.sample_rate
+                && c.speaker_model == self.speaker_model
+                && c.hicut_hz == hicut_cur
+                && c.mics == self.mics
+        });
+
+        if !cache_hit {
+            self.update_filters();
+            let mut total_gain_arr = [0.0f64; 2];
+            let mut d_int_arr = [0usize; 2];
+            let mut d_frac_arr = [0.0f32; 2];
+
+            for slot_idx in 0..2 {
+                let mic = &self.mics[slot_idx];
+                if !mic.enabled || mic.mute {
+                    continue;
+                }
+
+                let gain = if mic.level_db <= -60.0 {
+                    0.0
+                } else {
+                    10.0f32.powf(mic.level_db / 20.0)
+                };
+                let sign = if mic.phase_invert { -1.0 } else { 1.0 };
+                total_gain_arr[slot_idx] = (gain * sign) as f64;
+
+                let pos = mic.position_cap_to_edge.clamp(0.0, 1.0);
+                let pos_cut_db = -8.5 * pos as f64;
+                if slot_idx == 0 {
+                    self.mic1_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
+                } else {
+                    self.mic2_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
+                }
+
+                let dist_cm = mic.distance_cm.clamp(0.0, 30.0) as f64;
+                let prox_boost_db = 9.0 * (1.0 - (dist_cm / 20.0).clamp(0.0, 1.0));
+                if slot_idx == 0 {
+                    self.mic1_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
+                } else {
+                    self.mic2_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
+                }
+
+                let angle_norm = (mic.angle_off_axis_deg / 45.0).clamp(0.0, 1.0) as f64;
+                let angle_cut_db = -6.0 * angle_norm;
+                if slot_idx == 0 {
+                    self.mic1_angle_filter
+                        .update_coeffs(BiquadFilter::high_shelf_sqrt2(3200.0, angle_cut_db, sr));
+                } else {
+                    self.mic2_angle_filter
+                        .update_coeffs(BiquadFilter::high_shelf_sqrt2(3200.0, angle_cut_db, sr));
+                }
+
+                let (model_f1, model_f2) = if slot_idx == 0 {
+                    (&mut self.mic1_model_f1, &mut self.mic1_model_f2)
+                } else {
+                    (&mut self.mic2_model_f1, &mut self.mic2_model_f2)
+                };
+                match mic.model {
+                    MicModel::Sm57 => {
+                        model_f1.update_coeffs(BiquadFilter::peaking(5600.0, 4.0, 2.5, sr));
+                        model_f2.update_coeffs(BiquadFilter::low_shelf_sqrt2(160.0, -3.5, sr));
+                    }
+                    MicModel::Md421 => {
+                        model_f1.update_coeffs(BiquadFilter::peaking(280.0, -2.5, 1.2, sr));
+                        model_f2.update_coeffs(BiquadFilter::peaking(4500.0, 3.5, 1.3, sr));
+                    }
+                    MicModel::M88 => {
+                        model_f1.update_coeffs(BiquadFilter::low_shelf_sqrt2(110.0, 2.5, sr));
+                        model_f2.update_coeffs(BiquadFilter::peaking(4000.0, 3.0, 1.5, sr));
+                    }
+                    MicModel::R121 => {
+                        model_f1.update_coeffs(BiquadFilter::low_shelf_sqrt2(130.0, 2.0, sr));
+                        model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(3800.0, -7.5, sr));
+                    }
+                    MicModel::M160 => {
+                        model_f1.update_coeffs(BiquadFilter::peaking(1800.0, 1.5, 1.0, sr));
+                        model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(5500.0, -5.0, sr));
+                    }
+                    MicModel::U87 => {
+                        model_f1.update_coeffs(BiquadFilter::high_shelf_sqrt2(8000.0, 2.5, sr));
+                        model_f2.update_coeffs(BiquadFilter::peaking(250.0, 0.5, 0.9, sr));
+                    }
+                    MicModel::C414 => {
+                        model_f1.update_coeffs(BiquadFilter::peaking(3500.0, 3.0, 1.2, sr));
+                        model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(9500.0, 4.0, sr));
+                    }
+                }
+
+                let delay_sec = (dist_cm * 0.01) / 343.0;
+                let delay_samples = delay_sec * sr;
+                let line_len = if slot_idx == 0 {
+                    self.delay_line_mic1.len()
+                } else {
+                    self.delay_line_mic2.len()
+                };
+                let max_delay = line_len.saturating_sub(2);
+                let d_clamped = delay_samples.max(0.0).min(max_delay as f64);
+                d_int_arr[slot_idx] = (d_clamped.floor() as usize).min(max_delay);
+                d_frac_arr[slot_idx] = (d_clamped - d_int_arr[slot_idx] as f64) as f32;
+            }
+
+            self.cached_no_ir = Some(CabNoIrCache {
+                sr: self.sample_rate,
+                speaker_model: self.speaker_model,
+                hicut_hz: hicut_cur,
+                mics: self.mics.clone(),
+                total_gain: total_gain_arr,
+                d_int: d_int_arr,
+                d_frac: d_frac_arr,
+            });
+        }
+
+        let (total_gain_arr, d_int_arr, d_frac_arr) = {
+            let c = self.cached_no_ir.as_ref().unwrap();
+            (c.total_gain, c.d_int, c.d_frac)
+        };
 
         // Processa cada slot de microfone
         for slot_idx in 0..2 {
-            let mic = &self.mics[slot_idx];
-            if !mic.enabled || mic.mute {
+            if !self.mics[slot_idx].enabled || self.mics[slot_idx].mute {
                 continue;
             }
 
-            let gain = if mic.level_db <= -60.0 {
-                0.0
-            } else {
-                10.0f32.powf(mic.level_db / 20.0)
-            };
-            let sign = if mic.phase_invert { -1.0 } else { 1.0 };
-            let total_gain = (gain * sign) as f64;
+            let total_gain = total_gain_arr[slot_idx];
+            let d_int = d_int_arr[slot_idx];
+            let d_frac = d_frac_arr[slot_idx];
 
-            // Filtro de posição cap-to-edge (0.0 = centro/brilhante, 1.0 = borda/-8.5 dB em altas frequências)
-            let pos = mic.position_cap_to_edge.clamp(0.0, 1.0);
-            let pos_cut_db = -8.5 * pos as f64;
-            let pos_filter = if slot_idx == 0 {
-                self.mic1_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
-                &mut self.mic1_pos_filter
-            } else {
-                self.mic2_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
-                &mut self.mic2_pos_filter
-            };
-
-            // Efeito de proximidade para microfones direcionais (mais grave em distâncias curtas)
-            let dist_cm = mic.distance_cm.clamp(0.0, 30.0) as f64;
-            let prox_boost_db = 9.0 * (1.0 - (dist_cm / 20.0).clamp(0.0, 1.0));
-            let prox_filter = if slot_idx == 0 {
-                self.mic1_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
-                &mut self.mic1_prox_filter
-            } else {
-                self.mic2_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
-                &mut self.mic2_prox_filter
-            };
-
-            // Filtro de eixo off-axis (0° plano, 45° atenua brilho extremo > 3.5 kHz)
-            let angle_norm = (mic.angle_off_axis_deg / 45.0).clamp(0.0, 1.0) as f64;
-            let angle_cut_db = -6.0 * angle_norm;
-            let angle_filter = if slot_idx == 0 {
-                self.mic1_angle_filter
-                    .update_coeffs(BiquadFilter::high_shelf_sqrt2(3200.0, angle_cut_db, sr));
-                &mut self.mic1_angle_filter
-            } else {
-                self.mic2_angle_filter
-                    .update_coeffs(BiquadFilter::high_shelf_sqrt2(3200.0, angle_cut_db, sr));
-                &mut self.mic2_angle_filter
-            };
-
-            let (model_f1, model_f2) = if slot_idx == 0 {
-                (&mut self.mic1_model_f1, &mut self.mic1_model_f2)
-            } else {
-                (&mut self.mic2_model_f1, &mut self.mic2_model_f2)
-            };
-            match mic.model {
-                MicModel::Sm57 => {
-                    model_f1.update_coeffs(BiquadFilter::peaking(5600.0, 4.0, 2.5, sr));
-                    model_f2.update_coeffs(BiquadFilter::low_shelf_sqrt2(160.0, -3.5, sr));
-                }
-                MicModel::Md421 => {
-                    model_f1.update_coeffs(BiquadFilter::peaking(280.0, -2.5, 1.2, sr));
-                    model_f2.update_coeffs(BiquadFilter::peaking(4500.0, 3.5, 1.3, sr));
-                }
-                MicModel::M88 => {
-                    model_f1.update_coeffs(BiquadFilter::low_shelf_sqrt2(110.0, 2.5, sr));
-                    model_f2.update_coeffs(BiquadFilter::peaking(4000.0, 3.0, 1.5, sr));
-                }
-                MicModel::R121 => {
-                    model_f1.update_coeffs(BiquadFilter::low_shelf_sqrt2(130.0, 2.0, sr));
-                    model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(3800.0, -7.5, sr));
-                }
-                MicModel::M160 => {
-                    model_f1.update_coeffs(BiquadFilter::peaking(1800.0, 1.5, 1.0, sr));
-                    model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(5500.0, -5.0, sr));
-                }
-                MicModel::U87 => {
-                    model_f1.update_coeffs(BiquadFilter::high_shelf_sqrt2(8000.0, 2.5, sr));
-                    model_f2.update_coeffs(BiquadFilter::peaking(250.0, 0.5, 0.9, sr));
-                }
-                MicModel::C414 => {
-                    model_f1.update_coeffs(BiquadFilter::peaking(3500.0, 3.0, 1.2, sr));
-                    model_f2.update_coeffs(BiquadFilter::high_shelf_sqrt2(9500.0, 4.0, sr));
-                }
-            }
-
-            // Atraso de propagação de microfone: delta t = d_cm * 0.01 / 343.0 s
-            let delay_sec = (dist_cm * 0.01) / 343.0;
-            let delay_samples = delay_sec * sr;
-
-            let (delay_line, delay_pos) = if slot_idx == 0 {
-                (&mut self.delay_line_mic1, &mut self.delay_pos_mic1)
-            } else {
-                (&mut self.delay_line_mic2, &mut self.delay_pos_mic2)
-            };
+            let (pos_filter, prox_filter, angle_filter, model_f1, model_f2, delay_line, delay_pos) =
+                if slot_idx == 0 {
+                    (
+                        &mut self.mic1_pos_filter,
+                        &mut self.mic1_prox_filter,
+                        &mut self.mic1_angle_filter,
+                        &mut self.mic1_model_f1,
+                        &mut self.mic1_model_f2,
+                        &mut self.delay_line_mic1,
+                        &mut self.delay_pos_mic1,
+                    )
+                } else {
+                    (
+                        &mut self.mic2_pos_filter,
+                        &mut self.mic2_prox_filter,
+                        &mut self.mic2_angle_filter,
+                        &mut self.mic2_model_f1,
+                        &mut self.mic2_model_f2,
+                        &mut self.delay_line_mic2,
+                        &mut self.delay_pos_mic2,
+                    )
+                };
 
             let line_len = delay_line.len();
-            let max_delay = line_len.saturating_sub(2);
-            let d_clamped = delay_samples.max(0.0).min(max_delay as f64);
-            let d_int = (d_clamped.floor() as usize).min(max_delay);
-            let d_frac = (d_clamped - d_int as f64) as f32;
+            let mask = line_len - 1;
+            debug_assert!(line_len.is_power_of_two());
 
             for i in 0..input.len() {
                 let x = input[i];
                 delay_line[*delay_pos] = x;
 
-                let r_idx0 = (*delay_pos + line_len - d_int) % line_len;
-                let r_idx1 = (r_idx0 + line_len - 1) % line_len;
+                let r_idx0 = (*delay_pos + line_len - d_int) & mask;
+                let r_idx1 = (r_idx0 + line_len - 1) & mask;
                 let delayed = delay_line[r_idx0] * (1.0 - d_frac) + delay_line[r_idx1] * d_frac;
-                *delay_pos = (*delay_pos + 1) % line_len;
+                *delay_pos = (*delay_pos + 1) & mask;
 
                 // Passa pelos filtros acústicos do microfone e resposta do modelo
                 let mut s = delayed as f64;
