@@ -618,15 +618,44 @@ impl PartitionedConvolverState {
         };
         let x = &self.fdl[fdl_idx];
         let h = &data.tail_partitions[p];
-        let acc_re = &mut self.acc_soa.re;
-        let acc_im = &mut self.acc_soa.im;
-        for k in 0..SPEC_SOA_LEN {
-            let ar = x.re[k];
-            let ai = x.im[k];
-            let br = h.re[k];
-            let bi = h.im[k];
-            acc_re[k] += ar * br - ai * bi;
-            acc_im[k] += ar * bi + ai * br;
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use std::arch::x86_64::*;
+            let xr = x.re.as_ptr();
+            let xi = x.im.as_ptr();
+            let hr = h.re.as_ptr();
+            let hi = h.im.as_ptr();
+            let ar = self.acc_soa.re.as_mut_ptr();
+            let ai = self.acc_soa.im.as_mut_ptr();
+            let mut k = 0usize;
+            while k < SPEC_SOA_LEN {
+                let x_re = _mm_load_ps(xr.add(k));
+                let x_im = _mm_load_ps(xi.add(k));
+                let h_re = _mm_load_ps(hr.add(k));
+                let h_im = _mm_load_ps(hi.add(k));
+                let a_re = _mm_load_ps(ar.add(k));
+                let a_im = _mm_load_ps(ai.add(k));
+                let prod_rr = _mm_mul_ps(x_re, h_re);
+                let prod_ii = _mm_mul_ps(x_im, h_im);
+                let prod_ri = _mm_mul_ps(x_re, h_im);
+                let prod_ir = _mm_mul_ps(x_im, h_re);
+                _mm_store_ps(ar.add(k), _mm_add_ps(a_re, _mm_sub_ps(prod_rr, prod_ii)));
+                _mm_store_ps(ai.add(k), _mm_add_ps(a_im, _mm_add_ps(prod_ri, prod_ir)));
+                k += 4;
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let acc_re = &mut self.acc_soa.re;
+            let acc_im = &mut self.acc_soa.im;
+            for k in 0..SPEC_SOA_LEN {
+                let ar = x.re[k];
+                let ai = x.im[k];
+                let br = h.re[k];
+                let bi = h.im[k];
+                acc_re[k] += ar * br - ai * bi;
+                acc_im[k] += ar * bi + ai * br;
+            }
         }
         self.last_call_macs = self.last_call_macs.saturating_add(1);
     }

@@ -1797,6 +1797,16 @@ impl AmpCore {
             * (0.93 + 0.07 * ((bias_ma_f - 20.0) / 35.0).clamp(0.0, 1.0));
         let power_out_scale = 0.30 * tube_out_scale * spongy_power_atten;
         let has_presence = self.model_id.has_presence();
+        let has_voicing1 = self.voicing_filter1.b0 != 1.0
+            || self.voicing_filter1.b1 != 0.0
+            || self.voicing_filter1.b2 != 0.0
+            || self.voicing_filter1.a1 != 0.0
+            || self.voicing_filter1.a2 != 0.0;
+        let has_voicing2 = self.voicing_filter2.b0 != 1.0
+            || self.voicing_filter2.b1 != 0.0
+            || self.voicing_filter2.b2 != 0.0
+            || self.voicing_filter2.a1 != 0.0
+            || self.voicing_filter2.a2 != 0.0;
         let lf_alpha = (150.0 * 2.0 * std::f64::consts::PI / sr).min(0.2);
 
         for i in 0..input.len() {
@@ -1975,8 +1985,16 @@ impl AmpCore {
 
                 // Model Voicing
                 let v_voiced = {
-                    let va = self.voicing_filter1.process(v_base);
-                    self.voicing_filter2.process(va)
+                    let va = if has_voicing1 {
+                        self.voicing_filter1.process(v_base)
+                    } else {
+                        v_base
+                    };
+                    if has_voicing2 {
+                        self.voicing_filter2.process(va)
+                    } else {
+                        va
+                    }
                 };
 
                 // Twin Reverb vibrato channel mixes Spring Reverb before PI
