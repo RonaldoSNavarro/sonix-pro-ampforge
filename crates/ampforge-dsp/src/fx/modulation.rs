@@ -79,6 +79,12 @@ pub struct ModulationProcessor {
     rotary_lp2: ModBiquad,
     rotary_hp1: ModBiquad,
     rotary_hp2: ModBiquad,
+    cached_sr: f32,
+    bbd_lp_alpha: f32,
+    alpha_ldr_att: f32,
+    alpha_ldr_rel: f32,
+    alpha_horn_acc: f32,
+    alpha_drum_acc: f32,
 }
 
 impl ModulationProcessor {
@@ -137,6 +143,12 @@ impl ModulationProcessor {
             rotary_lp2: ModBiquad::butterworth_lp(800.0, sr),
             rotary_hp1: ModBiquad::butterworth_hp(800.0, sr),
             rotary_hp2: ModBiquad::butterworth_hp(800.0, sr),
+            cached_sr: 0.0,
+            bbd_lp_alpha: 0.0,
+            alpha_ldr_att: 0.0,
+            alpha_ldr_rel: 0.0,
+            alpha_horn_acc: 0.0,
+            alpha_drum_acc: 0.0,
         }
     }
 
@@ -283,11 +295,23 @@ impl ModulationProcessor {
         };
         let buf_len = self.delay_buffer.len();
         let dry_len = self.tzf_dry_buffer.len();
-        let bbd_lp_alpha = 1.0 - (-two_pi * 4500.0 / self.sample_rate).exp();
-        let alpha_ldr_att = 1.0 - (-1.0 / ((DECISAO_SONIX_LDR_ATTACK_MS * 0.001) * self.sample_rate)).exp();
-        let alpha_ldr_rel = 1.0 - (-1.0 / ((DECISAO_SONIX_LDR_RELEASE_MS * 0.001) * self.sample_rate)).exp();
-        let alpha_horn_acc = 1.0 - (-1.0 / (DECISAO_SONIX_ROTARY_HORN_ACCEL_S * self.sample_rate)).exp();
-        let alpha_drum_acc = 1.0 - (-1.0 / (DECISAO_SONIX_ROTARY_DRUM_ACCEL_S * self.sample_rate)).exp();
+        if self.cached_sr != self.sample_rate {
+            self.bbd_lp_alpha = 1.0 - (-two_pi * 4500.0 / self.sample_rate).exp();
+            self.alpha_ldr_att =
+                1.0 - (-1.0 / ((DECISAO_SONIX_LDR_ATTACK_MS * 0.001) * self.sample_rate)).exp();
+            self.alpha_ldr_rel =
+                1.0 - (-1.0 / ((DECISAO_SONIX_LDR_RELEASE_MS * 0.001) * self.sample_rate)).exp();
+            self.alpha_horn_acc =
+                1.0 - (-1.0 / (DECISAO_SONIX_ROTARY_HORN_ACCEL_S * self.sample_rate)).exp();
+            self.alpha_drum_acc =
+                1.0 - (-1.0 / (DECISAO_SONIX_ROTARY_DRUM_ACCEL_S * self.sample_rate)).exp();
+            self.cached_sr = self.sample_rate;
+        }
+        let bbd_lp_alpha = self.bbd_lp_alpha;
+        let alpha_ldr_att = self.alpha_ldr_att;
+        let alpha_ldr_rel = self.alpha_ldr_rel;
+        let alpha_horn_acc = self.alpha_horn_acc;
+        let alpha_drum_acc = self.alpha_drum_acc;
         let target_horn_hz = if self.rotary_fast {
             DECISAO_SONIX_ROTARY_HORN_FAST_HZ
         } else {

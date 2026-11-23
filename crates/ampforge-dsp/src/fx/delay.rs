@@ -65,6 +65,27 @@ pub struct DelayProcessor {
     rev_grain_ready: bool,
     // Contador O(1) para invalidar caudas sem memset no callback RT
     samples_since_clear: usize,
+    cached_coeffs: Option<DelayCachedCoeffs>,
+}
+
+#[derive(Clone, Copy)]
+struct DelayCachedCoeffs {
+    sr: f32,
+    model: DelayModel,
+    re201_mode: u8,
+    ducking_threshold_db: f32,
+    ducking_attenuation_db: f32,
+    ducking_release_ms: f32,
+    glide_alpha: f32,
+    bbd_lp_alpha: f32,
+    wow_depth_samples: f32,
+    wow_peak_rel: f32,
+    wow_gate_alpha: f32,
+    threshold_lin: f32,
+    max_duck_gain: f32,
+    duck_att_alpha: f32,
+    duck_rel_coeff: f32,
+    duck_rec_alpha: f32,
 }
 
 impl DelayProcessor {
@@ -109,6 +130,7 @@ impl DelayProcessor {
             rev_write_pos: 0,
             rev_grain_ready: false,
             samples_since_clear: usize::MAX,
+            cached_coeffs: None,
         };
         p.update_wet_eq();
         p
@@ -265,8 +287,91 @@ impl DelayProcessor {
         if self.current_delay_samples < 0.0 {
             self.current_delay_samples = target_delay_samples;
         }
-        let glide_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.030)).exp();
-        let bbd_lp_alpha = 1.0 - (-2.0 * std::f32::consts::PI * 2400.0 / self.sample_rate).exp();
+        let (
+            glide_alpha,
+            bbd_lp_alpha,
+            wow_depth_samples,
+            wow_peak_rel,
+            wow_gate_alpha,
+            threshold_lin,
+            max_duck_gain,
+            duck_att_alpha,
+            duck_rel_coeff,
+            duck_rec_alpha,
+        ) = if let Some(c) = self.cached_coeffs.filter(|c| {
+            c.sr == self.sample_rate
+                && c.model == self.model
+                && c.re201_mode == self.re201_mode
+                && c.ducking_threshold_db == self.ducking_threshold_db
+                && c.ducking_attenuation_db == self.ducking_attenuation_db
+                && c.ducking_release_ms == self.ducking_release_ms
+        }) {
+            (
+                c.glide_alpha,
+                c.bbd_lp_alpha,
+                c.wow_depth_samples,
+                c.wow_peak_rel,
+                c.wow_gate_alpha,
+                c.threshold_lin,
+                c.max_duck_gain,
+                c.duck_att_alpha,
+                c.duck_rel_coeff,
+                c.duck_rec_alpha,
+            )
+        } else {
+            let glide_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.030)).exp();
+            let bbd_lp_alpha = 1.0 - (-2.0 * std::f32::consts::PI * 2400.0 / self.sample_rate).exp();
+            let echo_on_init = if self.model == DelayModel::MultiHeadTapeEcho {
+                self.re201_mode != 12
+            } else {
+                true
+            };
+            let wow_depth_samples = if self.model == DelayModel::MultiHeadTapeEcho && echo_on_init {
+                let r_peak = 2.0f32.powf(DECISAO_SONIX_RE201_WOW_CENTS / 1200.0) - 1.0;
+                r_peak * self.sample_rate
+                    / (2.0 * std::f32::consts::PI * DECISAO_SONIX_RE201_WOW_HZ)
+            } else {
+                0.0
+            };
+            let wow_peak_rel = (-1.0 / (self.sample_rate * 0.200)).exp();
+            let wow_gate_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.002)).exp();
+            let threshold_lin = 10.0f32.powf(self.ducking_threshold_db / 20.0);
+            let max_duck_gain = 10.0f32.powf(self.ducking_attenuation_db / 20.0);
+            let duck_rel_coeff =
+                (-1.0 / (self.sample_rate * (self.ducking_release_ms * 0.001))).exp();
+            let duck_att_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.015)).exp();
+            let duck_rec_alpha = 1.0 - duck_rel_coeff;
+            self.cached_coeffs = Some(DelayCachedCoeffs {
+                sr: self.sample_rate,
+                model: self.model,
+                re201_mode: self.re201_mode,
+                ducking_threshold_db: self.ducking_threshold_db,
+                ducking_attenuation_db: self.ducking_attenuation_db,
+                ducking_release_ms: self.ducking_release_ms,
+                glide_alpha,
+                bbd_lp_alpha,
+                wow_depth_samples,
+                wow_peak_rel,
+                wow_gate_alpha,
+                threshold_lin,
+                max_duck_gain,
+                duck_att_alpha,
+                duck_rel_coeff,
+                duck_rec_alpha,
+            });
+            (
+                glide_alpha,
+                bbd_lp_alpha,
+                wow_depth_samples,
+                wow_peak_rel,
+                wow_gate_alpha,
+                threshold_lin,
+                max_duck_gain,
+                duck_att_alpha,
+                duck_rel_coeff,
+                duck_rec_alpha,
+            )
+        };
         let buf_len = self.buffer.len();
         let feedback_gain = self.feedback_pct / 100.0;
 
@@ -314,21 +419,6 @@ impl DelayProcessor {
             0.0
         };
         let wow_step = 2.0 * std::f32::consts::PI * DECISAO_SONIX_RE201_WOW_HZ / self.sample_rate;
-        let wow_depth_samples = if self.model == DelayModel::MultiHeadTapeEcho && echo_on {
-            let r_peak = 2.0f32.powf(DECISAO_SONIX_RE201_WOW_CENTS / 1200.0) - 1.0;
-            r_peak * self.sample_rate
-                / (2.0 * std::f32::consts::PI * DECISAO_SONIX_RE201_WOW_HZ)
-        } else {
-            0.0
-        };
-        let wow_peak_rel = (-1.0 / (self.sample_rate * 0.200)).exp();
-        let wow_gate_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.002)).exp();
-
-        let threshold_lin = 10.0f32.powf(self.ducking_threshold_db / 20.0);
-        let max_duck_gain = 10.0f32.powf(self.ducking_attenuation_db / 20.0);
-        let duck_rel_coeff = (-1.0 / (self.sample_rate * (self.ducking_release_ms * 0.001))).exp();
-        let duck_att_alpha = 1.0 - (-1.0 / (self.sample_rate * 0.015)).exp();
-        let duck_rec_alpha = 1.0 - duck_rel_coeff;
 
         for i in 0..input.len() {
             let in_sample = if self.bypassed && self.spillover_enabled {

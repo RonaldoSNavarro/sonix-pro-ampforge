@@ -645,8 +645,22 @@ impl PartitionedConvolverState {
         let h_len = data.head_len;
         let hist = &self.head_circ[pos..pos + h_len];
         let h_taps = &data.head_taps[..h_len];
-        let mut y_head = 0.0f32;
-        for (&h, &f) in hist.iter().zip(h_taps.iter()) {
+        let mut s0 = 0.0f32;
+        let mut s1 = 0.0f32;
+        let mut s2 = 0.0f32;
+        let mut s3 = 0.0f32;
+        let h_chunks = hist.chunks_exact(4);
+        let f_chunks = h_taps.chunks_exact(4);
+        let h_rem = h_chunks.remainder();
+        let f_rem = f_chunks.remainder();
+        for (hc, fc) in h_chunks.zip(f_chunks) {
+            s0 += hc[0] * fc[0];
+            s1 += hc[1] * fc[1];
+            s2 += hc[2] * fc[2];
+            s3 += hc[3] * fc[3];
+        }
+        let mut y_head = (s0 + s2) + (s1 + s3);
+        for (&h, &f) in h_rem.iter().zip(f_rem.iter()) {
             y_head += h * f;
         }
 
