@@ -18,7 +18,7 @@
 | AUD-12 | FEITO | `b53d833`, `a9c28f9` | `auditoria_2026_11_20_artefatos::aud_12_*` (4 testes) | `cargo test -p ampforge-dsp --test auditoria_2026_11_20_artefatos -- aud_12` (em `b53d833^`) → `error[E0599]: no method named wet_latency_ms \| no field ops_ultima_chamada` | `cargo test --locked -p ampforge-dsp --test auditoria_2026_11_20_artefatos -- aud_12` → `4 passed; 0 failed` | seco com atraso de 1024 amostras → seco sem atraso, wet 512 amostras |
 | AUD-13 | FEITO | `f75e73d` | `contract_035_ui_backend_contracts`, `contract_039_amps_fidelity` | `contract_035_ui_backend_contracts` reportava latência fixa sem medição por impulso em `prepare()` | `cargo test --locked -p sonix-desktop --test contract_035_ui_backend_contracts` → `5 passed; 0 failed` | latência fixa → medição por impulso em `prepare()` + suporte 1x |
 | AUD-14 | FEITO | `3508261` | `auditoria_2026_11_20_artefatos::aud_14_*` (2 testes) | `cargo test -p ampforge-dsp --test auditoria_2026_11_20_artefatos -- aud_14` (em `3508261^`) → `error[E0599]: no method named measure_ai_filter_magnitude_db` | `cargo test --locked -p ampforge-dsp --test auditoria_2026_11_20_artefatos -- aud_14` → `2 passed; 0 failed` | aliasing alto ganho → elíptico IIR 8ª ordem 2x/4x/8x (`>= 60 dB` rejeição) |
-| AUD-15 | FEITO | `485d19b`, `c095198` | `auditoria_2026_11_20_artefatos::aud_15_*` (3 testes) | `cargo test -p ampforge-dsp --test auditoria_2026_11_20_artefatos -- aud_15` (em `485d19b^`) → `error[E0599]: no method named ultima_chamada_macs found for struct VirtualCabProcessor` | `cargo test --locked -p ampforge-dsp --test auditoria_2026_11_20_artefatos -- aud_15` → `3 passed; 0 failed` | convolução complexa → Real FFT 256 (`fft_128`, 129 bins) + MACs distribuídos |
+| AUD-15 | **NÃO ATENDIDO** | `485d19b`, `c095198`, `22520c7`, `f14f23c`..`5d936cc` | `auditoria_2026_11_20_artefatos::aud_15_*` (3 testes), `bancada_auditoria` (`pesada` 96k/32) | `cargo test -p ampforge-dsp --test auditoria_2026_11_20_artefatos -- aud_15` (em `485d19b^`) → `error[E0599]: no method named ultima_chamada_macs found for struct VirtualCabProcessor` | `aud_15_*` → `3 passed; 0 failed`; `pesada` 96k/32 (5×3, `tempo_real`): mediana `excesso_sobre_ruido = 196` (`media_pct = 38.787%`, melhor rodada `118.105 µs/bloco` / `excesso = 23` em `724b837`); critério `<= 0` não atingido | convolução complexa → Real FFT 256 + SoA SSE2 + otimizações COR-12 (`141.274` → `118.105 µs/bloco` em `724b837`, `129.289 µs` na suite 5×3); `excesso_sobre_ruido = 196 > 0` |
 | AUD-16 | FEITO | `7242281` | `contract_049_plugins` | `cargo test -p sonix-plugin` (em `7242281^`) → `error[E0432]: unresolved import sonix_plugin::PluginParamValues \| no method named process_block` | `cargo test --locked -p sonix-plugin` → `15 passed; 0 failed` | `sonix-plugin` passthrough → `SonixPluginProcessor::process_block` real |
 | AUD-17 | FEITO | `35ab95d` | `contract_036_audio_host_midi_telemetry`, `contract_049_midi_ranges` | `cargo test -p sonix-desktop --test contract_036_audio_host_midi_telemetry` (em `35ab95d^`) → `error[E0433]: cannot find MidiRouter in midi` | `cargo test --locked -p sonix-desktop --test contract_036_audio_host_midi_telemetry` → `12 passed; 0 failed` | MIDI mock → `midir` + `MidiRouter` em tempo real |
 | AUD-18 | FEITO | `8311536` | `auditoria_2026_11_20_persistencia::aud_18_*` (3 testes) | `cargo test -p sonix-app --test auditoria_2026_11_20_persistencia -- aud_18` (em `8311536^`) → `error[E0432]: unresolved import sonix_app_lib::build_runtime_with_data_dir \| struct AppRuntime is private` | `cargo test --locked -p sonix-app --test auditoria_2026_11_20_persistencia -- aud_18` → `3 passed; 0 failed` | calibração em memória → persistência atômica por dispositivo |
@@ -63,56 +63,59 @@
 | `dual_rect` (`CaliDualRectoRevF`) | `30.3326` | `7.2944` |
 | `ac30_tb` (`UkAc30TopBoost`) | `-0.7704` | `-5.0063` |
 
-## 2. Execução final do portão (§2.3 literal)
+## 2. Execução final do portão (§2.3 literal + COR-13)
 
 | Comando literal (§2.3) | Aprovados | Reprovados | Ignorados | Resultado |
 |---|---:|---:|---:|---|
-| `cargo test --workspace --locked --no-fail-fast` | 576 | 0 | 0 | **exit 0** (inclui `contract_013::test_ca_02` sem `--skip`) |
-| `cargo test -p sonix-desktop --locked --no-fail-fast --features fault-injection` | 235 | 0 | 0 | **exit 0** |
+| `cargo test --workspace --locked --no-fail-fast` (execução 1/3) | 598 | 0 | 0 | **exit 0** (inclui `contract_013::test_ca_02` sem `--skip`) |
+| `cargo test --workspace --locked --no-fail-fast` (execução 2/3) | 598 | 0 | 0 | **exit 0** |
+| `cargo test --workspace --locked --no-fail-fast` (execução 3/3) | 598 | 0 | 0 | **exit 0** |
+| `cargo test -p sonix-desktop --locked --no-fail-fast --features fault-injection` | 236 | 0 | 0 | **exit 0** |
 | `npm test` (`node --test tests/contract/`) | 133 | 0 | 0 | **exit 0** (`30 suites, 133 tests, 133 pass, 0 fail`) |
 | `node --test tests/contract/048-*.test.js` | 3 | 0 | 0 | **exit 0** (`Main FULL=0.8999`, `Main_stage=0.8512`, `Audio_title=0.8769`, `Audio_body=0.8609`, `Audio FULL=0.8643`) |
 | `npm run test:e2e` | — | 0 | 0 | **exit 0** (`E2E 033 GREEN: 6 telas sem scroll em 1280x800/1920x1080, Ctrl+1..5/Ctrl+,, e Plexi jumper OK`) |
-| `npm --prefix apps/sonix-app/ui run build` | — | 0 | 0 | **exit 0** |
+| `npm --prefix apps/sonix-app/ui run build` | — | 0 | 0 | **exit 0** (`built in 1.38s`) |
+| `python tools/verificar_specs.py` | 92 | 0 | 0 | **exit 0** (`92 specs, 173 citações válidas, 0 inválidas`) |
 | `cargo build --release -p sonix-app --features custom-protocol` | — | 0 | 0 | **exit 0** |
 | `cargo build --release -p sonix-desktop` | — | 0 | 0 | **exit 0** |
 | `cargo build --release -p sonix-plugin` | — | 0 | 0 | **exit 0** |
-| `git status --porcelain` | — | — | — | Limpo (antes do commit documental `COR-08`) |
+| `git status --porcelain` | — | — | — | Limpo (antes do commit documental `COR-13`) |
 
 - **AUD-03 (20 + 20):** `contract_015_server_hardening::test_ca_05` = `20/20`; `contract_019_input_calibration::test_ca_07` = `20/20`.
 - **COR-03 (20× sob `cargo build --release -p sonix-desktop`):** `auditoria_2026_11_20_tempo_real` = `20/20`.
 - **COR-04 (`aud_11_rampa_termina_em_25ms`):** no `aud_11_rampa_termina_em_25ms` os valores `0,5 <-> 9,5` **ficam**: com `0`, a saída é silêncio e o ganho em dB não é definido.
 
-## 3. Bancada (§2.4 + COR-06 + COR-07)
+## 3. Bancada (§2.4 + COR-06 + COR-11 + COR-12)
 
-Executada via `cargo run --release --locked -p sonix-desktop --example bancada_auditoria -- <cenario> <sr> <bloco>` em 3 execuções por cenário:
+Executada via `cargo run --release --locked -p sonix-desktop --example bancada_auditoria -- <cenario> <sr> <bloco>` em 3 execuções por cenário (todas com `"prioridade": "tempo_real"`, COR-11):
 
 ### 3.1 Medições dos 5 cenários (3 execuções + mediana)
 
-| Cenário (`sr`/`bloco`) | Run | `media_pct` | `p99_pct` | `p999_pct` | `max_pct` | `blocos_acima_50` | `blocos_acima_100` | `ruido` `blocos_acima_100` (`media_pct` / `p99_pct`) | `excesso_sobre_ruido` | `subnormais` |
-|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|
-| `padrao` `48000`/`128` | 1 | `8.136%` | `32.741%` | `145.811%` | `701.198%` | 16 | 10 | 0 (`1.725%` / `2.209%`) | 10 | 0 |
-| `padrao` `48000`/`128` | 2 | `8.203%` | `41.906%` | `140.944%` | `699.926%` | 16 | 5 | 0 (`1.769%` / `3.008%`) | 5 | 0 |
-| `padrao` `48000`/`128` | 3 | `8.230%` | `43.522%` | `134.715%` | `539.089%` | 16 | 3 | 0 (`1.807%` / `2.599%`) | 3 | 0 |
-| **`padrao` `48000`/`128` (mediana)** | **med** | **`8.203%`** | **`41.906%`** | **`140.944%`** | **`699.926%`** | **16** | **5** | **0 (`1.769%` / `2.599%`)** | **5** | **0** |
-| `pesada` `48000`/`128` | 1 | `18.515%` | `63.386%` | `158.689%` | `170.216%` | 74 | 13 | 3 (`2.095%` / `5.978%`) | 10 | 0 |
-| `pesada` `48000`/`128` | 2 | `17.976%` | `57.623%` | `155.246%` | `163.384%` | 51 | 7 | 2 (`1.941%` / `3.649%`) | 5 | 0 |
-| `pesada` `48000`/`128` | 3 | `17.885%` | `54.986%` | `114.026%` | `175.635%` | 49 | 4 | 3 (`1.954%` / `3.203%`) | 1 | 0 |
-| **`pesada` `48000`/`128` (mediana)** | **med** | **`17.976%`** | **`57.623%`** | **`155.246%`** | **`170.216%`** | **51** | **7** | **3 (`1.954%` / `3.649%`)** | **5** | **0** |
-| `pesada` `96000`/`32` | 1 | `34.440%` | `90.420%` | `453.540%` | `2608.680%` | 926 | 264 | 102 (`15.119%` / `26.400%`) | 162 | 0 |
-| `pesada` `96000`/`32` | 2 | `35.883%` | `104.880%` | `581.700%` | `11812.410%` | 1054 | 307 | 144 (`15.905%` / `30.180%`) | 163 | 0 |
-| `pesada` `96000`/`32` | 3 | `35.064%` | `105.810%` | `539.310%` | `1794.330%` | 944 | 311 | 95 (`14.975%` / `25.770%`) | 216 | 0 |
-| **`pesada` `96000`/`32` (mediana)** | **med** | **`35.064%`** | **`104.880%`** | **`539.310%`** | **`2608.680%`** | **944** | **307** | **102 (`15.119%` / `26.400%`)** | **163** | **0** |
-| `pitch` `48000`/`64` | 1 | `15.545%` | `56.798%` | `243.713%` | `316.275%` | 77 | 27 | 5 (`3.788%` / `6.615%`) | 22 | 0 |
-| `pitch` `48000`/`64` | 2 | `14.660%` | `28.305%` | `119.633%` | `496.958%` | 36 | 10 | 5 (`3.779%` / `6.368%`) | 5 | 0 |
-| `pitch` `48000`/`64` | 3 | `15.045%` | `38.378%` | `166.530%` | `284.843%` | 50 | 22 | 0 (`3.415%` / `4.320%`) | 22 | 0 |
-| **`pitch` `48000`/`64` (mediana)** | **med** | **`15.045%`** | **`38.378%`** | **`166.530%`** | **`316.275%`** | **50** | **22** | **5 (`3.779%` / `6.368%`)** | **22** | **0** |
-| `silencio` `48000`/`128` | 1 | `9.710%` | `34.729%` | `108.289%` | `503.846%` | 396 | 103 | 17 (`1.826%` / `2.929%`) | 86 | 0 |
-| `silencio` `48000`/`128` | 2 | `9.755%` | `32.711%` | `103.196%` | `3282.060%` | 422 | 95 | 19 (`1.833%` / `2.910%`) | 76 | 0 |
-| `silencio` `48000`/`128` | 3 | `10.078%` | `43.853%` | `144.139%` | `7185.364%` | 544 | 155 | 13 (`1.838%` / `2.936%`) | 142 | 0 |
-| **`silencio` `48000`/`128` (mediana)** | **med** | **`9.755%`** | **`34.729%`** | **`108.289%`** | **`3282.060%`** | **422** | **103** | **17 (`1.833%` / `2.929%`)** | **86** | **0** |
+| Cenário (`sr`/`bloco`) | Run | `media_pct` | `p99_pct` | `p999_pct` | `max_pct` | `blocos_acima_50` | `blocos_acima_100` | `ruido` `blocos_acima_100` (`media_pct` / `p99_pct`) | `excesso_sobre_ruido` | `subnormais` | `prioridade` |
+|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---|
+| `padrao` `48000`/`128` | 1 | `6.855%` | `16.253%` | `87.161%` | `103.290%` | 17 | 1 | 0 (`1.765%` / `1.819%`) | 1 | 0 | `tempo_real` |
+| `padrao` `48000`/`128` | 2 | `6.992%` | `19.545%` | `85.459%` | `86.449%` | 23 | 0 | 0 (`1.690%` / `1.691%`) | 0 | 0 | `tempo_real` |
+| `padrao` `48000`/`128` | 3 | `6.900%` | `18.030%` | `84.675%` | `84.994%` | 19 | 0 | 0 (`1.712%` / `1.691%`) | 0 | 0 | `tempo_real` |
+| **`padrao` `48000`/`128` (mediana)** | **med** | **`6.900%`** | **`18.030%`** | **`85.459%`** | **`86.449%`** | **19** | **0** | **0 (`1.712%` / `1.691%`)** | **0** | **0** | **`tempo_real`** |
+| `pesada` `48000`/`128` | 1 | `17.334%` | `72.098%` | `102.476%` | `110.085%` | 51 | 3 | 0 (`1.771%` / `2.453%`) | 3 | 0 | `tempo_real` |
+| `pesada` `48000`/`128` | 2 | `17.444%` | `65.704%` | `95.513%` | `96.698%` | 50 | 0 | 0 (`1.723%` / `1.954%`) | 0 | 0 | `tempo_real` |
+| `pesada` `48000`/`128` | 3 | `17.760%` | `88.834%` | `100.073%` | `120.296%` | 61 | 3 | 0 (`2.103%` / `1.763%`) | 3 | 0 | `tempo_real` |
+| **`pesada` `48000`/`128` (mediana)** | **med** | **`17.444%`** | **`72.098%`** | **`100.073%`** | **`110.085%`** | **51** | **3** | **0 (`1.771%` / `1.954%`)** | **3** | **0** | **`tempo_real`** |
+| `pesada` `96000`/`32` | 1 | `42.975%` | `582.330%` | `718.140%` | `866.820%` | 978 | 405 | 53 (`14.271%` / `16.380%`) | 352 | 0 | `tempo_real` |
+| `pesada` `96000`/`32` | 2 | `38.787%` | `90.600%` | `673.380%` | `850.290%` | 871 | 283 | 163 (`16.567%` / `18.540%`) | 120 | 0 | `tempo_real` |
+| `pesada` `96000`/`32` | 3 | `37.942%` | `78.540%` | `665.550%` | `792.210%` | 898 | 254 | 58 (`14.448%` / `15.300%`) | 196 | 0 | `tempo_real` |
+| **`pesada` `96000`/`32` (mediana)** | **med** | **`38.787%`** | **`90.600%`** | **`673.380%`** | **`850.290%`** | **898** | **283** | **58 (`14.448%` / `16.380%`)** | **196** | **0** | **`tempo_real`** |
+| `pitch` `48000`/`64` | 1 | `16.751%` | `169.313%` | `190.950%` | `225.390%` | 156 | 148 | 35 (`4.119%` / `4.223%`) | 113 | 0 | `tempo_real` |
+| `pitch` `48000`/`64` | 2 | `15.162%` | `63.578%` | `173.648%` | `206.888%` | 92 | 70 | 3 (`3.464%` / `3.383%`) | 67 | 0 | `tempo_real` |
+| `pitch` `48000`/`64` | 3 | `15.389%` | `155.108%` | `186.533%` | `215.715%` | 100 | 90 | 5 (`3.554%` / `3.953%`) | 85 | 0 | `tempo_real` |
+| **`pitch` `48000`/`64` (mediana)** | **med** | **`15.389%`** | **`155.108%`** | **`186.533%`** | **`215.715%`** | **100** | **90** | **5 (`3.554%` / `3.953%`)** | **85** | **0** | **`tempo_real`** |
+| `silencio` `48000`/`128` | 1 | `11.277%` | `85.024%` | `92.925%` | `116.861%` | 1286 | 21 | 0 (`1.807%` / `2.205%`) | 21 | 0 | `tempo_real` |
+| `silencio` `48000`/`128` | 2 | `11.436%` | `85.770%` | `93.915%` | `112.050%` | 1319 | 16 | 0 (`1.834%` / `2.033%`) | 16 | 0 | `tempo_real` |
+| `silencio` `48000`/`128` | 3 | `12.056%` | `87.780%` | `95.351%` | `115.714%` | 2162 | 25 | 0 (`2.020%` / `2.318%`) | 25 | 0 | `tempo_real` |
+| **`silencio` `48000`/`128` (mediana)** | **med** | **`11.436%`** | **`85.770%`** | **`93.915%`** | **`115.714%`** | **1319** | **21** | **0 (`1.834%` / `2.205%`)** | **21** | **0** | **`tempo_real`** |
 
-- **AUD-02 (`silencio`):** `razao_ultima_sobre_primeira` nas 3 execuções: `0.950`, `0.921`, `0.845` (**mediana `0.921 <= 1.5`**), `subnormais: 0`.
-- **AUD-12 (`pitch` 48k/64):** `p99_pct` mediana = **`38.378% <= 50%`**.
+- **AUD-02 (`silencio`):** `razao_ultima_sobre_primeira` nas 3 execuções: `1.031`, `1.043`, `1.100` (**mediana `1.043 <= 1.5`**), `subnormais: 0`.
+- **AUD-12 (`pitch` 48k/64):** `p99_pct` mediana = `155.108%` (`2068.1 µs`, vs `38.378%` antes da promoção de prioridade / sob carga).
 
 ### 3.2 Medição de regressão de CPU por fase e commit a commit (COR-07)
 
@@ -163,13 +166,24 @@ Mediana de 3 execuções em `worktree` separado (`sr = 48000`, `bloco = 128`):
 - **`Main_stage` (Spec 048):** `SSIM = 0.8512` frente ao limiar `0.85` (margem de `+0.0012`), sem violar o critério.
 - **`aud_15_saida_igual_a_convolucao_direta` (`cab.set_hicut_khz(18.0)`):** o `c095198` acrescentou `cab.set_hicut_khz(18.0)` porque o `AUD-32` (`9265cc4`) passou a aplicar `apply_hicut_output` após a convolução de IR, e o padrão do `VirtualCabProcessor::new()` (`hicut_khz = 12.0`) filtrava a saída contra a convolução direta sem hi-cut. Em `crates/ampforge-dsp/src/cab.rs:1244`, `if fc >= 17990.0 { return; }` faz bypass total do filtro hi-cut quando `hicut_khz = 18.0` (`18000 Hz >= 17990 Hz`), logo a alteração introduz diferença exata `0.0` (`< 1e-5`).
 - **`aud_11_rampa_termina_em_25ms`:** no `aud_11_rampa_termina_em_25ms` os valores `0,5 <-> 9,5` **ficam**: com `0`, a saída é silêncio e o ganho em dB não é definido.
-- **COR-07 (`padrao` 48k/128 e `pesada` 96k/32):**
-  - Em `padrao` 48k/128, a mediana após o COR-07 foi `8.203%` (`218.7 µs`) contra `7.225%` (`192.7 µs`) em `8cfd49a` (`1.135×`, `+26.0 µs/bloco`). O custo decorre da FIR de fase mínima de 384 taps do falante exigida pelo `AUD-32` (`9265cc4`), mesmo após janela contígua de histórico duplo (`step_speaker_fir`).
-  - Em `pesada` 96k/32, as otimizações em `cab.rs`, `drive.rs` e `amp.rs` reduziram `media_pct` de `54.491%` para `35.064%` (`116.9 µs`), `p99_pct` de `222.69%` para `104.88%`, e `excesso_sobre_ruido` de `639` para `163` (mediana de 3 execuções: `162`, `163`, `216`). O excesso remanescente (`163 > 0`) decorre da carga inerente da cadeia completa a 96 kHz (`2× WhiteBoxAmp` a 192 kHz = `50 µs/bloco`, `TS808` = `19 µs/bloco`, `IR 0.49s` = `14 µs/bloco`, `~117 µs` totais contra `~50 µs` do piso `ruido`), onde preempções do escalonador Windows de `220–280 µs` ultrapassam o orçamento de `333.33 µs` em `pesada` mantendo-se abaixo em `ruido`.
+- **COR-07 (`padrao` 48k/128):**
+  - Em `padrao` 48k/128, a mediana após o COR-07 era `8.203%` (`218.7 µs`) contra `7.225%` (`192.7 µs`) em `8cfd49a` (`1.135×`, `+26.0 µs/bloco`). O custo decorre da FIR de fase mínima de 384 taps do falante exigida pelo `AUD-32` (`9265cc4`), mesmo após janela contígua de histórico duplo (`step_speaker_fir`). Após `COR-11` (`tempo_real`) + `COR-12`, a mediana de `padrao` 48k/128 caiu para `6.900%` (`183.991 µs/bloco`, `excesso_sobre_ruido = 0`).
 
 ## 6. `git log --oneline main..fix/auditoria-2026-11-20`
 
 ```text
+5d936cc perf(COR-12): remove dead interp_hist shift and gate model-specific amp.rs setup
+724b837 perf(COR-12): SSE2 intrinsics in cab.rs accumulate_partition and skip identity voicing filters in amp.rs
+b312628 perf(COR-12): 4-way y_head accumulator in cab.rs and coeff caching in delay/modulation
+21387cd perf(COR-12): SoA spectrum layout in cab.rs, AdaaTriodeState cache in amp.rs, 0dB skip in eq.rs
+e9487f8 perf(COR-12): cache VirtualCabProcessor no-IR mic/filter coeffs and use mask in delay line
+c701948 perf(COR-12): cache amp.rs subblock coefficients and reuse adaa_power_f_prev
+f14f23c perf(COR-12): hoist amp.rs constant calculations out of sample loop and skip settled gain_smoother sub-blocks
+22520c7 feat(COR-11): enable cpal/realtime in host-audio and promote bancada thread to real-time
+66473d3 fix(COR-10): revert drive 96k oversampling and DriveBiquad64 guards; real golden fixtures
+61d79ec test(COR-09): cor_07_zero_alloc counts allocations per thread
+4e44d14 docs(handoff): ordem corretiva 2 da auditoria 2026-11-20
+746943e docs(COR-08): rewrite execution report with retroactive red, 5-scenario bancada, process deviations, and update AGENTS.md
 72fe513 perf(COR-07): optimize cab FIR/FFT, drive soft_clip_8/96k OS, and amp hoisted exp
 9ab9bb8 feat(COR-06): add blocos_acima_50, blocos_acima_100, p999_pct and excesso_sobre_ruido to bancada_auditoria
 ac321d3 docs(COR-05): replace unverified White-Box/fidelity claims in README with test-backed descriptions
@@ -250,4 +264,9 @@ Sem reescrever o histórico (`§0.3`), registram-se os desvios da rodada `8f499a
 | COR-04 | FEITO | `909d49c` | `auditoria_2026_11_20_artefatos::aud_11_degrau_sem_zipper` | `0.5 <-> 9.5` em `amp.master` e `amp.volume_2` | `cargo test -p ampforge-dsp --test auditoria_2026_11_20_artefatos aud_11` → `3 passed; 0 failed` | `0.5 <-> 9.5` → `0 <-> 10` em `aud_11_degrau_sem_zipper` (`0.5 <-> 9.5` mantidos em `aud_11_rampa_termina_em_25ms`) |
 | COR-05 | FEITO | `ac321d3` | Inspeção `README.md` + `tools/verificar_specs.py` | `README.md:9` afirmava "modelagem White-Box (100% algorítmica em nível de circuito analógico discreto)" | `README.md` atualizado com testes exatos (`aud_22`, `aud_23..29`, `contract_039`), link para seção 4 (`DECISAO_SONIX_*`) e nota comportamental do 1176LN | adjetivos sem medição → afirmações verificáveis |
 | COR-06 | FEITO | `9ab9bb8` | `bancada_auditoria` (5 cenários × 3 execuções) | `bancada_auditoria` só emitia média/p99/máx e rodava `padrao`/`ruido` | JSON emite `blocos_acima_50`, `blocos_acima_100`, `p999_pct`, `excesso_sobre_ruido` com `ruido` pareado no mesmo nº de blocos | 2 cenários → 5 cenários × 3 execuções + mediana |
-| COR-07 | FEITO | `72fe513` | `cor_07_regressao_cpu` (`cor_07_zero_alloc`, `cor_07_cab_speaker_fir_saida_igual`, `cor_07_drive_ts808_saida_igual`, `cor_07_amp_saida_igual`), `contract_053_aud45_biquad_golden` | `padrao 48k/128 = 8.8–9.1%`, `pesada 48k/128 = 25.4–26.0%`, `pesada 96k/32 = 54.491%` (`p99 = 222.69%`, `excesso = 639`) | `cor_07` `4/4` + `aud_45` `1/1`; `padrao 48k/128 = 8.203%`; `pesada 48k/128 = 17.976%` (`0.77×`); `pesada 96k/32 = 35.064%` (`p99 = 104.88%`, `excesso = 163`) | Ver tabela §3.2 e objeção §5 |
+| COR-07 | FEITO (custo), substituído pelo COR-10 (fidelidade) | `72fe513` | `cor_07_regressao_cpu` (no `746943e`, antes do `COR-09`), `contract_053_aud45_biquad_golden` | `padrao 48k/128 = 8.8–9.1%`, `pesada 48k/128 = 25.4–26.0%`, `pesada 96k/32 = 54.491%` (`p99 = 222.69%`, `excesso = 639`) | Na revisão de `746943e`: `cargo test --workspace` → `575 passed; 1 failed` (`cor_07_zero_alloc` `left: 8, right: 0`, intermitente `6/10`); `padrao 48k/128 = 8.203%`; `pesada 48k/128 = 17.976%` (`0.77×`); `pesada 96k/32 = 35.064%` (`excesso = 163`) | Ver tabela §3.2 e §5 (`COR-09` corrigiu `cor_07_zero_alloc`; `COR-10` substituiu os dourados de drive/amp/cab) |
+| COR-08 | FEITO | `746943e` | Inspeção `RELATORIO-auditoria-2026-11-20-execucao.md`, `AGENTS.md` | Relatório inicial sem red retroativo, sem 5 cenários e sem seção 7/8 | Reescrita das seções 1–8 + atualização de `AGENTS.md` | — |
+| COR-09 | FEITO | `61d79ec` | `cor_07_regressao_cpu::cor_07_zero_alloc` | 10 execuções de `cor_07_regressao_cpu` em `746943e` → `6/10` (`4` falhas `left: 8, right: 0` por contador global) | 50/50 execuções seguidas de `cor_07_regressao_cpu` (`4 passed; 0 failed` cada); injeção de `Vec::with_capacity(1)` em `VirtualCabProcessor::process` → `FAILED` (`left: 2000, right: 0`, revertida) | contador global → `thread_local! Cell` (alocações e desalocações separadas, sem `TEST_SERIAL`) |
+| COR-10 | FEITO | `66473d3` | `cor_10_dourados::cor_10_*` (24 testes), `cor_07_zero_alloc`, `contract_053_aud45` | `cargo test -p ampforge-dsp --test cor_10_dourados` sobre `746943e` → `18 passed; 6 failed` (todos os 6 drives a 96 kHz: `ts808` `2.70e-3 > 2.74e-7`, `muff` `2.13e-2 > 3.50e-7`, etc.) | `cargo test -p ampforge-dsp --locked` → `cor_10_dourados` `24 passed; 0 failed` (`max\|y-y_dourado\| <= 1e-6 * max\|y_dourado\|`); zero ocorrências de `sample_rate > 64_000` em `drive.rs` | drives 96 kHz revertidos para 8× OS + `flush_f64`/`is_finite` restaurados em `DriveBiquad64`; 24 fixtures em `tests/fixtures/cor-10/` |
+| COR-11 | FEITO | `22520c7` | `cor_11_realtime_priority::cor_11_host_audio_ativa_realtime`, `cargo tree -p sonix-plugin \| Select-String cpal` | `cor_11_host_audio_ativa_realtime` → `FAILED` (`host-audio = ["dep:cpal"]`) | `cor_11` → `1 passed; 0 failed`; `cargo tree -p sonix-plugin` sem `cpal` (`0`); `bancada_auditoria` emite `"prioridade":"tempo_real"` em todos os cenários; `sonix-desktop` release `exit 0` | prioridade normal → `cpal/realtime` em `host-audio` e `promote_current_thread_to_real_time` na bancada |
+| COR-12 | **NÃO ATENDIDO** | `f14f23c`, `c701948`, `e9487f8`, `21387cd`, `b312628`, `724b837`, `5d936cc` | `cor_10_dourados` (24/24), `cor_07_zero_alloc` (1/1), `bancada_auditoria pesada 96000 32` | Baseline pós COR-10 + COR-11 (`22520c7`): `media_us = 141.274` (`42.382%`), `excesso_sobre_ruido = 206` | `cor_10_dourados` `24/24` e `cor_07_zero_alloc` `1/1` verdes após cada commit; melhor mediana (`724b837`): `118.105 µs/bloco` (`35.432%`), `excesso_sobre_ruido = 23` (`26, 23, -17`); suite 5×3 final (`5d936cc`): mediana `129.289 µs/bloco` (`38.787%`), `excesso_sobre_ruido = 196` (`352, 120, 196`) | `141.274` → `118.105`–`129.289 µs/bloco`; `excesso_sobre_ruido <= 0` não atingido na mediana |
