@@ -507,10 +507,10 @@ struct AmpCore {
     presence_filter: BiquadFilter,
     voicing_filter1: BiquadFilter,
     voicing_filter2: BiquadFilter,
-    adaa_pre_prev: f64,
-    adaa_s2_prev: f64,
-    adaa_s3_prev: f64,
-    adaa_s4_prev: f64,
+    adaa_pre_prev: AdaaTriodeState,
+    adaa_s2_prev: AdaaTriodeState,
+    adaa_s3_prev: AdaaTriodeState,
+    adaa_s4_prev: AdaaTriodeState,
     adaa_power_prev: f64,
     adaa_power_f_prev: f64,
     interp_hist: [f64; 8],
@@ -729,17 +729,36 @@ fn antideriv_triode(u: f64, k_p: f64, k_n: f64) -> f64 {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct AdaaTriodeState {
+    prev_x: f64,
+    prev_f: f64,
+    prev_kp: f64,
+    prev_kn: f64,
+}
+
 #[inline(always)]
-fn triode_adaa1(x: f64, prev: &mut f64, k_p: f64, k_n: f64) -> f64 {
-    let dx = x - *prev;
+fn triode_adaa1(x: f64, state: &mut AdaaTriodeState, k_p: f64, k_n: f64) -> f64 {
+    let dx = x - state.prev_x;
     let y = if dx.abs() < 1e-5 {
-        let mid = 0.5 * (x + *prev);
+        let mid = 0.5 * (x + state.prev_x);
         let k = if mid >= 0.0 { k_p } else { k_n };
+        state.prev_x = x;
+        state.prev_kp = -1.0;
         mid / (1.0 + (k * mid) * (k * mid)).sqrt()
     } else {
-        (antideriv_triode(x, k_p, k_n) - antideriv_triode(*prev, k_p, k_n)) / dx
+        let f1 = antideriv_triode(x, k_p, k_n);
+        let f0 = if state.prev_kp == k_p && state.prev_kn == k_n {
+            state.prev_f
+        } else {
+            antideriv_triode(state.prev_x, k_p, k_n)
+        };
+        state.prev_x = x;
+        state.prev_f = f1;
+        state.prev_kp = k_p;
+        state.prev_kn = k_n;
+        (f1 - f0) / dx
     };
-    *prev = x;
     y
 }
 
@@ -1044,10 +1063,10 @@ impl AmpCore {
             presence_filter: BiquadFilter::default(),
             voicing_filter1: v1,
             voicing_filter2: v2,
-            adaa_pre_prev: 0.0,
-            adaa_s2_prev: 0.0,
-            adaa_s3_prev: 0.0,
-            adaa_s4_prev: 0.0,
+            adaa_pre_prev: AdaaTriodeState::default(),
+            adaa_s2_prev: AdaaTriodeState::default(),
+            adaa_s3_prev: AdaaTriodeState::default(),
+            adaa_s4_prev: AdaaTriodeState::default(),
             adaa_power_prev: 0.0,
             adaa_power_f_prev: 0.0,
             interp_hist: [0.0; 8],
@@ -1110,10 +1129,10 @@ impl AmpCore {
         let (v1, v2) = Self::create_voicing_filters(self.model_id, sr);
         self.voicing_filter1 = v1;
         self.voicing_filter2 = v2;
-        self.adaa_pre_prev = 0.0;
-        self.adaa_s2_prev = 0.0;
-        self.adaa_s3_prev = 0.0;
-        self.adaa_s4_prev = 0.0;
+        self.adaa_pre_prev = AdaaTriodeState::default();
+        self.adaa_s2_prev = AdaaTriodeState::default();
+        self.adaa_s3_prev = AdaaTriodeState::default();
+        self.adaa_s4_prev = AdaaTriodeState::default();
         self.adaa_power_prev = 0.0;
         self.adaa_power_f_prev = 0.0;
         self.interp_hist = [0.0; 8];

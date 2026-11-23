@@ -275,8 +275,9 @@ impl EqProcessor {
 
         let sr = self.sample_rate as f64;
         if !any_ramping {
-            let in_trim = 10.0f32.powf((self.input_gain_smoother.current() as f32) / 20.0);
-            if (in_trim - 1.0).abs() > 1e-5 {
+            let in_db = self.input_gain_smoother.current() as f32;
+            if in_db.abs() > 1e-4 {
+                let in_trim = 10.0f32.powf(in_db / 20.0);
                 for (o, &x) in output.iter_mut().zip(input.iter()) {
                     *o = x * in_trim;
                 }
@@ -302,8 +303,9 @@ impl EqProcessor {
                 );
             }
 
-            let out_trim = 10.0f32.powf((self.output_level_smoother.current() as f32) / 20.0);
-            if (out_trim - 1.0).abs() > 1e-5 {
+            let out_db = self.output_level_smoother.current() as f32;
+            if out_db.abs() > 1e-4 {
+                let out_trim = 10.0f32.powf(out_db / 20.0);
                 for s in output.iter_mut() {
                     *s *= out_trim;
                 }

@@ -492,11 +492,29 @@ fn rfft_256_inverse(
     }
 }
 
+const SPEC_SOA_LEN: usize = 132;
+
+#[derive(Debug, Clone, Copy)]
+#[repr(align(16))]
+struct SpecSoa {
+    re: [f32; SPEC_SOA_LEN],
+    im: [f32; SPEC_SOA_LEN],
+}
+
+impl Default for SpecSoa {
+    fn default() -> Self {
+        Self {
+            re: [0.0; SPEC_SOA_LEN],
+            im: [0.0; SPEC_SOA_LEN],
+        }
+    }
+}
+
 #[derive(Debug)]
 struct IrPartitionedData {
     head_taps: [f32; PART_B],
     head_len: usize,
-    tail_partitions: Vec<[Complex32; SPEC_BINS]>,
+    tail_partitions: Vec<SpecSoa>,
 }
 
 impl IrPartitionedData {
@@ -517,7 +535,12 @@ impl IrPartitionedData {
             time_buf[..end - start].copy_from_slice(&samples[start..end]);
             let mut spec_buf = [Complex32::default(); SPEC_BINS];
             rfft_256_forward(&time_buf, &mut spec_buf, &mut scratch);
-            tail_partitions.push(spec_buf);
+            let mut soa = SpecSoa::default();
+            for k in 0..SPEC_BINS {
+                soa.re[k] = spec_buf[k].re;
+                soa.im[k] = spec_buf[k].im;
+            }
+            tail_partitions.push(soa);
         }
 
         Self {
@@ -535,10 +558,12 @@ struct PartitionedConvolverState {
     block_pos: usize,
     tail_out: [f32; PART_B],
     saved_overlap: [f32; PART_B],
-    fdl: Vec<[Complex32; SPEC_BINS]>,
+    fdl: Vec<SpecSoa>,
     fdl_pos: usize,
     fdl_valid_count: usize,
+    acc_soa: SpecSoa,
     acc_buf: [Complex32; SPEC_BINS],
+    spec_scratch: [Complex32; SPEC_BINS],
     fft_scratch: [Complex32; HALF_N],
     time_scratch: [f32; FFT_N],
     mac_cursor: usize,
@@ -556,10 +581,12 @@ impl PartitionedConvolverState {
             block_pos: 0,
             tail_out: [0.0; PART_B],
             saved_overlap: [0.0; PART_B],
-            fdl: vec![[Complex32::default(); SPEC_BINS]; MAX_PARTITIONS],
+            fdl: vec![SpecSoa::default(); MAX_PARTITIONS],
             fdl_pos: 0,
             fdl_valid_count: 0,
+            acc_soa: SpecSoa::default(),
             acc_buf: [Complex32::default(); SPEC_BINS],
+            spec_scratch: [Complex32::default(); SPEC_BINS],
             fft_scratch: [Complex32::default(); HALF_N],
             time_scratch: [0.0; FFT_N],
             mac_cursor: 1,
@@ -576,6 +603,7 @@ impl PartitionedConvolverState {
         self.saved_overlap.fill(0.0);
         self.fdl_pos = 0;
         self.fdl_valid_count = 0;
+        self.acc_soa = SpecSoa::default();
         self.acc_buf.fill(Complex32::default());
         self.mac_cursor = 1;
         self.last_call_macs = 0;
@@ -583,16 +611,22 @@ impl PartitionedConvolverState {
 
     #[inline]
     fn accumulate_partition(&mut self, p: usize, data: &IrPartitionedData) {
-        let fdl_idx = (self.fdl_pos + MAX_PARTITIONS - p) % MAX_PARTITIONS;
-        let x_spec = &self.fdl[fdl_idx];
-        let h_spec = &data.tail_partitions[p];
-        for ((acc, &a), &b) in self.acc_buf[..SPEC_BINS]
-            .iter_mut()
-            .zip(x_spec[..SPEC_BINS].iter())
-            .zip(h_spec[..SPEC_BINS].iter())
-        {
-            acc.re += a.re * b.re - a.im * b.im;
-            acc.im += a.re * b.im + a.im * b.re;
+        let fdl_idx = if self.fdl_pos >= p {
+            self.fdl_pos - p
+        } else {
+            self.fdl_pos + MAX_PARTITIONS - p
+        };
+        let x = &self.fdl[fdl_idx];
+        let h = &data.tail_partitions[p];
+        let acc_re = &mut self.acc_soa.re;
+        let acc_im = &mut self.acc_soa.im;
+        for k in 0..SPEC_SOA_LEN {
+            let ar = x.re[k];
+            let ai = x.im[k];
+            let br = h.re[k];
+            let bi = h.im[k];
+            acc_re[k] += ar * br - ai * bi;
+            acc_im[k] += ar * bi + ai * br;
         }
         self.last_call_macs = self.last_call_macs.saturating_add(1);
     }
@@ -625,7 +659,7 @@ impl PartitionedConvolverState {
         if !data.tail_partitions.is_empty() {
             let max_p = data.tail_partitions.len().min(self.fdl_valid_count + 1);
             if sample_idx == 0 {
-                self.acc_buf.fill(Complex32::default());
+                self.acc_soa = SpecSoa::default();
                 self.mac_cursor = 1;
             }
 
@@ -644,26 +678,40 @@ impl PartitionedConvolverState {
                 self.time_scratch[PART_B..].fill(0.0);
                 rfft_256_forward(
                     &self.time_scratch,
-                    &mut self.fdl[self.fdl_pos],
+                    &mut self.spec_scratch,
                     &mut self.fft_scratch,
                 );
+                {
+                    let dst = &mut self.fdl[self.fdl_pos];
+                    for k in 0..SPEC_BINS {
+                        dst.re[k] = self.spec_scratch[k].re;
+                        dst.im[k] = self.spec_scratch[k].im;
+                    }
+                }
 
                 for p in self.mac_cursor..max_p {
                     self.accumulate_partition(p, data);
                 }
                 self.accumulate_partition(0, data);
 
+                for k in 0..SPEC_BINS {
+                    self.acc_buf[k] = Complex32::new(self.acc_soa.re[k], self.acc_soa.im[k]);
+                }
                 rfft_256_inverse(&self.acc_buf, &mut self.time_scratch, &mut self.fft_scratch);
                 for i in 0..PART_B {
                     self.tail_out[i] = self.saved_overlap[i] + self.time_scratch[i];
                     self.saved_overlap[i] = self.time_scratch[PART_B + i];
                 }
 
-                self.fdl_pos = (self.fdl_pos + 1) % MAX_PARTITIONS;
+                self.fdl_pos = if self.fdl_pos + 1 >= MAX_PARTITIONS {
+                    0
+                } else {
+                    self.fdl_pos + 1
+                };
                 if self.fdl_valid_count < MAX_PARTITIONS {
                     self.fdl_valid_count += 1;
                 }
-                self.acc_buf.fill(Complex32::default());
+                self.acc_soa = SpecSoa::default();
                 self.mac_cursor = 1;
             }
         } else if self.block_pos == PART_B {
