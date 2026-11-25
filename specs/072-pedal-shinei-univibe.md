@@ -171,7 +171,7 @@ Conforme demonstrado na análise clássica de R. G. Keen (`F-01`, *The Technolog
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/shinei_univibe.rs`.
-- **Struct principal:** `pub struct ShineiUniVibeProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct ShineiUniVibeProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -203,7 +203,7 @@ Conforme demonstrado na análise clássica de R. G. Keen (`F-01`, *The Technolog
 ## 17. Critérios de aceite (CA-01 a CA-04)
 
 - **CA-01 — Escalonamento Assimétrico dos 4 Capacitores Reais (`15 nF, 220 nF, 470 pF, 4.7 nF`) (`DOCUMENTED` / `ANALYTICAL`):**
-  - *Sinal de entrada:* Varredura senoidal de `40 Hz` a `12 000 Hz` a `-18 dBFS`.
+  - *Sinal de entrada:* Varredura senoidal de `40 Hz` a `12 000 Hz` a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `pedal.shinei.univibe` com `enabled = true`, `depth = 0.0` (resistência óptica estacionária $R_{\text{eff}} = 25\text{ k}\Omega$), `mix = 0.50` (modo `CHORUS`).
   - *Método de medição:* Inspeção das frequências de quebra dos 4 estágios all-pass ($f_k = \frac{1}{2\pi R_{\text{eff}} C_k}$) e comparação da resposta em magnitude do Uni-Vibe com a resposta do Phase 90 (`Spec 071`).
@@ -236,7 +236,7 @@ Conforme demonstrado na análise clássica de R. G. Keen (`F-01`, *The Technolog
 
 - `crates/ampforge-dsp/src/fx/modulation.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/shinei_univibe.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.univibe.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
 
 ---
 

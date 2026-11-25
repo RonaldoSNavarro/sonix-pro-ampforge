@@ -176,7 +176,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:195–218 @ c20cc6
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/boss_ce2_chorus.rs` (separado do módulo `stereo_tri_chorus.rs` da Spec 087).
-- **Struct principal:** `pub struct BossCe2ChorusProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct BossCe2ChorusProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -217,7 +217,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:195–218 @ c20cc6
   - *Origem da tolerância:* Equação física $\tau = 512 / f_{\text{clk}}$ do `MN3007` com clock central `68 kHz` (`F-01`, `F-03`).
 
 - **CA-02 — Cancelamento Complementar Pré-Ênfase / De-Ênfase (`225 Hz / 1560 Hz`) e Filtro de Reconstrução `6,8 kHz` no Ramo Wet (`DOCUMENTED`):**
-  - *Sinal de entrada:* Senoides de teste em `200 Hz`, `2000 Hz` e `12 000 Hz` a `-18 dBFS`.
+  - *Sinal de entrada:* Senoides de teste em `200 Hz`, `2000 Hz` e `12 000 Hz` a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `mod_1.depth = 0.0` (atraso estacionário), comparando `mod_1.mix = 1.0` (ramo Wet isolado) vs `mod_1.mix = 0.0` (ramo Dry isolado).
   - *Método de medição:* Ganho em dB em `200 Hz`, `2000 Hz` e `12 000 Hz`.
@@ -252,7 +252,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:195–218 @ c20cc6
 
 - `crates/ampforge-dsp/src/fx/modulation.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/boss_ce2_chorus.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.chorus.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

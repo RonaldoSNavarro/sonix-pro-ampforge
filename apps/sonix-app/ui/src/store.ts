@@ -161,6 +161,14 @@ export class AppStore {
   bpm = 120;
   private tapTimestamps: number[] = [];
 
+  audioPending: {
+    backend: string;
+    inputDevice: string;
+    outputDevice: string;
+    sampleRate: number;
+    bufferSize: number;
+  } | null = null;
+
   audioStatus: AudioStatusData = {
     backend: 'wasapi',
     mode: 'wasapi_shared',
@@ -418,19 +426,25 @@ export class AppStore {
     }
 
     try {
-      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('sonix:preferred_audio_device') : null;
-      if (saved) {
-        const pref = JSON.parse(saved);
-        if (pref && typeof pref === 'object' && pref.outputDevice) {
-          const hasOut = this.devices.some((d) => d.name === pref.outputDevice);
-          if (hasOut && this.audioStatus.output_device !== pref.outputDevice) {
+      const rawSaved = typeof localStorage !== 'undefined' ? localStorage.getItem('sonix:preferred_audio_device') : null;
+      if (rawSaved) {
+        const saved = JSON.parse(rawSaved) as Record<string, unknown>;
+        const wantInput = (saved.input_device ?? saved.inputDevice) as string | undefined;
+        const wantOutput = (saved.output_device ?? saved.outputDevice) as string | undefined;
+        if (saved && typeof saved === 'object' && (wantInput || wantOutput)) {
+          const hasIn = !wantInput || this.devices.some((d) => d.is_input && d.name === wantInput);
+          const hasOut = !wantOutput || this.devices.some((d) => d.is_output && d.name === wantOutput);
+          if (
+            (hasIn && wantInput && this.audioStatus.input_device !== wantInput) ||
+            (hasOut && wantOutput && this.audioStatus.output_device !== wantOutput)
+          ) {
             await this.transport.setAudioDevice({
-              backend: pref.backend || 'wasapi',
-              mode: pref.backend,
-              sample_rate: pref.sampleRate || 48000,
-              buffer_size: pref.bufferSize || 64,
-              input_device: pref.inputDevice || undefined,
-              output_device: pref.outputDevice,
+              backend: String(saved.backend || 'wasapi'),
+              mode: String(saved.mode || saved.backend || 'wasapi_shared'),
+              sample_rate: Number(saved.sample_rate || saved.sampleRate || 48000),
+              buffer_size: Number(saved.buffer_size || saved.bufferSize || 64),
+              input_device: hasIn && wantInput ? wantInput : undefined,
+              output_device: hasOut && wantOutput ? wantOutput : undefined,
             });
             const updatedSt = await this.transport.getAudioStatus();
             if (updatedSt && typeof updatedSt === 'object') Object.assign(this.audioStatus, updatedSt);

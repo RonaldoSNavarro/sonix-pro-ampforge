@@ -104,3 +104,6 @@ required-features = ["dev-http"]
 name = "auditoria_2026_11_20_fault_injection"
 required-features = ["fault-injection"]
 
+[lints]
+workspace = true
+

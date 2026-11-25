@@ -160,7 +160,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/fuzz_face_ge.rs`.
-- **Struct principal:** `pub struct FuzzFaceGeProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct FuzzFaceGeProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -208,7 +208,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
   - *Origem da tolerância:* Espectro harmônico assimétrico do Fuzz Face documentado em `F-01` §"Output Signal and Harmonics".
 
 - **CA-03 — Ausência de Controle `Tone` Artificial (Desacoplamento do Filtro Reverso do RAT) (`DOCUMENTED`):**
-  - *Sinal de entrada:* Ruído branco ou senoide de `3000 Hz` a `-18 dBFS`.
+  - *Sinal de entrada:* Ruído branco ou senoide de `3000 Hz` a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `drive.gain = 0.50`, `drive.level = 0.50`, comparando `drive.tone = 0.0` vs `drive.tone = 1.0`.
   - *Método de medição:* Nível RMS de saída do processador `pedal.arbiter.fuzz_face_ge`.
@@ -233,7 +233,7 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 - `crates/ampforge-dsp/src/fx/drive.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/fuzz_face_ge.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.fuzz.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

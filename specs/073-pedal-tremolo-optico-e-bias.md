@@ -156,7 +156,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:258–266 @ c20cc6
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/modulation/optical_tremolo.rs` (separado de `bias_tremolo.rs` da Spec 088).
-- **Struct principal:** `pub struct OpticalTremoloProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct OpticalTremoloProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -220,7 +220,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:258–266 @ c20cc6
 
 - `crates/ampforge-dsp/src/fx/modulation.rs` (e futuro `crates/ampforge-dsp/src/fx/modulation/optical_tremolo.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.tremolo.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
 
 ---
 

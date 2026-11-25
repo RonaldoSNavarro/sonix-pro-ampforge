@@ -122,6 +122,7 @@
       "rows": 4
     },
     "input.boost": 2.5,
+    "input.channel": "left",
     "input.mode": "instrument",
     "input.source": "device",
     "is_modded": true,

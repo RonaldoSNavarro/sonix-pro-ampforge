@@ -115,7 +115,24 @@ Observações que fazem diferença na manutenção:
 
 ---
 
-## 5. Numeração de CA ao longo do tempo
+## 5. Testes fracos / tautológicos × testes assertivos (Anti-Gaming)
+
+Os exemplos abaixo mostram padrões reais em que uma suíte passa **100% verde** mesmo com código raso, quebrado ou inoperante — e como reescrevê-los para impedir implementações feitas "só para passar no teste":
+
+| ❌ Teste Fraco / Enganável | Por que falha em pegar bugs reais | ✅ Teste Assertivo / Não-Enganável |
+|---|---|---|
+| `assert_eq!(post("/api/params", {"knob": 10}), 200)` | Prova apenas que o parser aceitou a chave; um parâmetro gravado em campo morto ou sem efeito passa verde. | Envia o parâmetro pela API real, processa sinal na cadeia de produção e mede mudança direcional e de magnitude na banda/envelope esperado (ex.: Δ ganho em `4 kHz ≥ +10 dB` com `treble: 0→10`). |
+| `assert!(rms > 0.001)` para "provar" que 5 modelos diferem | Cinco passthroughs idênticos (`y = x`) passam com 100% de sucesso. | Compara pares de modelos em RMS igualado com sinal realista (incluindo transiente e sustentação) e exige distância espectral em múltiplas bandas, assinatura harmônica (THD / razão pares-ímpares) e resposta dinâmica distintas. |
+| `assert!(corr(in, out) > 0.3)` para provar caminho limpo num overdrive | Onda quadrada de hard-clipping puro (`sign(sin(x))`, **zero** caminho limpo) já possui correlação `0.9003 >> 0.3`! | Mede diretamente a resposta em baixa frequência (`< 200 Hz`, abaixo do HPF do ramo saturado) em ganho mínimo e máximo e compara o sinal limpo residual contra o oráculo analítico do circuito (`±1.5 dB`). |
+| Comparar `filter.process()` com `filter_analytical_db()` importado do **mesmo** módulo | Erro de topologia ou de coeficientes nas duas funções se cancela e dá erro `0.0 dB` (teste circular). | Usa oráculo independente (valores tabelados de esquema/artigo científico ou equação nodal independente) e testa pontos múltiplos (`min`, `mid`, `max` e interação entre controles). |
+| Testar "zero-alloc" chamando `process()` e checando `out[0].is_finite()` | Não mede alocações; alocar `100 MB` por bloco continua passando verde. | Instala `CountingAllocator` ativo na thread de execução, verifica `allocs == 0 && deallocs == 0` sob sinal dinâmico e trocas reais de parâmetros, e confirma red real injetando alocação temporária. |
+| Testar um `Oversampler` isolado de 96 dB que a produção não usa | A produção pode ter aliasing severo usando outro filtro enquanto o teste da biblioteca ociosa passa verde. | Mede aliasing diretamente na saída da cadeia real de produção (`RealtimeDspChain` com amp/drive ativos em alto ganho), injetando varredura senoidal de alta frequência. |
+| Ajustar controle no teste para `level = 8.165` ou desligar o filtro `hicut` padrão | Mascara que no padrão real (`level = 5.0` ou `cab` ligado) o pedal atenua `-8.5 dB` ou o timbre fica abafado. | Executa sempre um cenário na **configuração padrão real do usuário** (default de boot/preset + nível realista de guitarra `-18` a `-12 dBFS` + piso de ruído realista `-50 dBFS`). |
+| Gerar transiente de ataque nos samples `0..960` e fatiar `out[4096..]` na medição | Descarta 100% do ataque que o teste pretendia medir! | Mede explicitamente a janela do transiente (fator de crista, tempo de subida e separação entre batidas de palm-mute) **nos amps high-gain com gabinete ativo**, não apenas no canal limpo. |
+
+---
+
+## 6. Numeração de CA ao longo do tempo
 
 Números de CA são **citados por testes, PRs e commits** — tratam-se como identificadores públicos.
 

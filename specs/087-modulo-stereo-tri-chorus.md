@@ -129,7 +129,7 @@ O centro de massa tonal permanece perfeitamente afinado enquanto a imagem estér
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/fx/modulation/stereo_tri_chorus.rs` (`pub struct StereoTriChorusProcessor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/modulation/stereo_tri_chorus.rs` (`pub struct StereoTriChorusProcessor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 

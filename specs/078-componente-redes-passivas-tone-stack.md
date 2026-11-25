@@ -85,8 +85,8 @@ Conforme derivado simbolicamente por David T. Yeh & Julius O. Smith III (`F-01`,
 | Informação técnica | Fonte | Revisão | Página / Seção | Classificação | Status documental |
 |---|---|---|---|---|---|
 | Equação simbólica de 3ª ordem $H_{\text{FMV}}(s)$ incluindo $R_{\text{src}}$ e discretização Tustin exata | `F-01` | DAFx-06 | `F-01` §2–4 Eq. (2)–(13), pp. 2–5 | `ACADEMIC` | `CONFIRMED` |
-| Parâmetros exatos Marshall 1959/JCM800 (`33k / 470p–500p / 22n / 22n`, $R_{\text{src}} \approx 1,3\text{ k}\Omega$) e Fender AB763 (`100k / 250p / 100n / 47n`, $R_{\text{src}} \approx 38\text{ k}\Omega$) | `F-01`, `F-02`, Specs 054–056 | 1959 / 2203 / AB763 | `F-01` & Esquemas de fábrica | `UNKNOWN` / `ACADEMIC` | `CONFIRMED` |
-| Parâmetros exatos Vox Top Boost `OS/010` (`100k / 50p / 22n / 22n`, `1M Bass/Treble`, `10k` fixo sem pot `Mid`) | `F-02`, Spec 058 | Vox `OS/010` | Esquema `OS/010` | `UNKNOWN` / `SECONDARY_TECHNICAL` | `CONFIRMED` |
+| Parâmetros exatos Marshall 1959/JCM800 (`33k / 470p–500p / 22n / 22n`, $R_{\text{src}} \approx 1,3\text{ k}\Omega$) e Fender AB763 (`100k / 250p / 100n / 47n`, $R_{\text{src}} \approx 38\text{ k}\Omega$) | `F-01`, `F-02`, Specs 054–056 | 1959 / 2203 / AB763 | `F-01` & Esquemas de fábrica | `ACADEMIC` / `SECONDARY_TECHNICAL` | `CONFIRMED` |
+| Parâmetros exatos Vox Top Boost `OS/010` (`100k / 50p / 22n / 22n`, `1M Bass/Treble`, `10k` fixo sem pot `Mid`) | `F-02`, Spec 058 | Vox `OS/010` | Esquema `OS/010` | `SECONDARY_TECHNICAL` | `CONFIRMED` |
 | Valores internos do Tone Stack da revisão exata **Mesa Dual Rectifier Rev F** (`C1`, `R_slope`, `R_bass`) | Spec 057 §6.2 | Dual Rectifier Rev F | Pendente esquema oficial Rev F | `UNKNOWN` | `PENDING` (`BLOCKED` para validação component-level exata de Rev F) |
 
 ---
@@ -183,7 +183,7 @@ executada em **Forma Direta II Transposta (`f64`)** para imunidade a ruído de q
 ## 17. Critérios de aceite (CA-01 a CA-05)
 
 - **CA-01 — Aderência Exata à Equação de Laplace de 3ª Ordem (Yeh DAFx-06) para `FMV Fender AB763` e `FMV Marshall 2203` (`DOCUMENTED` / `ANALYTICAL`):**
-  - *Sinal de entrada:* Varredura senoidal em 20 frequências logarítmicas de `30 Hz` a `12 000 Hz` a `-18 dBFS`.
+  - *Sinal de entrada:* Varredura senoidal em 20 frequências logarítmicas de `30 Hz` a `12 000 Hz` a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$ (operando a $2\times f_s = 96\text{ kHz}$ ou $f_s$ com pré-warping), bloco de `128` amostras.
   - *Configuração e parâmetros:* `Bass = 0.5, Mid = 0.5, Treble = 0.5` em `FmvToneStackSolver` para `Fender AB763` ($R_{\text{src}} = 38\text{ k}\Omega$) e `Marshall 2203` ($R_{\text{src}} = 1,3\text{ k}\Omega$).
   - *Método de medição:* Erro absoluto $|\,20\log_{10}|H_{\text{DSP}}(f)| - 20\log_{10}|H_{\text{Laplace}}(j2\pi f)|\,|$ em cada uma das 20 frequências.
@@ -199,7 +199,7 @@ executada em **Forma Direta II Transposta (`f64`)** para imunidade a ruído de q
   - *Origem da tolerância:* Teorema da passividade de redes RC.
 
 - **CA-03 — Interatividade Autêntica do `VoxTopBoostToneStackSolver` (`OS/010` sem `Mid` físico) (`DOCUMENTED`):**
-  - *Sinal de entrada:* Tons senoidais em `100 Hz`, `700 Hz` e `4000 Hz` a `-18 dBFS`.
+  - *Sinal de entrada:* Tons senoidais em `100 Hz`, `700 Hz` e `4000 Hz` a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `VoxTopBoostToneStackSolver` comparando `(Bass=0.9, Treble=0.9)` vs `(Bass=0.1, Treble=0.1)`.
   - *Método de medição:* Ganho relativo em `700 Hz` em relação à média de `100 Hz` e `4000 Hz`.
@@ -219,7 +219,7 @@ executada em **Forma Direta II Transposta (`f64`)** para imunidade a ruído de q
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/tonestack.rs`
-- Testes atuais: `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
+- Testes atuais: `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs`, `Planejado: crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
 
 ---
 

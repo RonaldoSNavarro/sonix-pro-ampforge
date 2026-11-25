@@ -117,6 +117,7 @@ fn default_pitch_model() -> String { "whammy".to_string() }
 fn default_pitch_key() -> String { "C".to_string() }
 fn default_pitch_scale() -> String { "major".to_string() }
 fn default_input_mode() -> String { "instrument".to_string() }
+fn default_input_channel() -> String { "left".to_string() }
 fn default_amp_jack() -> String { "high".to_string() }
 fn default_amp_channel_mode() -> String { "modern".to_string() }
 fn default_amp_impedance() -> String { "16".to_string() }
@@ -202,6 +203,8 @@ pub struct AppState {
     pub input_source: String,
     #[serde(default = "default_input_mode", rename = "input.mode")]
     pub input_mode: String,
+    #[serde(default = "default_input_channel", rename = "input.channel")]
+    pub input_channel: String,
     #[serde(rename = "amp_1.bright")]
     pub amp_bright: bool,
     #[serde(default = "default_true", rename = "amp_1.power")]
@@ -586,6 +589,7 @@ impl Default for AppState {
             gate_threshold_db: -65.0,
             input_source: "device".to_string(),
             input_mode: "instrument".to_string(),
+            input_channel: "left".to_string(),
             amp_bright: false,
             amp_power: true,
             amp_standby: false,
@@ -1454,12 +1458,12 @@ pub static PARAMS: &[ParamDesc] = &[
     ParamDesc {
         key: "input.mode",
         aliases: &[],
-        kind: ParamKind::Enum(&["instrument", "line"]),
+        kind: ParamKind::Enum(&["instrument", "pc_line_in", "line"]),
         default: ParamDefault::Enum("instrument"),
         models: None,
         to_dsp: |v| {
             v.as_str().and_then(|s| match s {
-                "instrument" => Some(DspParamUpdate::InputModeLine(false)),
+                "instrument" | "pc_line_in" => Some(DspParamUpdate::InputModeLine(false)),
                 "line" => Some(DspParamUpdate::InputModeLine(true)),
                 _ => None,
             })
@@ -1468,6 +1472,27 @@ pub static PARAMS: &[ParamDesc] = &[
         write_state: |st, v| {
             if let Some(s) = v.as_str() {
                 st.input_mode = s.to_string();
+            }
+        },
+    },
+    ParamDesc {
+        key: "input.channel",
+        aliases: &[],
+        kind: ParamKind::Enum(&["left", "right", "sum"]),
+        default: ParamDefault::Enum("left"),
+        models: None,
+        to_dsp: |v| {
+            v.as_str().and_then(|s| match s {
+                "left" => Some(DspParamUpdate::InputChannel(crate::audio::InputChannel::Left)),
+                "right" => Some(DspParamUpdate::InputChannel(crate::audio::InputChannel::Right)),
+                "sum" => Some(DspParamUpdate::InputChannel(crate::audio::InputChannel::Sum)),
+                _ => None,
+            })
+        },
+        read_state: |st| json_str(&st.input_channel),
+        write_state: |st, v| {
+            if let Some(s) = v.as_str() {
+                st.input_channel = s.to_string();
             }
         },
     },

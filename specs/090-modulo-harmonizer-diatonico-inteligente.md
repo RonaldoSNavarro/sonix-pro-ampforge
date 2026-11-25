@@ -145,7 +145,7 @@ Quando a nota tocada estiver fora da escala (nota cromática de passagem), o mot
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/fx/pitch/diatonic_harmonizer.rs` (`pub struct DiatonicHarmonizerProcessor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/pitch/diatonic_harmonizer.rs` (`pub struct DiatonicHarmonizerProcessor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 
@@ -197,7 +197,7 @@ Quando a nota tocada estiver fora da escala (nota cromática de passagem), o mot
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/fx/pitch.rs` (e futuro `crates/ampforge-dsp/src/fx/pitch/diatonic_harmonizer.rs`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_042_pitch_wah.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_042_pitch_wah.rs`
 
 ---
 

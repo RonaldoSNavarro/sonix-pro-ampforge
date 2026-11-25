@@ -28,3 +28,6 @@ tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-window-state = "2.5.0"
 tauri-plugin-dialog = "2.8.4"
 tauri-plugin-fs = "2.7.1"
+
+[lints]
+workspace = true

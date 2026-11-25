@@ -4,10 +4,11 @@ Skill especialista de domínio e engenharia para agentes que projetam, especific
 
 ## Conteúdo da Skill
 
-- `SKILL.md` — instruções centrais, hierarquia dual de autoridade (governança vs evidência factual vs implementação), 10 regras inegociáveis de fidelidade documental, fundamentos de amplificadores/pedais/IR e checklist de auditoria.
+- `SKILL.md` — instruções centrais, hierarquia dual de autoridade (governança vs evidência factual vs implementação), 10 regras inegociáveis de fidelidade documental, integração obrigatória com `rust-best-practices`, fundamentos de amplificadores/pedais/IR e checklist de auditoria.
+- `../rust-best-practices/SKILL.md` — skill oficial complementar e integrada de boas práticas Rust baseada em `https://doc.rust-lang.org/stable/` (Book, Reference, Rustonomicon, Cargo Book, Clippy, Edition 2024, Rust API Guidelines e tempo real).
 - `references/architecture-rust-windows.md` — arquitetura efetiva do workspace Rust (`ampforge-dsp`, `sonix-core`, `sonix-desktop`, `sonix-plugin`, `apps/sonix-app`), Tauri v2, `cpal` WASAPI/ASIO, pipeline em tempo real e mapa modular completo (Specs 053–092).
 - `references/dsp-engineering.md` — guia técnico de modelagem de circuitos (MNA, WDF, State-Space, ADAA, solvers não lineares), filtros, oversampling, convolução particionada, separação thread de controle vs thread RT e validação objetiva.
-- `references/rust-tauri-best-practices.md` — padrões de engenharia Rust para áudio RT e boas práticas de integração desktop Tauri v2 (IPC, `Channel`, `capabilities`, segurança e as 7 regras obrigatórias).
+- `references/rust-tauri-best-practices.md` — padrões de engenharia Rust (alinhados à doc oficial `doc.rust-lang.org/stable/`) para áudio RT e boas práticas de integração desktop Tauri v2 (IPC, `Channel`, `capabilities`, segurança e as 7 regras obrigatórias).
 - `references/engineering-backlog.md` — estado real dos marcos implementados (Specs 001–052) e roadmap modular auditado (Specs 053–092).
 
 ## Perfil Tecnológico Efetivo do Repositório

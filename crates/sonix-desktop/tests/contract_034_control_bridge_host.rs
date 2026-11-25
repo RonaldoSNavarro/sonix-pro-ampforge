@@ -306,24 +306,23 @@ fn test_ca_05_large_block_over_4096_processed_without_truncation() {
 
 #[test]
 fn test_ca_06_contention_bypasses_and_increments_counter() {
-    use sonix_desktop::audio::{DesktopAudioHost, RealtimeDuplexEngine};
+    use sonix_desktop::audio::{DesktopAudioHost, DspChainSlot, RealtimeDuplexEngine};
 
     let duplex = RealtimeDuplexEngine::with_target_period(2048, 128);
-    // Coloca 2 períodos na fila para garantir que pop não dê underrun
     let in_sig = vec![0.35f32; 256];
     duplex.push_captured_samples(&in_sig);
 
     let mut chain = RealtimeDspChain::new(48000.0);
     chain.prepare(48000.0, 128);
-    let dsp = Arc::new(Mutex::new(chain));
+    let slot = DspChainSlot::new(chain);
+    let mut rt_chain = slot.take_for_audio_thread().expect("posse exclusiva RT");
     let tel = Arc::new(TelemetryBuffer::new(256));
 
-    let mut data = vec![0.0f32; 256]; // 128 frames * 2 canais
+    let mut data = vec![0.0f32; 256];
     let mut mono_in = vec![0.0f32; 128];
     let mut mono_out = vec![0.0f32; 128];
 
-    // Contenção forçada no Mutex do DSP enquanto o callback de saída executa
-    let _held_lock = dsp.lock().unwrap();
+    // Spec 093 CA-2 (revoga dry-bypass da Spec 034 CA-6): callback possui &mut RealtimeDspChain sem Mutex/try_lock.
     DesktopAudioHost::process_output_callback_f32(
         &mut data,
         2,
@@ -331,20 +330,15 @@ fn test_ca_06_contention_bypasses_and_increments_counter() {
         &mut mono_in,
         &mut mono_out,
         &duplex,
-        &dsp,
+        &mut rt_chain,
         &tel,
         None,
     );
 
     assert_eq!(
         tel.dsp_contention_silence_blocks(),
-        1,
-        "CA-6: contenção de try_lock deve incrementar dsp_contention_silence_blocks"
-    );
-    assert!(
-        (data[0] - 0.35).abs() < 1e-5,
-        "CA-6: sob contenção, callback deve fazer bypass seguro (mono_in) em vez de silenciar abruptamente (got {})",
-        data[0]
+        0,
+        "Spec 093 CA-2: sem Mutex no callback RT, contenção deve ser sempre 0"
     );
 }
 
@@ -482,7 +476,7 @@ fn test_ca_05_8192_frame_callback_overwrites_entire_output_buffer() {
 
     let mut chain = RealtimeDspChain::new(48000.0);
     chain.prepare(48000.0, 256);
-    let dsp = Arc::new(Mutex::new(chain));
+    let mut dsp = chain;
     let tel = Arc::new(TelemetryBuffer::new(512));
 
     let sentinel = 999.0f32;
@@ -497,7 +491,7 @@ fn test_ca_05_8192_frame_callback_overwrites_entire_output_buffer() {
         &mut mono_in,
         &mut mono_out,
         &duplex,
-        &dsp,
+        &mut dsp,
         &tel,
         None,
     );

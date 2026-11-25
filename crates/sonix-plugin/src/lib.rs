@@ -1,6 +1,8 @@
 //! SONIX PRO // AMPFORGE™ - VST3 & CLAP DAW Plugin Core
 //! Compartilha o mesmo núcleo DSP (`RealtimeDspChain`) e tabela de parâmetros do standalone.
 
+#![allow(semicolon_in_expressions_from_non_local_macros)]
+
 use std::num::NonZeroU32;
 use std::sync::Arc;
 

@@ -4,6 +4,7 @@
 #[inline(always)]
 fn ler_mxcsr() -> u32 {
     let mut v: u32 = 0;
+    // SAFETY: `v` é um `u32` válido e alinhado na stack; `stmxcsr` escreve exatamente 4 bytes em `[p]`.
     unsafe {
         core::arch::asm!(
             "stmxcsr [{p}]",
@@ -17,6 +18,7 @@ fn ler_mxcsr() -> u32 {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn escrever_mxcsr(v: u32) {
+    // SAFETY: `v` é um `u32` válido e alinhado na stack; `ldmxcsr` lê exatamente 4 bytes de `[p]`.
     unsafe {
         core::arch::asm!(
             "ldmxcsr [{p}]",

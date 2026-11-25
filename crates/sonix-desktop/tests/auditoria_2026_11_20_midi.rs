@@ -84,7 +84,7 @@ fn make_runtime_ctx() -> (ApiContext, Arc<Mutex<RealtimeDspChain>>) {
         clean_input_ring: None,
         scope_output_ring: None,
         calibration_store: None,
-        active_device_id: None,
+        active_device_id: Arc::new(Mutex::new(None)),
         calibration_session: Arc::new(Mutex::new(CalibrationSession::default())),
         device_enumerator: Arc::new(DummyAudioEnum),
         duplex_engine: Some(Arc::new(RealtimeDuplexEngine::new(4096))),

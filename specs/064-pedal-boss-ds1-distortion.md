@@ -119,8 +119,6 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L445-L456) e [`665-685`](../crates/ampforge-dsp/src/fx/drive.rs#L665-L685) possui as seguintes divergências auditadas:
 
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 
 ---
 
@@ -177,7 +175,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-ds
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/boss_ds1.rs`.
-- **Struct principal:** `pub struct BossDs1Processor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct BossDs1Processor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -253,7 +251,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-ds
 
 - `crates/ampforge-dsp/src/fx/drive.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/boss_ds1.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.ds1.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

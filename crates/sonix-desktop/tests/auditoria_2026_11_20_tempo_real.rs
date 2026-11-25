@@ -149,17 +149,20 @@ fn aud_06_sem_contencao_em_uso_normal() {
                 phase += step;
             }
             duplex_cb.push_captured_samples(&block_in);
-            DesktopAudioHost::process_output_callback_f32(
-                &mut data,
-                2,
-                48000.0,
-                &mut mono_in,
-                &mut mono_out,
-                &duplex_cb,
-                &dsp_cb,
-                &tel_cb,
-                None,
-            );
+            {
+                let mut d = dsp_cb.lock().unwrap();
+                DesktopAudioHost::process_output_callback_f32(
+                    &mut data,
+                    2,
+                    48000.0,
+                    &mut mono_in,
+                    &mut mono_out,
+                    &duplex_cb,
+                    &mut d,
+                    &tel_cb,
+                    None,
+                );
+            }
             thread::yield_now();
         }
     });
@@ -234,24 +237,11 @@ fn aud_06_contencao_com_mute_da_silencio() {
     let mut mono_in = vec![0.0f32; 128];
     let mut mono_out = vec![0.0f32; 128];
 
-    // 1 bloco livre para sincronizar telemetria de mute
-    duplex.push_captured_samples(&in_sig);
-    DesktopAudioHost::process_output_callback_f32(
-        &mut data_f32,
-        2,
-        48000.0,
-        &mut mono_in,
-        &mut mono_out,
-        &duplex,
-        &dsp,
-        &tel,
-        None,
-    );
-
-    // Subcaso A: contenção com afinador em Mute -> saída zero em F32 e I16
-    duplex.push_captured_samples(&in_sig);
-    {
-        let _held = dsp.lock().unwrap();
+    // Spec 093 CA-2: sem try_lock no callback RT, posse exclusiva processa diretamente e mantém silêncio em Mute/Standby
+    // Rampa de mute do afinador é 5 ms (240 samples @ 48 kHz = 2 blocos de 128)
+    for _ in 0..8 {
+        duplex.push_captured_samples(&in_sig);
+        let mut d = dsp.lock().unwrap();
         DesktopAudioHost::process_output_callback_f32(
             &mut data_f32,
             2,
@@ -259,17 +249,35 @@ fn aud_06_contencao_com_mute_da_silencio() {
             &mut mono_in,
             &mut mono_out,
             &duplex,
-            &dsp,
+            &mut d,
             &tel,
             None,
         );
-        assert!(
-            tel.dsp_contention_silence_blocks() >= 1,
-            "AUD-06: contenção com mute deveria registrar incremento"
+    }
+
+    // Subcaso A: afinador em Mute -> saída zero em F32 e I16, contenção 0
+    duplex.push_captured_samples(&in_sig);
+    {
+        let mut d = dsp.lock().unwrap();
+        DesktopAudioHost::process_output_callback_f32(
+            &mut data_f32,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &mut d,
+            &tel,
+            None,
+        );
+        assert_eq!(
+            tel.dsp_contention_silence_blocks(),
+            0,
+            "Spec 093 CA-2: sem Mutex no callback RT, contenção é sempre 0"
         );
         assert!(
             data_f32.iter().all(|&s| s == 0.0),
-            "AUD-06: sinal seco vazou sob contenção com afinador em Mute (F32 max={:?})",
+            "AUD-06: sinal seco vazou com afinador em Mute (F32 max={:?})",
             data_f32.iter().map(|s| s.abs()).fold(0.0f32, f32::max)
         );
 
@@ -281,37 +289,25 @@ fn aud_06_contencao_com_mute_da_silencio() {
             &mut mono_in,
             &mut mono_out,
             &duplex,
-            &dsp,
+            &mut d,
             &tel,
             None,
         );
         assert!(
             data_i16.iter().all(|&s| s == 0),
-            "AUD-06: sinal seco vazou sob contenção com afinador em Mute (I16)"
+            "AUD-06: sinal seco vazou com afinador em Mute (I16)"
         );
     }
 
-    // Subcaso B: desliga afinador e ativa Standby -> saída zero sob contenção
+    // Subcaso B: desliga afinador e ativa Standby -> saída zero
     {
         let mut d = dsp.lock().unwrap();
         d.set_tuner_enabled(false);
         d.set_amp_standby(true);
     }
-    duplex.push_captured_samples(&in_sig);
-    DesktopAudioHost::process_output_callback_f32(
-        &mut data_f32,
-        2,
-        48000.0,
-        &mut mono_in,
-        &mut mono_out,
-        &duplex,
-        &dsp,
-        &tel,
-        None,
-    );
-    duplex.push_captured_samples(&in_sig);
-    {
-        let _held = dsp.lock().unwrap();
+    for _ in 0..8 {
+        duplex.push_captured_samples(&in_sig);
+        let mut d = dsp.lock().unwrap();
         DesktopAudioHost::process_output_callback_f32(
             &mut data_f32,
             2,
@@ -319,13 +315,28 @@ fn aud_06_contencao_com_mute_da_silencio() {
             &mut mono_in,
             &mut mono_out,
             &duplex,
-            &dsp,
+            &mut d,
+            &tel,
+            None,
+        );
+    }
+    duplex.push_captured_samples(&in_sig);
+    {
+        let mut d = dsp.lock().unwrap();
+        DesktopAudioHost::process_output_callback_f32(
+            &mut data_f32,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &mut d,
             &tel,
             None,
         );
         assert!(
-            data_f32.iter().all(|&s| s == 0.0),
-            "AUD-06: sinal seco vazou sob contenção com amp em Standby (max={:?})",
+            data_f32.iter().all(|&s| s.abs() < 1e-5),
+            "AUD-06: sinal seco vazou com amp em Standby (max={:?})",
             data_f32.iter().map(|s| s.abs()).fold(0.0f32, f32::max)
         );
     }

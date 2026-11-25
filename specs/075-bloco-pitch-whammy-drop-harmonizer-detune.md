@@ -159,7 +159,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/pitch.rs`](../crates/ampforge-ds
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/digitech_whammy.rs` (extraindo `PitchMode::Whammy` de `pitch.rs`).
-- **Struct principal:** `pub struct DigiTechWhammyProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct DigiTechWhammyProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -225,7 +225,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/pitch.rs`](../crates/ampforge-ds
 
 - `crates/ampforge-dsp/src/fx/pitch.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/digitech_whammy.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.pitch.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_042_pitch_wah.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_042_pitch_wah.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
 
 ---
 

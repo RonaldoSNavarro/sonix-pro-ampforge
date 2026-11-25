@@ -275,18 +275,21 @@ fn test_ca_11_dsp_panic_catch_and_stream_resilience() {
     let mut mono_in = vec![0.0_f32; 128];
     let mut mono_out = vec![0.0_f32; 128];
 
-    DesktopAudioHost::process_output_callback_f32_with_processor(
-        &mut output,
-        2,
-        48000.0,
-        &mut mono_in,
-        &mut mono_out,
-        &duplex,
-        &dsp,
-        &telemetry,
-        None,
-        |_dsp, _inp, _out| panic!("CA-11 fault injection"),
-    );
+    {
+        let mut dsp_guard = dsp.lock().unwrap();
+        DesktopAudioHost::process_output_callback_f32_with_processor(
+            &mut output,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &mut dsp_guard,
+            &telemetry,
+            None,
+            |_dsp, _inp, _out| panic!("CA-11 fault injection"),
+        );
+    }
 
     assert!(output.iter().all(|&s| s == 0.0), "Bloco em que houve pânico deve sair em silêncio");
     assert_eq!(telemetry.panic_count(), 1, "Contador de panics deve ser incrementado");
@@ -296,17 +299,20 @@ fn test_ca_11_dsp_panic_catch_and_stream_resilience() {
     // Enquanto faulted, blocos adicionais continuam silenciosos
     duplex.push_captured_samples(&input_block);
     output.fill(0.5);
-    DesktopAudioHost::process_output_callback_f32(
-        &mut output,
-        2,
-        48000.0,
-        &mut mono_in,
-        &mut mono_out,
-        &duplex,
-        &dsp,
-        &telemetry,
-        None,
-    );
+    {
+        let mut dsp_guard = dsp.lock().unwrap();
+        DesktopAudioHost::process_output_callback_f32(
+            &mut output,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &mut dsp_guard,
+            &telemetry,
+            None,
+        );
+    }
     assert!(output.iter().all(|&s| s == 0.0), "Com engine_faulted, callback sai em silêncio");
 
     // Rotina real de recuperação reconstrói a cadeia a partir de AppState e limpa a flag
@@ -319,17 +325,20 @@ fn test_ca_11_dsp_panic_catch_and_stream_resilience() {
     for _ in 0..100 {
         duplex.push_captured_samples(&input_block);
         output.fill(0.0);
-        DesktopAudioHost::process_output_callback_f32(
-            &mut output,
-            2,
-            48000.0,
-            &mut mono_in,
-            &mut mono_out,
-            &duplex,
-            &dsp,
-            &telemetry,
-            None,
-        );
+        {
+            let mut dsp_guard = dsp.lock().unwrap();
+            DesktopAudioHost::process_output_callback_f32(
+                &mut output,
+                2,
+                48000.0,
+                &mut mono_in,
+                &mut mono_out,
+                &duplex,
+                &mut dsp_guard,
+                &telemetry,
+                None,
+            );
+        }
         if output.iter().any(|&s| s != 0.0) {
             normal_blocks += 1;
         }

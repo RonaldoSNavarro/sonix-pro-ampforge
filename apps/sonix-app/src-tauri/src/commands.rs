@@ -608,6 +608,68 @@ where
     }))
 }
 
+/// Atualiza `active_device_id`, `input_mode`, `input_channel`, carrega calibração salva (se houver)
+/// e sai automaticamente de Standby após seleção/aplicação explícita de dispositivo (Spec 093 CA-3).
+pub fn apply_device_selection_to_runtime(
+    runtime: &crate::AppRuntime,
+    device_id: &str,
+    input_mode: &str,
+    input_channel: &str,
+) {
+    let norm_mode = match input_mode {
+        "pc_line_in" | "line" => input_mode,
+        _ => "instrument",
+    };
+    let norm_channel = match input_channel {
+        "right" | "sum" => input_channel,
+        _ => "left",
+    };
+
+    if let Some(ref ctrl) = runtime.audio_ctrl {
+        ctrl.duplex.set_input_channel(InputChannel::from_str_opt(norm_channel));
+    }
+
+    let cal_loaded = runtime
+        .api_ctx
+        .calibration_store
+        .as_ref()
+        .and_then(|store| store.get(device_id));
+
+    if let Ok(mut dev_guard) = runtime.api_ctx.active_device_id.lock() {
+        *dev_guard = Some(device_id.to_string());
+    }
+
+    if let Ok(mut st) = runtime.api_ctx.app_state.lock() {
+        st.input_mode = norm_mode.to_string();
+        st.input_channel = norm_channel.to_string();
+        st.amp_standby = false;
+        if let Some((boost, gate_db)) = cal_loaded {
+            st.input_boost = boost;
+            st.gate_threshold_db = gate_db;
+        }
+    }
+
+    runtime.api_ctx.telemetry.set_output_muted(false);
+    if let Some(ref q) = runtime.api_ctx.param_queue {
+        let _ = q.push(sonix_desktop::audio::DspParamUpdate::AmpStandby(false));
+        let _ = q.push(sonix_desktop::audio::DspParamUpdate::InputModeLine(norm_mode == "line"));
+        if let Some((boost, gate_db)) = cal_loaded {
+            let _ = q.push(sonix_desktop::audio::DspParamUpdate::InputBoost(boost));
+            let _ = q.push(sonix_desktop::audio::DspParamUpdate::GateThreshold(gate_db));
+        }
+    }
+    if let Some(ref dsp_arc) = runtime.api_ctx.dsp_chain {
+        if let Ok(mut dsp) = dsp_arc.try_lock() {
+            dsp.apply_param_update(sonix_desktop::audio::DspParamUpdate::AmpStandby(false));
+            dsp.apply_param_update(sonix_desktop::audio::DspParamUpdate::InputModeLine(norm_mode == "line"));
+            if let Some((boost, gate_db)) = cal_loaded {
+                dsp.apply_param_update(sonix_desktop::audio::DspParamUpdate::InputBoost(boost));
+                dsp.apply_param_update(sonix_desktop::audio::DspParamUpdate::GateThreshold(gate_db));
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<Value, String> {
     let Some(ref ctrl) = state.audio_ctrl else {
@@ -647,6 +709,27 @@ pub fn set_audio_device(payload: Value, state: State<'_, AppRuntime>) -> Result<
             cfg.buffer_size = val.get("buffer_size").and_then(|v| v.as_u64()).map(|v| v as u32);
         }
         state.api_ctx.telemetry.set_device_lost(false);
+        let dev_id = val
+            .get("input_device")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| val.get("output_device").and_then(|v| v.as_str()))
+            .unwrap_or("default");
+        let (cur_mode, cur_ch) = state
+            .api_ctx
+            .app_state
+            .lock()
+            .map(|st| (st.input_mode.clone(), st.input_channel.clone()))
+            .unwrap_or_else(|_| ("instrument".to_string(), "left".to_string()));
+        let req_mode = payload
+            .get("input_mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&cur_mode);
+        let req_ch = payload
+            .get("input_channel")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&cur_ch);
+        apply_device_selection_to_runtime(&state, dev_id, req_mode, req_ch);
     }
     res
 }

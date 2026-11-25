@@ -21,14 +21,17 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       ? `${aud.measured_roundtrip_ms.toFixed(2)} ms medida`
       : `${Number(aud.estimated_roundtrip_ms || 3.0).toFixed(2)} ms (estimada)`;
 
-  // Local selection refs shared with Aplicar footer
-  const pending = {
-    backend: aud.mode || aud.backend || 'wasapi_shared',
-    inputDevice: aud.input_device || '',
-    outputDevice: aud.output_device || '',
-    sampleRate: aud.sample_rate || 48000,
-    bufferSize: frames,
-  };
+  // Local selection refs shared with Aplicar footer (preservados entre emits enquanto a tela está aberta)
+  if (!store.audioPending) {
+    store.audioPending = {
+      backend: aud.mode || aud.backend || 'wasapi_shared',
+      inputDevice: aud.input_device || '',
+      outputDevice: aud.output_device || '',
+      sampleRate: aud.sample_rate || 48000,
+      bufferSize: frames,
+    };
+  }
+  const pending = store.audioPending;
 
   // ── 1. Modal Title Bar ─────────────────────────────────────────────────────
   const titleBar = document.createElement('div');
@@ -143,14 +146,15 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     });
     devCard.appendChild(makeField('Driver / Backend', driverSel, true));
 
-    // CA-38: Modo Instrument (Hi-Z -10 dBV) vs Line (+4 dBu) com aviso honesto
+    // Spec 093 CA-4/CA-5: 3 modos explícitos (Instrumento, Line In PC, Linha Profissional +4 dBu) + canal físico
     const inModeSel = document.createElement('select');
     inModeSel.style.cssText = selStyle;
     inModeSel.dataset.controlId = 'main.input_mode';
     const curMode = String(store.params?.['input.mode'] ?? 'instrument');
     for (const [mVal, mLbl] of [
-      ['instrument', 'Instrument / Hi-Z (-10 dBV)'],
-      ['line', 'Line (+4 dBu)'],
+      ['instrument', 'Instrumento / Hi-Z (0 dB, -10 dBV)'],
+      ['pc_line_in', 'Entrada de Linha PC / Line In (0 dB)'],
+      ['line', 'Linha Profissional (+4 dBu, -11,78 dB)'],
     ]) {
       const o = document.createElement('option');
       o.value = mVal;
@@ -162,6 +166,35 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
       void store.setControl('main.input_mode', inModeSel.value);
     });
     devCard.appendChild(makeField('Nível de Entrada', inModeSel));
+
+    const inChanSel = document.createElement('select');
+    inChanSel.style.cssText = selStyle;
+    inChanSel.dataset.controlId = 'main.input_channel';
+    const curChan = String(store.params?.['input.channel'] ?? 'left');
+    for (const [cVal, cLbl] of [
+      ['left', 'Canal Esquerdo (L / Entrada 1)'],
+      ['right', 'Canal Direito (R / Entrada 2)'],
+      ['sum', 'Soma Mono (L + R)'],
+    ]) {
+      const o = document.createElement('option');
+      o.value = cVal;
+      o.textContent = cLbl;
+      if (curChan === cVal) o.selected = true;
+      inChanSel.appendChild(o);
+    }
+    inChanSel.addEventListener('change', () => {
+      void store.setControl('main.input_channel', inChanSel.value);
+    });
+    devCard.appendChild(makeField('Canal de Entrada', inChanSel));
+
+    if (curMode === 'pc_line_in') {
+      const pcHint = document.createElement('div');
+      pcHint.style.cssText =
+        'grid-column:span 2;padding:8px 12px;border-radius:6px;background:rgba(87,255,176,.08);border:1px solid rgba(87,255,176,.3);color:#b8f5da;font-size:11px;line-height:1.4;';
+      pcHint.textContent =
+        'Entrada de Linha PC ativa (0 dB): desative "Escutar este dispositivo" nas Propriedades de Gravação do Windows para evitar ouvir a guitarra crua junto com o simulador.';
+      devCard.appendChild(pcHint);
+    }
 
     const inDevs = store.devices.filter((d) => d.is_input);
     const outDevs = store.devices.filter((d) => d.is_output);
@@ -344,8 +377,8 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     latPanel.appendChild(noteSpan);
     pane.appendChild(latPanel);
   } else if (store.audioTab === 'in') {
-    const src = str(store, 'main.input_source', 'guitar');
-    const boost = num(store, 'main.input_boost', 2.5);
+    const src = str(store, 'input.source', 'device');
+    const boost = num(store, 'input.boost', 2.5);
     const inDb = store.telemetry.input_peak_db ?? -18.2;
     const litCount = Math.max(0, Math.min(30, Math.round((inDb + 60) / 2)));
 
@@ -359,7 +392,7 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     const srcBtns = document.createElement('div');
     srcBtns.style.cssText = 'display:flex;gap:4px;';
     for (const [val, lbl] of [
-      ['guitar', 'Guitarra'],
+      ['device', 'Guitarra (Dispositivo)'],
       ['test_riff', 'Riff de teste'],
       ['di_file', 'Arquivo DI'],
     ] as const) {
@@ -572,7 +605,10 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
   foot.style.cssText =
     'height:54px;flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 18px;border-top:1px solid #000;background:#0a0c0e;';
 
-  const cancelBtn = makeChipButton('ui.nav_screen', 'Cancelar', false, () => store.setScreen('main'));
+  const cancelBtn = makeChipButton('ui.nav_screen', 'Cancelar', false, () => {
+    store.audioPending = null;
+    store.setScreen('main');
+  });
   cancelBtn.style.cssText =
     'height:34px;padding:0 16px;border-radius:5px;border:1px solid #000;background:linear-gradient(180deg,#30353c,#1a1d21);color:#d6dade;box-shadow:inset 0 1px 0 rgba(255,255,255,.12);font-size:11.5px;font-weight:600;display:flex;align-items:center;';
 
@@ -585,6 +621,8 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
         buffer_size: pending.bufferSize,
         input_device: pending.inputDevice || undefined,
         output_device: pending.outputDevice || undefined,
+        input_mode: String(store.params?.['input.mode'] ?? 'instrument'),
+        input_channel: String(store.params?.['input.channel'] ?? 'left'),
       });
       try {
         localStorage.setItem(
@@ -598,6 +636,8 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
           })
         );
       } catch {}
+      store.params['amp_1.standby'] = false;
+      store.audioPending = null;
       const st = await store.transport.getAudioStatus();
       if (st && typeof st === 'object') Object.assign(store.audioStatus, st);
       store.emit('status');

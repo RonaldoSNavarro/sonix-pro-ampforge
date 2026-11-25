@@ -160,7 +160,7 @@ Em cadeias de guitarra de alto ganho (como JCM800 + TS808 ou Dual Rectifier Red 
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo atual / alvo:** `crates/ampforge-dsp/src/fx/dynamics.rs` (`pub struct NoiseGateProcessor`).
-- Implementa `DspBlock` + `AutomatableParams` (Spec 053).
+- Implementa `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -237,7 +237,7 @@ Em cadeias de guitarra de alto ganho (como JCM800 + TS808 ou Dual Rectifier Red 
 
 - `crates/ampforge-dsp/src/fx/dynamics.rs` (`NoiseGateProcessor`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.gate.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

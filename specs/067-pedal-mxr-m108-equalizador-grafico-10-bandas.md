@@ -177,7 +177,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](../crates/ampforge-dsp/s
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/mxr_m108_eq.rs` (separado do Mesa 5-Band da Spec 085 e do Paramétrico de 8 Bandas da Spec 086).
-- **Struct principal:** `pub struct MxrM108EqProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct MxrM108EqProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -208,7 +208,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](../crates/ampforge-dsp/s
 ## 17. Critérios de aceite (CA-01 a CA-05)
 
 - **CA-01 — Transparência Absoluta com as 10 Bandas em `0,0 dB` (`DOCUMENTED` / `ANALYTICAL`):**
-  - *Sinal de entrada:* Varredura senoidal nas 10 frequências centrais (`31,25 Hz` a `16 000 Hz`) a `-18 dBFS`.
+  - *Sinal de entrada:* Varredura senoidal nas 10 frequências centrais (`31,25 Hz` a `16 000 Hz`) a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `pedal.mxr.m108_10band_eq` com `eq.enabled = true`, `input_gain_db = 0.0`, `output_level_db = 0.0` e todas as 10 bandas `b1..b10 = 0.0 dB`.
   - *Método de medição:* Ganho em dB em cada uma das 10 frequências.
@@ -249,7 +249,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/eq.rs`](../crates/ampforge-dsp/s
 
 - `crates/ampforge-dsp/src/fx/eq.rs` (`EqProcessor (EqMode::Graphic10BandPedal)` e futuro `crates/ampforge-dsp/src/fx/pedals/mxr_m108_eq.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.eq.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

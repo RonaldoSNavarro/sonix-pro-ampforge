@@ -225,7 +225,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/reverb.rs`](../crates/ampforge-d
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/fx/reverb.rs`
-- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

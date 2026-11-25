@@ -191,7 +191,7 @@ O algoritmo **YIN** (`F-01`) supera a autocorrelação simples e a detecção po
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/tuner.rs`, `crates/sonix-desktop/src/audio.rs`
-- Testes atuais: `crates/ampforge-dsp/tests/contract_026_tuner_zero_alloc.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_026_tuner_zero_alloc.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
 
 ---
 

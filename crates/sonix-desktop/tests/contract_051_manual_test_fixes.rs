@@ -764,17 +764,20 @@ fn test_ca_17_oversampling_2x_4x_8x_updates_algorithmic_latency_and_audio() {
     let mut mono_out = vec![0.0f32; 480];
     let mut out_stereo = vec![0.0f32; 480 * 2];
     DesktopAudioHost::process_input_callback_f32(&in_stereo, 2, &mut mono_in, &duplex, &ctx.telemetry);
-    DesktopAudioHost::process_output_callback_f32(
-        &mut out_stereo,
-        2,
-        48000.0,
-        &mut mono_in,
-        &mut mono_out,
-        &duplex,
-        ctx.dsp_chain.as_ref().unwrap(),
-        &ctx.telemetry,
-        None,
-    );
+    {
+        let mut dsp = ctx.dsp_chain.as_ref().unwrap().lock().unwrap();
+        DesktopAudioHost::process_output_callback_f32(
+            &mut out_stereo,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &mut dsp,
+            &ctx.telemetry,
+            None,
+        );
+    }
     let (_, _, b_obs) = dispatch(&ctx, "/api/audio/status", "GET", b"");
     let v_obs: Value = serde_json::from_slice(&b_obs).unwrap();
     assert_eq!(v_obs["input_period_frames"].as_u64(), Some(480));

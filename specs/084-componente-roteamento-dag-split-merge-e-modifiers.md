@@ -205,7 +205,7 @@ Especificar o contrato técnico, de concorrência em memória (*lock-free memory
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/dag.rs`, `crates/ampforge-dsp/src/queue.rs`, `crates/sonix-desktop/src/audio.rs` (`L2558–2693`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
 
 ---
 

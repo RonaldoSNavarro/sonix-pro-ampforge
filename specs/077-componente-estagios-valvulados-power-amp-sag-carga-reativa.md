@@ -214,7 +214,7 @@ Os 10 sub-modelos são configurados por structs de parâmetros estáticos (espec
   - *Método de medição:* Ganho em `90 Hz` e `5000 Hz` relativo a `1000 Hz`.
   - *Critério e tolerância:*
     1. Desligar a malha NFB (`nfb_enabled = false`) deve elevar o pico de ressonância grave em `90 Hz` em **pelo menos `+2,5 dB`** em relação a `nfb_enabled = true`.
-    2. Com `nfb_enabled = true`, variar `presence` de `0.0` para `1.0` deve elevar o ganho em `5000 Hz` em **pelo menos `+4,0 dB`**, enquanto com `nfb_enabled = false` o controle `presence` do laço de NFB tem efeito `0,0 dB` (inoperante, como no Dual Rectifier Red Modern).
+    2. Com `nfb_enabled = true`, variar `presence` de `0.0` para `1.0` deve elevar o ganho em `5000 Hz` em **pelo menos `+4,0 dB`**, enquanto com `nfb_enabled = false` o controle `presence` do laço de NFB tem efeito `0,0 dB` dentro da malha de potência (nota: no Dual Rectifier Red Modern — Spec 057 — a chave de modo desconecta a malha NFB mas comuta o potenciômetro `Presence` para atuação passiva dedicada fora do loop NFB).
   - *Origem da tolerância:* Equação de realimentação negativa de potência com carga reativa (`F-03` §4).
 
 - **CA-04 — Distinção Física `CathodeFollowerStage` (Ganho $< 1$ + Compressão Assimétrica) e `CathodeBias` vs `FixedBias` (`DOCUMENTED`):**
@@ -233,7 +233,7 @@ Os 10 sub-modelos são configurados por structs de parâmetros estáticos (espec
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/amp.rs`, `crates/ampforge-dsp/src/modshop.rs` e futuro diretório `crates/ampforge-dsp/src/tube/`
-- Testes atuais: `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
+- Testes atuais: `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs`, `Planejado: crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
 
 ---
 

@@ -119,8 +119,6 @@ Especificar o contrato técnico, topológico, matemático e de verificação do 
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L440-L444) e [`567-598`](../crates/ampforge-dsp/src/fx/drive.rs#L567-L598) contém as seguintes divergências auditadas:
 
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 3. **`FACTUAL_ERROR` (`drive.rs:442–443`):** A frequência do controle `FILTER` é calculada como `let fc = 15000.0 * (475.0 / 15000.0).powf(self.tone);` usando um biquad de **2ª ordem** (`Q=0.707`), quando no circuito real o estágio `FILTER` é um filtro RC passivo de **1ª ordem** ($6\text{ dB/oitava}$) cuja frequência de corte varia hiperbolicamente com o potenciômetro logarítmico `100 kΩ` de `32 154 Hz` (`Filter = 0%`) até `475,2 Hz` (`Filter = 100%`).
 
 ---
@@ -178,7 +176,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-ds
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/proco_rat.rs`.
-- **Struct principal:** `pub struct ProCoRatProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct ProCoRatProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -253,7 +251,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-ds
 
 - `crates/ampforge-dsp/src/fx/drive.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/proco_rat.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.rat.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

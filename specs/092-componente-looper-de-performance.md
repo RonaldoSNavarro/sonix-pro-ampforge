@@ -200,7 +200,7 @@ Especificar o contrato técnico, de memória em tempo real, de máquina de estad
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/looper.rs`, `crates/sonix-desktop/src/audio.rs`
-- Testes atuais: `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
 
 ---
 

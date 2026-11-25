@@ -619,6 +619,8 @@ impl PartitionedConvolverState {
         let x = &self.fdl[fdl_idx];
         let h = &data.tail_partitions[p];
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: x/h/acc_soa têm tamanho fixo SPEC_SOA_LEN (múltiplo de 4) e alinhamento >= 16 bytes;
+        // k avança de 4 em 4 dentro de 0..SPEC_SOA_LEN, sem aliasing entre x, h e self.acc_soa.
         unsafe {
             use std::arch::x86_64::*;
             let xr = x.re.as_ptr();

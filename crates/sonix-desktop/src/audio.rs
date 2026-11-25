@@ -61,6 +61,59 @@ pub enum AudioMode {
     Asio,
 }
 
+/// Slot de transferência de posse exclusiva do `RealtimeDspChain` entre thread de controle e thread de áudio (Spec 093 CA-2).
+/// O callback de tempo real nunca adquire `Mutex`; ele toma posse exclusiva da instância ao iniciar o stream.
+pub struct DspChainSlot {
+    inner: Mutex<Option<RealtimeDspChain>>,
+}
+
+impl DspChainSlot {
+    pub fn new(chain: RealtimeDspChain) -> Self {
+        Self {
+            inner: Mutex::new(Some(chain)),
+        }
+    }
+
+    pub fn take_for_audio_thread(&self) -> Option<RealtimeDspChain> {
+        self.inner.lock().ok().and_then(|mut g| g.take())
+    }
+
+    pub fn return_from_audio_thread(&self, chain: RealtimeDspChain) {
+        if let Ok(mut g) = self.inner.lock() {
+            *g = Some(chain);
+        }
+    }
+}
+
+struct AudioThreadChainOwner {
+    chain: Option<RealtimeDspChain>,
+    home: Arc<Mutex<RealtimeDspChain>>,
+}
+
+impl AudioThreadChainOwner {
+    fn take_from(home: &Arc<Mutex<RealtimeDspChain>>, sample_rate: f32) -> Self {
+        let chain = if let Ok(mut guard) = home.lock() {
+            std::mem::replace(&mut *guard, RealtimeDspChain::new(sample_rate))
+        } else {
+            RealtimeDspChain::new(sample_rate)
+        };
+        Self {
+            chain: Some(chain),
+            home: Arc::clone(home),
+        }
+    }
+}
+
+impl Drop for AudioThreadChainOwner {
+    fn drop(&mut self) {
+        if let Some(chain) = self.chain.take() {
+            if let Ok(mut guard) = self.home.lock() {
+                *guard = chain;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputChannel {
@@ -983,7 +1036,7 @@ impl DesktopAudioHost {
         telemetry.update_input_peak(peak_db);
     }
 
-    /// Processa saída F32 usando um processador customizável e captura de pânico no callback (AUD-04 / Spec 018 CA-11).
+    /// Processa saída F32 usando um processador customizável, posse exclusiva RT (Zero-Mutex) e captura de pânico no callback (Spec 093 CA-2).
     pub fn process_output_callback_f32_with_processor<F>(
         data: &mut [f32],
         out_channels: usize,
@@ -991,7 +1044,7 @@ impl DesktopAudioHost {
         mono_in: &mut [f32],
         mono_out: &mut [f32],
         duplex: &RealtimeDuplexEngine,
-        dsp_chain: &Mutex<RealtimeDspChain>,
+        dsp: &mut RealtimeDspChain,
         telemetry: &TelemetryBuffer,
         observed_period: Option<&AtomicU32>,
         mut processor: F,
@@ -1028,29 +1081,18 @@ impl DesktopAudioHost {
             let frames = (total_frames - offset).min(chunk_cap);
             duplex.pop_samples_for_processing(&mut mono_in[..frames]);
             let mut faulted = false;
-            if let Ok(mut dsp) = dsp_chain.try_lock() {
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    processor(&mut dsp, &mono_in[..frames], &mut mono_out[..frames]);
-                }));
-                match res {
-                    Ok(()) => {
-                        telemetry.set_output_muted(dsp.is_output_muted());
-                        gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
-                    }
-                    Err(_payload) => {
-                        mono_out[..frames].fill(0.0);
-                        telemetry.mark_engine_faulted();
-                        faulted = true;
-                    }
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                processor(dsp, &mono_in[..frames], &mut mono_out[..frames]);
+            }));
+            match res {
+                Ok(()) => {
+                    telemetry.set_output_muted(dsp.is_output_muted());
+                    gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
                 }
-            } else {
-                // Contenção não vaza sinal seco com afinador em mute ou amp em standby (AUD-06);
-                // caso contrário encaminha sinal de entrada em bypass seguro (Spec 034, CA-6).
-                telemetry.record_dsp_contention_silence();
-                if telemetry.is_output_muted() {
+                Err(_payload) => {
                     mono_out[..frames].fill(0.0);
-                } else {
-                    mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+                    telemetry.mark_engine_faulted();
+                    faulted = true;
                 }
             }
             if faulted {
@@ -1083,7 +1125,7 @@ impl DesktopAudioHost {
         }
     }
 
-    /// Processa saída F32 em fatias de `mono_in.len()` sem truncar callbacks > 4096 frames e sem silêncio por contenção (Spec 034, CA-5 & CA-6).
+    /// Processa saída F32 em fatias de `mono_in.len()` com posse exclusiva RT (Spec 093 CA-2).
     pub fn process_output_callback_f32(
         data: &mut [f32],
         out_channels: usize,
@@ -1091,7 +1133,7 @@ impl DesktopAudioHost {
         mono_in: &mut [f32],
         mono_out: &mut [f32],
         duplex: &RealtimeDuplexEngine,
-        dsp_chain: &Mutex<RealtimeDspChain>,
+        dsp: &mut RealtimeDspChain,
         telemetry: &TelemetryBuffer,
         observed_period: Option<&AtomicU32>,
     ) {
@@ -1102,14 +1144,14 @@ impl DesktopAudioHost {
             mono_in,
             mono_out,
             duplex,
-            dsp_chain,
+            dsp,
             telemetry,
             observed_period,
             |dsp, inp, out| dsp.process(inp, out),
         );
     }
 
-    /// Processa saída I16 em fatias de `mono_in.len()` sem truncamento e sem silêncio por contenção (Spec 034, CA-5 & CA-6).
+    /// Processa saída I16 em fatias de `mono_in.len()` com posse exclusiva RT (Spec 093 CA-2).
     pub fn process_output_callback_i16(
         data: &mut [i16],
         out_channels: usize,
@@ -1117,7 +1159,7 @@ impl DesktopAudioHost {
         mono_in: &mut [f32],
         mono_out: &mut [f32],
         duplex: &RealtimeDuplexEngine,
-        dsp_chain: &Mutex<RealtimeDspChain>,
+        dsp: &mut RealtimeDspChain,
         telemetry: &TelemetryBuffer,
         observed_period: Option<&AtomicU32>,
     ) {
@@ -1151,27 +1193,18 @@ impl DesktopAudioHost {
             let frames = (total_frames - offset).min(chunk_cap);
             duplex.pop_samples_for_processing(&mut mono_in[..frames]);
             let mut faulted = false;
-            if let Ok(mut dsp) = dsp_chain.try_lock() {
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
-                }));
-                match res {
-                    Ok(()) => {
-                        telemetry.set_output_muted(dsp.is_output_muted());
-                        gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
-                    }
-                    Err(_payload) => {
-                        mono_out[..frames].fill(0.0);
-                        telemetry.mark_engine_faulted();
-                        faulted = true;
-                    }
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                dsp.process(&mono_in[..frames], &mut mono_out[..frames]);
+            }));
+            match res {
+                Ok(()) => {
+                    telemetry.set_output_muted(dsp.is_output_muted());
+                    gate_telemetry = Some((dsp.gate_state(), dsp.gate_gain_reduction_db(), dsp.current_b_plus_v()));
                 }
-            } else {
-                telemetry.record_dsp_contention_silence();
-                if telemetry.is_output_muted() {
+                Err(_payload) => {
                     mono_out[..frames].fill(0.0);
-                } else {
-                    mono_out[..frames].copy_from_slice(&mono_in[..frames]);
+                    telemetry.mark_engine_faulted();
+                    faulted = true;
                 }
             }
             if faulted {
@@ -1524,24 +1557,26 @@ impl DesktopAudioHost {
                 let mut mono_in_f32 = vec![0.0f32; 4096];
                 let mut mono_out_f32 = vec![0.0f32; 4096];
                 let duplex_f32 = duplex.clone();
-                let dsp_chain_f32 = dsp_chain.clone();
+                let mut dsp_owner_f32 = AudioThreadChainOwner::take_from(&dsp_chain, out_sample_rate_f);
                 let tele_f32 = telemetry.clone();
                 let err_cb = err_slot_base.clone();
 
                 let build_res = out_device.build_output_stream(
                     out_stream_config.clone(),
                     move |data: &mut [f32], _| {
-                        Self::process_output_callback_f32(
-                            data,
-                            out_channels,
-                            out_sample_rate_f,
-                            &mut mono_in_f32,
-                            &mut mono_out_f32,
-                            &duplex_f32,
-                            &dsp_chain_f32,
-                            &tele_f32,
-                            Some(&obs_out_c),
-                        );
+                        if let Some(ref mut dsp) = dsp_owner_f32.chain {
+                            Self::process_output_callback_f32(
+                                data,
+                                out_channels,
+                                out_sample_rate_f,
+                                &mut mono_in_f32,
+                                &mut mono_out_f32,
+                                &duplex_f32,
+                                dsp,
+                                &tele_f32,
+                                Some(&obs_out_c),
+                            );
+                        }
                     },
                     move |err| Self::record_cpal_stream_error(&err_cb, err),
                     None,
@@ -1552,7 +1587,7 @@ impl DesktopAudioHost {
                         let mut mono_in_fb = vec![0.0f32; 4096];
                         let mut mono_out_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
-                        let dsp_chain_fb = dsp_chain.clone();
+                        let mut dsp_owner_fb = AudioThreadChainOwner::take_from(&dsp_chain, aligned_out_sr.max(1) as f32);
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
                         let err_fb = err_slot_base.clone();
@@ -1561,17 +1596,19 @@ impl DesktopAudioHost {
                         let s = out_device.build_output_stream(
                             out_fb_config,
                             move |data: &mut [f32], _| {
-                                Self::process_output_callback_f32(
-                                    data,
-                                    out_channels,
-                                    out_sample_rate_f,
-                                    &mut mono_in_fb,
-                                    &mut mono_out_fb,
-                                    &duplex_fb,
-                                    &dsp_chain_fb,
-                                    &tele_fb,
-                                    Some(&obs_fb),
-                                );
+                                if let Some(ref mut dsp) = dsp_owner_fb.chain {
+                                    Self::process_output_callback_f32(
+                                        data,
+                                        out_channels,
+                                        out_sample_rate_f,
+                                        &mut mono_in_fb,
+                                        &mut mono_out_fb,
+                                        &duplex_fb,
+                                        dsp,
+                                        &tele_fb,
+                                        Some(&obs_fb),
+                                    );
+                                }
                             },
                             move |err| Self::record_cpal_stream_error(&err_fb, err),
                             None,
@@ -1584,7 +1621,7 @@ impl DesktopAudioHost {
                 let mut mono_in_i16 = vec![0.0f32; 4096];
                 let mut mono_out_i16 = vec![0.0f32; 4096];
                 let duplex_i16 = duplex.clone();
-                let dsp_chain_i16 = dsp_chain.clone();
+                let mut dsp_owner_i16 = AudioThreadChainOwner::take_from(&dsp_chain, out_sample_rate_f);
                 let tele_i16 = telemetry.clone();
                 let obs_i16 = observed_out_period.clone();
                 let err_cb = err_slot_base.clone();
@@ -1592,17 +1629,19 @@ impl DesktopAudioHost {
                 let build_res = out_device.build_output_stream(
                     out_stream_config.clone(),
                     move |data: &mut [i16], _| {
-                        Self::process_output_callback_i16(
-                            data,
-                            out_channels,
-                            out_sample_rate_f,
-                            &mut mono_in_i16,
-                            &mut mono_out_i16,
-                            &duplex_i16,
-                            &dsp_chain_i16,
-                            &tele_i16,
-                            Some(&obs_i16),
-                        );
+                        if let Some(ref mut dsp) = dsp_owner_i16.chain {
+                            Self::process_output_callback_i16(
+                                data,
+                                out_channels,
+                                out_sample_rate_f,
+                                &mut mono_in_i16,
+                                &mut mono_out_i16,
+                                &duplex_i16,
+                                dsp,
+                                &tele_i16,
+                                Some(&obs_i16),
+                            );
+                        }
                     },
                     move |err| Self::record_cpal_stream_error(&err_cb, err),
                     None,
@@ -1613,7 +1652,7 @@ impl DesktopAudioHost {
                         let mut mono_in_fb = vec![0.0f32; 4096];
                         let mut mono_out_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
-                        let dsp_chain_fb = dsp_chain.clone();
+                        let mut dsp_owner_fb = AudioThreadChainOwner::take_from(&dsp_chain, aligned_out_sr.max(1) as f32);
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
                         let err_fb = err_slot_base.clone();
@@ -1622,17 +1661,19 @@ impl DesktopAudioHost {
                         let s = out_device.build_output_stream(
                             out_fb_config,
                             move |data: &mut [i16], _| {
-                                Self::process_output_callback_i16(
-                                    data,
-                                    out_channels,
-                                    out_sample_rate_f,
-                                    &mut mono_in_fb,
-                                    &mut mono_out_fb,
-                                    &duplex_fb,
-                                    &dsp_chain_fb,
-                                    &tele_fb,
-                                    Some(&obs_fb),
-                                );
+                                if let Some(ref mut dsp) = dsp_owner_fb.chain {
+                                    Self::process_output_callback_i16(
+                                        data,
+                                        out_channels,
+                                        out_sample_rate_f,
+                                        &mut mono_in_fb,
+                                        &mut mono_out_fb,
+                                        &duplex_fb,
+                                        dsp,
+                                        &tele_fb,
+                                        Some(&obs_fb),
+                                    );
+                                }
                             },
                             move |err| Self::record_cpal_stream_error(&err_fb, err),
                             None,
@@ -2345,6 +2386,7 @@ pub enum DspParamUpdate {
     EngineOversampling(usize),
     InputBoost(f32),
     InputModeLine(bool),
+    InputChannel(InputChannel),
     GateThreshold(f32),
     GateEnabled(bool),
     GateMode(NoiseGateMode),
@@ -2560,6 +2602,7 @@ pub struct RealtimeDuplexEngine {
     underruns: AtomicU64,
     overruns: AtomicU64,
     input_channel: AtomicU8,
+    last_sample_bits: AtomicU32,
 }
 
 impl RealtimeDuplexEngine {
@@ -2570,6 +2613,7 @@ impl RealtimeDuplexEngine {
             underruns: AtomicU64::new(0),
             overruns: AtomicU64::new(0),
             input_channel: AtomicU8::new(InputChannel::Left.to_u8()),
+            last_sample_bits: AtomicU32::new(0.0f32.to_bits()),
         }
     }
 
@@ -2581,6 +2625,7 @@ impl RealtimeDuplexEngine {
             underruns: AtomicU64::new(0),
             overruns: AtomicU64::new(0),
             input_channel: AtomicU8::new(InputChannel::Left.to_u8()),
+            last_sample_bits: AtomicU32::new(0.0f32.to_bits()),
         };
         // Pré-carrega o buffer com exatamente 1 período de silêncio para iniciar equilibrado em regime estacionário
         let warmup = vec![0.0f32; tp];
@@ -2636,6 +2681,7 @@ impl RealtimeDuplexEngine {
         // Se a ocupação exceder 2 períodos (ou em caso de rajada/glitch do SO), drena o excesso
         // imediatamente para o alvo de 1 período (nunca acumulando >= 2400 amostras / 50ms).
         let max_threshold = target * 2;
+        let mut drained = false;
         if occupied > max_threshold {
             self.overruns.fetch_add(1, Ordering::Relaxed);
             let to_drop = occupied.saturating_sub(target);
@@ -2646,11 +2692,37 @@ impl RealtimeDuplexEngine {
                 self.ring.pop_slice(&mut discard[..chunk]);
                 remaining -= chunk;
             }
+            drained = true;
         }
 
+        let prev_last = f32::from_bits(self.last_sample_bits.load(Ordering::Relaxed));
         let popped = self.ring.pop_slice(buf);
+
+        if drained && popped > 0 {
+            // Crossfade suave de borda (~0.67 ms @ 48 kHz) após descarte de drift
+            let fade_len = popped.min(32);
+            for (i, s) in buf[..fade_len].iter_mut().enumerate() {
+                let alpha = (i + 1) as f32 / fade_len as f32;
+                *s = prev_last * (1.0 - alpha) + *s * alpha;
+            }
+        }
+
         if popped < buf.len() {
             self.underruns.fetch_add(1, Ordering::Relaxed);
+            let start_val = if popped > 0 { buf[popped - 1] } else { prev_last };
+            let rem = buf.len() - popped;
+            let fade_len = rem.min(64); // ~1.33 ms @ 48 kHz
+            for i in 0..fade_len {
+                let t = 1.0 - ((i + 1) as f32 / fade_len as f32);
+                buf[popped + i] = start_val * t;
+            }
+            if rem > fade_len {
+                buf[popped + fade_len..].fill(0.0);
+            }
+            self.last_sample_bits.store(0.0f32.to_bits(), Ordering::Relaxed);
+        } else if !buf.is_empty() {
+            self.last_sample_bits
+                .store(buf[buf.len() - 1].to_bits(), Ordering::Relaxed);
         }
         popped
     }
@@ -3641,6 +3713,7 @@ impl RealtimeDspChain {
             DspParamUpdate::AmpPowerTube(t) => self.amp.set_power_tube_type(t),
             DspParamUpdate::AmpRectifier(r) => self.amp.set_rectifier_type(r),
             DspParamUpdate::AmpToneStack(ts) => self.amp.set_tonestack_topology(ts),
+            DspParamUpdate::InputChannel(_) => {}
             DspParamUpdate::EngineOversampling(f) => {
                 let normalized = match f {
                     1 => 1,
@@ -5073,17 +5146,9 @@ impl RealtimeDspChain {
             }
         }
 
-        // 9. Limitador de Saída Segura + defesa NaN/Inf
-        let mut has_non_finite = false;
-        for s in output[..len].iter_mut() {
-            let val = *s;
-            if !val.is_finite() {
-                *s = 0.0;
-                has_non_finite = true;
-            } else {
-                *s = val.clamp(-1.0, 1.0);
-            }
-        }
+        // 9. Limitador de Saída Suave Zero-Latency + defesa NaN/Inf (Spec 093 CA-6)
+        let mut limiter = ampforge_dsp::limiter::OutputSoftLimiter::new();
+        let has_non_finite = limiter.process_slice(&mut output[..len]);
 
         // Spec 047 CA-2: Captura lock-free e zero-alloc da saída do motor para o CRT Waveform
         let mut out_pos = self.scope_output_ring.total_written_relaxed();

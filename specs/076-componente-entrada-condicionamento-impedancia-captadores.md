@@ -19,7 +19,7 @@ status: rascunho
 
 Especificar o contrato técnico, físico, matemático e de verificação do **Componente de Entrada (`component.input.conditioning_and_pickup_rlc`)**, estabelecendo com rigor físico a fronteira entre o que o hardware da interface de áudio faz e o que o DSP pode modelar:
 1. **Fronteira Física Inegociável (Hardware vs DSP):** Nenhum software DSP pode alterar fisicamente a impedância elétrica real ($Z_{\text{HW}}$) do jack `Hi-Z` da interface de áudio USB do usuário! O que o módulo faz é aplicar um **modelo matemático de filtro RLC equivalente** que simula o carregamento resistivo/capacitivo de diferentes impedâncias de entrada virtuais (`22 kΩ`, `100 kΩ`, `470 kΩ`, `1 MΩ`) e capacitâncias de cabo (`100 pF` a `1000 pF`) sobre uma guitarra ligada em uma interface Hi-Z padrão (`1 MΩ`), além de permitir *voicing* de compensação de captadores (`SingleCoil`, `Humbucker`, `P90`, `Active`).
-2. **Condicionamento Obrigatório de Entrada:** Bloqueio DC (`15 Hz`, 1ª ordem), atenuador de entrada `Pad` (`-12 dB` / `0 dB`), ajuste de `Input Gain` (`-24 dB` a `+24 dB`), proteção contra amostras não-finitas (`NaN`/`Inf` sanitização) e medição de pico/RMS de entrada (*Input Meter*) para calibração do headroom nominal (`-18 dBFS = 0 dBu / +0 dBV` referência de entrada de amplificador).
+2. **Condicionamento Obrigatório de Entrada:** Bloqueio DC (`15 Hz`, 1ª ordem), atenuador de entrada `Pad` (`-12 dB` / `0 dB`), ajuste de `Input Gain` (`-24 dB` a `+24 dB`), proteção contra amostras não-finitas (`NaN`/`Inf` sanitização) e medição de pico/RMS de entrada (*Input Meter*) para calibração do headroom nominal (`-12 dBFS = 0 dBu / +0 dBV` referência de entrada de amplificador).
 
 ---
 
@@ -106,20 +106,20 @@ Especificar o contrato técnico, físico, matemático e de verificação do **Co
 
 O código atual em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](../crates/sonix-desktop/src/audio.rs#L4558-L4602) (parâmetros `input.*`) e [`audio.rs:1456–1515`](../crates/sonix-desktop/src/audio.rs#L1456-L1515) apresenta os seguintes achados auditados:
 
-1. **`CODE_REFERENCE_STALE` (corrigido nesta revisão):** A Spec 076 original citava números de linha desatualizados para o bloco de entrada em `audio.rs`. Após a revisão da Spec 052, o manipulador de parâmetros `input.*` reside em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](../crates/sonix-desktop/src/audio.rs#L4558-L4602) (controlando `input.gain_db`, `input.pad`, `input.channel_mode`, `input.impedance`, `input.pickup_type`).
+1. **Nota de reconciliação (Spec 093 vs Spec 076):** Os parâmetros atuais de roteamento e modo de entrada (`input.mode`: `instrument | pc_line_in | line`, `input.channel`: `left | right | sum`, `input.boost`) residem em `crates/sonix-desktop/src/params.rs` e são cobertos pela **Spec 093**. Os parâmetros avançados de trim/pad/RLC abaixo (`input.gain_db`, `input.pad`, `input.channel_mode`, `input.impedance`, `input.pickup_type`) são **`planejada — Spec 076`** e ainda não existem em `params.rs`.
 2. **`ARCHITECTURE_CONFLICT` (`audio.rs`):** O condicionamento de entrada ainda reside inline dentro de `RealtimeDspChain` em `sonix-desktop/src/audio.rs` em vez de ser um bloco reutilizável em `ampforge-dsp` (`component.input.conditioning_and_pickup_rlc`) compartilhado entre standalone desktop e futuros formatos CLAP/VST3.
 
 ---
 
 ## 8. Controles, parâmetros e mapeamento para a interface
 
-| Controle UI | Chave Canônica (Spec 014) | Faixa Aceita | Unidade | Valor Padrão | Papel no Condicionamento |
-|---|---|---|---|---|---|
-| **INPUT GAIN** | `input.gain_db` | `-24.0 .. +24.0` | `dB` | `0.0` | Ajuste de ganho linear de entrada para calibrar a interface ao headroom do amplificador. |
-| **INPUT PAD** | `input.pad` | `false / true` | Booleano | `false` | Atenuação instantânea de `-12,0 dB` para captadores ativos ou saída muito alta. |
-| **CHANNEL MODE** | `input.channel_mode` | `"mono_l"`, `"mono_r"`, `"stereo_sum"` | Enum | `"mono_l"` | Seleciona o canal físico do ADC onde a guitarra está plugada. |
-| **VIRTUAL INPUT Z** | `input.impedance` | `"1m"`, `"470k"`, `"100k"`, `"22k"`, `"10k"` | Enum | `"1m"` (plano) | Seleciona $R_{\text{load}}$ no filtro diferencial RLC $\Delta H(s)$ (em `"1m"`, bypass plano `0,0 dB`). |
-| **PICKUP MODEL** | `input.pickup_type` | `"flat"`, `"single_coil"`, `"humbucker"`, `"p90"`, `"active"` | Enum | `"flat"` | Define os parâmetros $(L_p, R_p)$ de referência para o cálculo de $\Delta H(s)$ quando `Virtual Input Z < 1 MΩ`. |
+| Controle UI | Chave Canônica (Spec 014) | Faixa Aceita | Unidade | Valor Padrão | Status em `params.rs` | Papel no Condicionamento |
+|---|---|---|---|---|---|---|
+| **INPUT GAIN** | `input.gain_db` | `-24.0 .. +24.0` | `dB` | `0.0` | `planejada — Spec 076` | Ajuste de ganho linear de entrada para calibrar a interface ao headroom do amplificador. |
+| **INPUT PAD** | `input.pad` | `false / true` | Booleano | `false` | `planejada — Spec 076` | Atenuação instantânea de `-12,0 dB` para captadores ativos ou saída muito alta. |
+| **CHANNEL MODE** | `input.channel_mode` | `"mono_l"`, `"mono_r"`, `"stereo_sum"` | Enum | `"mono_l"` | `planejada — Spec 076` (hoje `input.channel` via Spec 093) | Seleciona o canal físico do ADC onde a guitarra está plugada. |
+| **VIRTUAL INPUT Z** | `input.impedance` | `"1m"`, `"470k"`, `"100k"`, `"22k"`, `"10k"` | Enum | `"1m"` (plano) | `planejada — Spec 076` | Seleciona $R_{\text{load}}$ no filtro diferencial RLC $\Delta H(s)$ (em `"1m"`, bypass plano `0,0 dB`). |
+| **PICKUP MODEL** | `input.pickup_type` | `"flat"`, `"single_coil"`, `"humbucker"`, `"p90"`, `"active"` | Enum | `"flat"` | `planejada — Spec 076` | Define os parâmetros $(L_p, R_p)$ de referência para o cálculo de $\Delta H(s)$ quando `Virtual Input Z < 1 MΩ`. |
 
 ---
 
@@ -157,7 +157,7 @@ O código atual em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](.
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/input.rs` (`pub struct InputConditionerProcessor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/input.rs` (`pub struct InputConditionerProcessor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 
@@ -203,7 +203,7 @@ O código atual em [`crates/sonix-desktop/src/audio.rs:4558–4602 @ c20cc65`](.
   - *Critério e tolerância:* `input.pad = true` deve atenuar o sinal em **`-12,00 dB ± 0,05 dB`**; `100%` das amostras de saída (incluindo as subsequentes à injeção de `NaN`/`Inf`) devem ser finitas (`is_finite() == true`).
 
 - **CA-03 — Modelo Diferencial de Carregamento RLC Virtual (`1 MΩ` Plano vs `10 kΩ` Amortecido) (`DOCUMENTED` / `ANALYTICAL`):**
-  - *Sinal de entrada:* Tons senoidais em `200 Hz` e `4000 Hz` a `-18 dBFS`.
+  - *Sinal de entrada:* Tons senoidais em `200 Hz` e `4000 Hz` a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `input.pickup_type = "single_coil"`, comparando `input.impedance = "1m"` vs `input.impedance = "10k"`.
   - *Método de medição:* Diferença de ganho $G(4000\text{ Hz}) - G(200\text{ Hz})$ em dB.

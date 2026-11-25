@@ -134,7 +134,7 @@ Nos amplificadores Mesa/Boogie Mark Series, o Tone Stack passivo rotativo (`Bass
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/fx/eq/mesa_mark_5band.rs` (`pub struct MesaMark5BandEqProcessor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/eq/mesa_mark_5band.rs` (`pub struct MesaMark5BandEqProcessor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 
@@ -181,7 +181,7 @@ Nos amplificadores Mesa/Boogie Mark Series, o Tone Stack passivo rotativo (`Bass
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/fx/eq.rs` (e futuro `crates/ampforge-dsp/src/fx/eq/mesa_mark_5band.rs`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`
 
 ---
 

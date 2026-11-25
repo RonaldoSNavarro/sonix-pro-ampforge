@@ -1,7 +1,7 @@
 //! Lock-free Single-Producer Single-Consumer (SPSC) Queues for Command and Telemetry
 use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -55,7 +55,9 @@ pub struct SpscBuffer<T: Copy, const CAP: usize> {
     _pad2: [u8; 56],
 }
 
+// SAFETY: SpscBuffer garante acesso exclusivo por índice entre 1 produtor (head) e 1 consumidor (tail) quando T: Copy + Send.
 unsafe impl<T: Copy + Send, const CAP: usize> Sync for SpscBuffer<T, CAP> {}
+// SAFETY: SpscBuffer pode ser enviado entre threads quando T: Copy + Send.
 unsafe impl<T: Copy + Send, const CAP: usize> Send for SpscBuffer<T, CAP> {}
 
 impl<T: Copy, const CAP: usize> SpscBuffer<T, CAP> {
@@ -81,6 +83,7 @@ impl<T: Copy, const CAP: usize> SpscBuffer<T, CAP> {
         }
 
         let idx = head & (CAP - 1);
+        // SAFETY: `head - tail < CAP` garante que `idx` não está sendo lido pelo consumidor.
         unsafe {
             let slot = self.buffer[idx].get();
             (*slot).write(item);
@@ -117,6 +120,7 @@ impl<T: Copy, const CAP: usize> SpscBuffer<T, CAP> {
         }
 
         let idx = tail & (CAP - 1);
+        // SAFETY: `tail != head` garante que `idx` contém item inicializado publicado pelo produtor.
         let val = unsafe {
             let slot = self.buffer[idx].get();
             (*slot).assume_init_read()
@@ -124,32 +128,6 @@ impl<T: Copy, const CAP: usize> SpscBuffer<T, CAP> {
 
         self.tail.store(tail.wrapping_add(1), Ordering::Release);
         Some(val)
-    }
-
-    /// Push com descarte do elemento mais antigo se estiver cheio (ideal para telemetria em tempo real)
-    #[inline]
-    pub fn push_overwrite(&self, item: T) {
-        let head = self.head.load(Ordering::Relaxed);
-        let mut tail = self.tail.load(Ordering::Acquire);
-
-        while head.wrapping_sub(tail) >= CAP {
-            match self.tail.compare_exchange_weak(
-                tail,
-                tail.wrapping_add(1),
-                Ordering::Release,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break,
-                Err(actual) => tail = actual,
-            }
-        }
-
-        let idx = head & (CAP - 1);
-        unsafe {
-            let slot = self.buffer[idx].get();
-            (*slot).write(item);
-        }
-        self.head.store(head.wrapping_add(1), Ordering::Release);
     }
 }
 
@@ -180,24 +158,205 @@ impl SpscCommandQueue {
     }
 }
 
+/// Estado empacotado do `TripleBuffer`: bits `0..2` = índice `ready` (`0..3`), bit `2` = flag `dirty`.
+const TRIPLE_READY_MASK: u8 = 0b0011;
+const TRIPLE_DIRTY_BIT: u8 = 0b0100;
+
+struct TripleBufferInner<T> {
+    slots: [UnsafeCell<T>; 3],
+    state: AtomicU8,
+    _pad: [u8; 63],
+}
+
+// SAFETY: O protocolo de troca de índices garante que produtor, consumidor e slot `ready` nunca
+// acessam o mesmo índice simultaneamente; T: Send permite transferência entre threads.
+unsafe impl<T: Send> Sync for TripleBufferInner<T> {}
+// SAFETY: `TripleBufferInner<T>` só expõe acesso via protocolo SPSC quando `T: Send`.
+unsafe impl<T: Send> Send for TripleBufferInner<T> {}
+
+/// Triple Buffer lock-free SPSC (`O(1)`, zero alocações no caminho crítico, sem UB).
+pub struct TripleBuffer<T> {
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: Clone + Send> TripleBuffer<T> {
+    pub fn new(initial: T) -> (TripleProducer<T>, TripleConsumer<T>) {
+        let inner = Arc::new(TripleBufferInner {
+            slots: [
+                UnsafeCell::new(initial.clone()),
+                UnsafeCell::new(initial.clone()),
+                UnsafeCell::new(initial),
+            ],
+            state: AtomicU8::new(1), // ready = 1, dirty = 0; producer = 0, consumer = 2
+            _pad: [0; 63],
+        });
+        (
+            TripleProducer {
+                inner: Arc::clone(&inner),
+                write_idx: 0,
+            },
+            TripleConsumer {
+                inner,
+                read_idx: 2,
+            },
+        )
+    }
+}
+
+pub struct TripleProducer<T> {
+    inner: Arc<TripleBufferInner<T>>,
+    write_idx: u8,
+}
+
+impl<T: Send> TripleProducer<T> {
+    #[inline]
+    pub fn publish(&mut self, value: T) {
+        let idx = self.write_idx as usize;
+        // SAFETY: `self.write_idx` é de posse exclusiva do produtor até o swap atômico abaixo.
+        unsafe {
+            *self.inner.slots[idx].get() = value;
+        }
+        let mut cur = self.inner.state.load(Ordering::Relaxed);
+        loop {
+            let next = (self.write_idx & TRIPLE_READY_MASK) | TRIPLE_DIRTY_BIT;
+            match self.inner.state.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(prev) => {
+                    self.write_idx = prev & TRIPLE_READY_MASK;
+                    break;
+                }
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+}
+
+pub struct TripleConsumer<T> {
+    inner: Arc<TripleBufferInner<T>>,
+    read_idx: u8,
+}
+
+impl<T: Send> TripleConsumer<T> {
+    #[inline]
+    pub fn latest(&mut self) -> Option<&T> {
+        let mut cur = self.inner.state.load(Ordering::Acquire);
+        if (cur & TRIPLE_DIRTY_BIT) == 0 {
+            return None;
+        }
+        loop {
+            let next = self.read_idx & TRIPLE_READY_MASK; // dirty = 0
+            match self.inner.state.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(prev) => {
+                    self.read_idx = prev & TRIPLE_READY_MASK;
+                    break;
+                }
+                Err(actual) => {
+                    if (actual & TRIPLE_DIRTY_BIT) == 0 {
+                        return None;
+                    }
+                    cur = actual;
+                }
+            }
+        }
+        let idx = self.read_idx as usize;
+        // SAFETY: Após o swap atômico, `self.read_idx` é de posse exclusiva do consumidor até a próxima chamada.
+        Some(unsafe { &*self.inner.slots[idx].get() })
+    }
+}
+
 pub struct SpscTelemetryQueue {
-    inner: Arc<SpscBuffer<TelemetrySnapshot, 512>>,
+    inner: Arc<TripleBufferInner<TelemetrySnapshot>>,
+    write_idx: AtomicU8,
+    read_idx: AtomicU8,
+    _prod_marker: std::marker::PhantomData<TripleProducer<TelemetrySnapshot>>,
+    _cons_marker: std::marker::PhantomData<TripleConsumer<TelemetrySnapshot>>,
 }
 
 impl SpscTelemetryQueue {
     pub fn new() -> (Self, Self) {
-        let inner = Arc::new(SpscBuffer::new());
-        (Self { inner: Arc::clone(&inner) }, Self { inner })
+        let (prod, cons) = TripleBuffer::new(TelemetrySnapshot::default());
+        let inner = Arc::clone(&prod.inner);
+        let w = prod.write_idx;
+        let r = cons.read_idx;
+        (
+            Self {
+                inner: Arc::clone(&inner),
+                write_idx: AtomicU8::new(w),
+                read_idx: AtomicU8::new(r),
+                _prod_marker: std::marker::PhantomData,
+                _cons_marker: std::marker::PhantomData,
+            },
+            Self {
+                inner,
+                write_idx: AtomicU8::new(w),
+                read_idx: AtomicU8::new(r),
+                _prod_marker: std::marker::PhantomData,
+                _cons_marker: std::marker::PhantomData,
+            },
+        )
     }
 
     #[inline]
     pub fn push_overwrite(&self, snapshot: TelemetrySnapshot) {
-        self.inner.push_overwrite(snapshot);
+        let w = self.write_idx.load(Ordering::Relaxed);
+        // SAFETY: SPSC — único produtor escreve no slot exclusivo `w` antes de publicá-lo em `state`.
+        unsafe {
+            *self.inner.slots[w as usize].get() = snapshot;
+        }
+        let mut cur = self.inner.state.load(Ordering::Relaxed);
+        loop {
+            let next = (w & TRIPLE_READY_MASK) | TRIPLE_DIRTY_BIT;
+            match self.inner.state.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(prev) => {
+                    self.write_idx.store(prev & TRIPLE_READY_MASK, Ordering::Relaxed);
+                    break;
+                }
+                Err(actual) => cur = actual,
+            }
+        }
     }
 
     #[inline]
     pub fn pop(&self) -> Option<TelemetrySnapshot> {
-        self.inner.pop()
+        let r = self.read_idx.load(Ordering::Relaxed);
+        let mut cur = self.inner.state.load(Ordering::Acquire);
+        if (cur & TRIPLE_DIRTY_BIT) == 0 {
+            return None;
+        }
+        let new_r = loop {
+            let next = r & TRIPLE_READY_MASK;
+            match self.inner.state.compare_exchange_weak(
+                cur,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(prev) => break prev & TRIPLE_READY_MASK,
+                Err(actual) => {
+                    if (actual & TRIPLE_DIRTY_BIT) == 0 {
+                        return None;
+                    }
+                    cur = actual;
+                }
+            }
+        };
+        self.read_idx.store(new_r, Ordering::Relaxed);
+        // SAFETY: SPSC — após trocar `new_r` para posse exclusiva do consumidor, lê cópia `Copy` do snapshot.
+        Some(unsafe { *self.inner.slots[new_r as usize].get() })
     }
 }
 
@@ -211,7 +370,9 @@ pub struct SpscOwnedQueue<T, const CAP: usize> {
     _pad2: [u8; 56],
 }
 
+// SAFETY: SpscOwnedQueue garante acesso exclusivo por índice entre 1 produtor (head) e 1 consumidor (tail) quando T: Send.
 unsafe impl<T: Send, const CAP: usize> Sync for SpscOwnedQueue<T, CAP> {}
+// SAFETY: SpscOwnedQueue pode ser enviada entre threads quando T: Send.
 unsafe impl<T: Send, const CAP: usize> Send for SpscOwnedQueue<T, CAP> {}
 
 impl<T, const CAP: usize> SpscOwnedQueue<T, CAP> {
@@ -250,6 +411,7 @@ impl<T, const CAP: usize> SpscOwnedQueue<T, CAP> {
             return Err(item);
         }
         let idx = head & (CAP - 1);
+        // SAFETY: `head - tail < CAP` garante que `idx` não está sendo lido pelo consumidor.
         unsafe {
             let slot = self.buffer[idx].get();
             (*slot).write(item);
@@ -266,6 +428,7 @@ impl<T, const CAP: usize> SpscOwnedQueue<T, CAP> {
             return None;
         }
         let idx = tail & (CAP - 1);
+        // SAFETY: `tail != head` garante que `idx` contém item inicializado publicado pelo produtor.
         let val = unsafe {
             let slot = self.buffer[idx].get();
             (*slot).assume_init_read()

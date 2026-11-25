@@ -118,9 +118,6 @@ O comportamento clássico do **TS808** decorre de quatro propriedades elétricas
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L428-L536) possui as seguintes divergências auditadas:
 
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 4. **`SOURCE_INVALID` (corrigido nesta revisão):** O link direto `https://www.electrosmash.com/tube-screamer-analysis` falha na resolução DNS atual; substituído pelo link direto verificado no Wayback Machine (`F-02`) e suplementado pelo artigo primário DAFx-07 de David Yeh (`F-01`).
 
 ---
@@ -185,7 +182,7 @@ O segundo estágio é modelado exatamente pela função de transferência analó
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/ts808.rs` (extraindo a lógica dedicada de `crates/ampforge-dsp/src/fx/drive.rs`).
-- **Struct principal:** `pub struct Ts808Processor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct Ts808Processor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 - **Estado interno:**
   - `c1_hpf_state: f64` (`15.6 Hz` input coupling)
   - `c3_hpf_state: f64` (`720.48 Hz` feedback grounding network)
@@ -277,7 +274,7 @@ O segundo estágio é modelado exatamente pela função de transferência analó
 
 - `crates/ampforge-dsp/src/fx/drive.rs` (e futuro módulo `crates/ampforge-dsp/src/fx/pedals/ts808.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.ts9.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

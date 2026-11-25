@@ -166,7 +166,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:219–231 @ c20cc6
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/modulation/through_zero_flanger.rs`.
-- **Struct principal:** `pub struct ThroughZeroFlangerProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct ThroughZeroFlangerProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -206,7 +206,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:219–231 @ c20cc6
   - *Origem da tolerância:* Definição matemática de Through-Zero Flanging (`F-01`, `F-02` Cap. 2 §2.6).
 
 - **CA-02 — Varredura de Comb-Filtering e Ressonância Regenerativa (`Feedback`) (`ANALYTICAL` / `REGRESSION`):**
-  - *Sinal de entrada:* Ruído branco a `-18 dBFS` durante `1,0 s`.
+  - *Sinal de entrada:* Ruído branco a `-12 dBFS` durante `1,0 s`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `rate_hz = 0.5`, `depth = 0.70`, `mix = 0.50`, comparando `feedback = 0.0` vs `feedback = 0.85`.
   - *Método de medição:* Razão pico-a-vale (*peak-to-valley ratio* em dB) do espectro FFT curto (`2048` amostras) fora do ponto zero ($\Delta\tau = 1,0\text{ ms}$, picos/notches espaçados de `1000 Hz`).
@@ -227,7 +227,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:219–231 @ c20cc6
 
 - `crates/ampforge-dsp/src/fx/modulation.rs` (e futuro `crates/ampforge-dsp/src/fx/modulation/through_zero_flanger.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.flanger.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_052_splash_pedals_amp2.rs`
 
 ---
 

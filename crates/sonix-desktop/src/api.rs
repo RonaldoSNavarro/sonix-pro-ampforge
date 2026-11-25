@@ -64,7 +64,7 @@ pub struct ApiContext {
     pub clean_input_ring: Option<Arc<CleanInputRing>>,
     pub scope_output_ring: Option<Arc<CleanInputRing>>,
     pub calibration_store: Option<CalibrationStore>,
-    pub active_device_id: Option<String>,
+    pub active_device_id: Arc<Mutex<Option<String>>>,
     pub calibration_session: Arc<Mutex<CalibrationSession>>,
     pub device_enumerator: Arc<dyn AudioDeviceEnumerator>,
     pub duplex_engine: Option<Arc<RealtimeDuplexEngine>>,
@@ -178,7 +178,7 @@ impl ApiContext {
             clean_input_ring,
             scope_output_ring,
             calibration_store,
-            active_device_id: device_id.map(|s| s.to_string()),
+            active_device_id: Arc::new(Mutex::new(device_id.map(|s| s.to_string()))),
             calibration_session: Arc::new(Mutex::new(CalibrationSession::default())),
             device_enumerator: Arc::new(CpalAudioEnumerator::new()),
             duplex_engine: None,
@@ -1006,6 +1006,9 @@ pub fn dispatch(
                 if res.0 == 200 {
                     if let Ok(st) = ctx.app_state.lock() {
                         sync_telemetry_output_muted(&ctx.telemetry, &st);
+                        if let Some(ref duplex) = ctx.duplex_engine {
+                            duplex.set_input_channel(crate::audio::InputChannel::from_str_opt(&st.input_channel));
+                        }
                         if st.tuner_enabled {
                             if let (Some(ref ring), Ok(mut sess)) =
                                 (&ctx.clean_input_ring, ctx.calibration_session.lock())
@@ -1881,9 +1884,10 @@ pub fn handle_post_input_calibrate(body: &[u8], ctx: &ApiContext) -> (u16, &'sta
                     .filter(|s| !s.trim().is_empty());
                 let dev_id = ctx
                     .active_device_id
-                    .as_deref()
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
                     .filter(|s| !s.trim().is_empty())
-                    .map(|s| s.to_string())
                     .or(telemetry_dev)
                     .unwrap_or_else(|| "default".to_string());
                 store.save(&dev_id, result.proposed_boost, result.proposed_gate_threshold_db);
@@ -2424,14 +2428,20 @@ fn package_data_dirs(ctx: &ApiContext) -> (std::path::PathBuf, std::path::PathBu
     (presets_dir, irs_dir)
 }
 
-fn write_atomic_file(target: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("E_ENGINE: falha ao criar diretório: {e}"))?;
+pub fn write_atomic_file(target: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let parent = target.parent().ok_or_else(|| "E_ENGINE: caminho de destino sem diretório pai".to_string())?;
+    if !parent.as_os_str().is_empty() && !parent.exists() {
+        return Err(format!("E_ENGINE: diretório pai inexistente: {}", parent.display()));
     }
     let tmp = target.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&tmp, bytes).map_err(|e| format!("E_ENGINE: falha ao gravar arquivo temporário: {e}"))?;
-    if target.exists() {
-        let _ = std::fs::remove_file(target);
+    {
+        let mut file = std::fs::File::create(&tmp)
+            .map_err(|e| format!("E_ENGINE: falha ao criar arquivo temporário: {e}"))?;
+        file.write_all(bytes)
+            .map_err(|e| format!("E_ENGINE: falha ao gravar arquivo temporário: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("E_ENGINE: falha ao sincronizar arquivo temporário: {e}"))?;
     }
     std::fs::rename(&tmp, target).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);

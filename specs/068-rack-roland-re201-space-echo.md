@@ -204,7 +204,7 @@ if self.model == DelayModel::MultiHeadTapeEcho {
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/racks/roland_re201.rs`.
-- **Struct principal:** `pub struct RolandRe201Processor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct RolandRe201Processor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -280,7 +280,7 @@ if self.model == DelayModel::MultiHeadTapeEcho {
 
 - `crates/ampforge-dsp/src/fx/delay.rs` (e futuro `crates/ampforge-dsp/src/fx/racks/roland_re201.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.delay.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

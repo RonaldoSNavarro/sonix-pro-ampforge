@@ -32,7 +32,7 @@ Especificar o contrato técnico, matemático e de verificação do componente co
 2. **Modo Fase Linear (`PolyphaseFir` — Opcional Render / Mixagem / Caminhos Paralelos):** Filtros *Half-Band* FIR simétricos de fase linear exata com:
    - Atenuação mínima na banda de rejeição (*stopband*): **`>= 96,0 dB`**;
    - Ondulação na banda passante: **`<= ±0,05 dB`**;
-   - Latência determinística constante $D_{\text{FIR}}$ declarada via `DspBlock::latency_samples()` (Spec 053).
+   - Latência determinística constante $D_{\text{FIR}}$ declarada via `AudioProcessor::latency_samples()` (Spec 053).
 3. **Regra de Coerência de Fase em Topologias Paralelas (ex.: Klon Centaur — Spec 060):** Proíbe somar um ramo sem oversampling (`0` atraso) com um ramo submetido a `Oversampler8x` IIR; ambos os ramos devem percorrer o mesmo filtro ou receber compensação de atraso/fase exata.
 
 ---
@@ -203,7 +203,7 @@ O código atual em [`crates/ampforge-dsp/src/oversampling.rs`](../crates/ampforg
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/oversampling.rs`, `crates/ampforge-dsp/src/precision.rs`
-- Testes atuais: `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
+- Testes atuais: `crates/ampforge-dsp/tests/contract_039_amps_fidelity.rs`, `Planejado: crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
 
 ---
 

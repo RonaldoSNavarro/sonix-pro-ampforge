@@ -108,7 +108,7 @@ Especificar o contrato técnico, algorítmico e de verificação do pedal de afi
 
 ## 9. Modelo matemático e algoritmo DSP proposto
 
-- Transposição estática por fator $r = 2^{\text{semitones}/12} \in [0,50,\; 0,94387]$ usando algoritmo de correlação cruzada normalizada (*WSOLA*) ou *Phase-Locked STFT* com latência máxima de `24 ms` (`<= 1152` amostras a `48 kHz`), reportada via `DspBlock::latency_samples()` (Spec 053).
+- Transposição estática por fator $r = 2^{\text{semitones}/12} \in [0,50,\; 0,94387]$ usando algoritmo de correlação cruzada normalizada (*WSOLA*) ou *Phase-Locked STFT* com latência máxima de `24 ms` (`<= 1152` amostras a `48 kHz`), reportada via `AudioProcessor::latency_samples()` (Spec 053).
 
 ---
 
@@ -133,7 +133,7 @@ Especificar o contrato técnico, algorítmico e de verificação do pedal de afi
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/digitech_drop.rs` (`pub struct DigiTechDropProcessor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/digitech_drop.rs` (`pub struct DigiTechDropProcessor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 
@@ -183,7 +183,7 @@ Especificar o contrato técnico, algorítmico e de verificação do pedal de afi
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/fx/pitch.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/digitech_drop.rs`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_042_pitch_wah.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_042_pitch_wah.rs`
 
 ---
 

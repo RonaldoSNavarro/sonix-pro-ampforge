@@ -33,7 +33,16 @@
       "key": "input.mode",
       "options": [
         "instrument",
+        "pc_line_in",
         "line"
+      ]
+    },
+    {
+      "key": "input.channel",
+      "options": [
+        "left",
+        "right",
+        "sum"
       ]
     },
     {

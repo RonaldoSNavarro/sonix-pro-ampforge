@@ -93,7 +93,6 @@ Em um estágio push-pull `2× 6V6GT` com bias negativo $V_{\text{bias}}(t) = V_{
 ### 7.1. Auditoria do código atual e classificação dos achados
 
 1. **`MODEL_COUPLING` (corrigido nesta revisão):** Estava acoplado na Spec 073 com o Tremolo Óptico.
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 
 ---
 
@@ -137,7 +136,7 @@ Em um estágio push-pull `2× 6V6GT` com bias negativo $V_{\text{bias}}(t) = V_{
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/fx/modulation/bias_tremolo.rs` (`pub struct BiasTremoloProcessor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/modulation/bias_tremolo.rs` (`pub struct BiasTremoloProcessor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 

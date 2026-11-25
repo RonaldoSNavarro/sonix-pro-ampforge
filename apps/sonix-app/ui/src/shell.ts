@@ -413,14 +413,26 @@ export function installGlobalShortcuts(store: AppStore): () => void {
 
 export function syncConnectionBanner(
   banner: { style: { display: string }; textContent: string | null },
-  store: Pick<AppStore, 'audioDeviceState' | 'deviceDisconnected' | 'bridgeError'>,
+  store: Pick<AppStore, 'audioDeviceState' | 'deviceDisconnected' | 'bridgeError'> & {
+    params?: Record<string, unknown>;
+  },
 ): void {
+  const ampStandby = store.params?.['amp_1.standby'] === true;
+  const inputMode = store.params?.['input.mode'];
   if (store.audioDeviceState === 'lost') {
     banner.style.display = 'block';
     banner.textContent = 'Dispositivo de áudio desconectado — tentando reconectar…';
   } else if (store.bridgeError) {
     banner.style.display = 'block';
     banner.textContent = `Motor DSP desconectado (${store.bridgeError})`;
+  } else if (ampStandby) {
+    banner.style.display = 'block';
+    banner.textContent =
+      'Amplificador em STANDBY (saída silenciada) — desative a chave STANDBY no painel ou aplique o dispositivo em Áudio.';
+  } else if (inputMode === 'pc_line_in') {
+    banner.style.display = 'block';
+    banner.textContent =
+      'Modo Entrada de Linha PC (0 dB): desative "Escutar este dispositivo" no Windows para não ouvir o som cru junto com o simulador.';
   } else {
     banner.style.display = 'none';
   }

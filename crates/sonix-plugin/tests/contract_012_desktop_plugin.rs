@@ -2,7 +2,6 @@
 //! Testes de Contrato Automatizados para Spec 012: Host Desktop Standalone e Plugins VST3/CLAP
 //! Cobre Critérios de Aceite CA-1 a CA-8
 
-use ampforge_dsp::queue::SpscCommandQueue;
 use sonix_core::persistence::SonixPresetDoc;
 use sonix_desktop::audio::{
     AudioBackendType, AudioDeviceEnumerator, AudioDriverError, DesktopAudioDevice,

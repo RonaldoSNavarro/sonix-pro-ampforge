@@ -213,7 +213,7 @@ O código atual em [`crates/ampforge-dsp/src/cab.rs`](../crates/ampforge-dsp/src
     3. Nenhum silenciamento abrupto (energia RMS não cai para `0.0` durante a troca).
 
 - **CA-03 — Calibração Espectral dos Microfones (`SM57` vs `R121` vs `U87`) (`DOCUMENTED`):**
-  - *Sinal de entrada:* Varredura senoidal em `100 Hz`, `1000 Hz`, `5000 Hz` e `12 000 Hz` a `-18 dBFS`.
+  - *Sinal de entrada:* Varredura senoidal em `100 Hz`, `1000 Hz`, `5000 Hz` e `12 000 Hz` a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* Comparação dos filtros de microfone `sm57`, `r121` e `u87` com `axis = 0.0`, `distance = 0.15`.
   - *Método de medição:* Ganho em `5000 Hz` e `12 000 Hz` relativo a `1000 Hz`.
@@ -223,7 +223,7 @@ O código atual em [`crates/ampforge-dsp/src/cab.rs`](../crates/ampforge-dsp/src
   - *Origem da tolerância:* Datasheets oficiais Shure SM57, Royer R-121 e Neumann U87 (`F-02`, `F-03`, `F-04`).
 
 - **CA-04 — Ação de `Axis` (`Cap` vs `Edge`), `Distance` (Proximidade + Atraso) e `Phase Invert` (`DOCUMENTED`):**
-  - *Sinal de entrada:* Ruído branco a `-18 dBFS`.
+  - *Sinal de entrada:* Ruído branco a `-12 dBFS`.
   - *Critério e tolerância:* Mover `axis` de `0.0` (`Cap`) para `1.0` (`Edge`) deve reduzir o centróide espectral em **pelo menos `400 Hz`**; ativar `phase_b = true` com `IR A == IR B`, `Mic A == Mic B`, `blend = 0.5` deve cancelar o sinal em **`>= 60 dB`**.
 
 - **CA-05 — Segurança em Tempo Real (`ENGINEERING_TARGET`):**
@@ -235,7 +235,7 @@ O código atual em [`crates/ampforge-dsp/src/cab.rs`](../crates/ampforge-dsp/src
 ## 18. Arquivos, módulos e testes afetados
 
 - `crates/ampforge-dsp/src/cab.rs`, `docs/cab-microfones-fontes.md`
-- Testes atuais: `crates/ampforge-dsp/tests/contract_037_ir_realtime.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_037_ir_realtime.rs`, `crates/ampforge-dsp/tests/contract_044_sdd_integrity.rs`
 
 ---
 

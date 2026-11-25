@@ -57,17 +57,20 @@ fn aud_04_panico_no_callback_vira_silencio_e_recupera() {
     let mut out_interleaved = vec![0.99_f32; 256];
     let mut mono_in = vec![0.0_f32; 128];
     let mut mono_out = vec![0.0_f32; 128];
-    DesktopAudioHost::process_output_callback_f32(
-        &mut out_interleaved,
-        2,
-        48000.0,
-        &mut mono_in,
-        &mut mono_out,
-        &duplex,
-        &dsp,
-        &telemetry,
-        None,
-    );
+    {
+        let mut dsp_guard = dsp.lock().unwrap();
+        DesktopAudioHost::process_output_callback_f32(
+            &mut out_interleaved,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &mut dsp_guard,
+            &telemetry,
+            None,
+        );
+    }
 
     assert!(
         out_interleaved.iter().all(|&s| s == 0.0),
@@ -92,17 +95,20 @@ fn aud_04_panico_no_callback_vira_silencio_e_recupera() {
     // Próximo bloco com entrada não nula sai com áudio normal não nulo
     duplex.push_captured_samples(&input_block);
     let mut next_interleaved = vec![0.0_f32; 256];
-    DesktopAudioHost::process_output_callback_f32(
-        &mut next_interleaved,
-        2,
-        48000.0,
-        &mut mono_in,
-        &mut mono_out,
-        &duplex,
-        &dsp,
-        &telemetry,
-        None,
-    );
+    {
+        let mut dsp_guard = dsp.lock().unwrap();
+        DesktopAudioHost::process_output_callback_f32(
+            &mut next_interleaved,
+            2,
+            48000.0,
+            &mut mono_in,
+            &mut mono_out,
+            &duplex,
+            &mut dsp_guard,
+            &telemetry,
+            None,
+        );
+    }
     assert!(
         next_interleaved.iter().any(|&s| s.abs() > 1e-4),
         "AUD-04: após recuperação, o bloco seguinte com sinal deve produzir saída não nula"

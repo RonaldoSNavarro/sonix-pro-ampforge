@@ -124,7 +124,6 @@ A arquitetura de Bob Myer no Big Muff Pi (`EH-3003`) divide o processamento em *
 
 O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-dsp/src/fx/drive.rs#L413-L426) e [`601-624`](../crates/ampforge-dsp/src/fx/drive.rs#L601-L624) possui as seguintes divergências auditadas:
 
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 2. **`FACTUAL_ERROR` (`drive.rs:601–611`):** O código atual não modela os capacitores Miller coletor-base de `470 pF` em `Q1`, `Q2` e `Q3` (que suavizam as altas frequências antes e durante cada estágio de clipping), nem o desacoplamento de `1 µF` dos diodos de feedback, nem o 4º estágio BJT de recuperação (`Q4`).
 
 ---
@@ -182,7 +181,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-ds
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/big_muff_pi.rs`.
-- **Struct principal:** `pub struct BigMuffPiProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct BigMuffPiProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -257,7 +256,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-ds
 
 - `crates/ampforge-dsp/src/fx/drive.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/big_muff_pi.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.muff.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

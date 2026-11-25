@@ -116,7 +116,6 @@ De acordo com o manual oficial de operação e serviço da UREI (`F-01`, Seçõe
 O código atual em [`crates/ampforge-dsp/src/fx/dynamics.rs`](../crates/ampforge-dsp/src/fx/dynamics.rs#L211-L551) possui as seguintes divergências auditadas:
 
 1. **`MODEL_COUPLING` (`dynamics.rs:212–217`):** O `CompressorProcessor` agrupa 4 arquiteturas físicas incompatíveis (`PedalRossDyna`, `Fet1176`, `OpticalLa2a`, `VcaMasterBus`) dentro de um único método `process_sample`. Esta Spec isola exclusivamente o contrato do **`rack.urei.1176ln` (`Fet1176`)**.
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 3. **`FACTUAL_ERROR` (`controls.registry.ts:575` vs `F-01` p. 1-2):** No registro de UI (`pedal.comp.attack`), a faixa de `comp.attack_ms` está declarada como `0.02 .. 50 ms`, enquanto no `1176LN` real o tempo máximo de Attack é **`0,80 ms` (`800 µs`)**. Para manter compatibilidade com os demais modelos de `CompressorModel` sem violar a física do `1176LN`, quando o processador `rack.urei.1176ln` está selecionado, a constante de tempo física do capacitor de carga do detector JFET deve mapear a excursão do controle para a faixa documentada da UREI (`0,02 ms` a `0,80 ms`, ou aceitar o valor em `ms` grampeado à faixa física do circuito 1176LN quando em modo estrito 1176LN).
 
 ---
@@ -175,7 +174,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/dynamics.rs`](../crates/ampforge
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/racks/urei_1176ln.rs` (isolado dos futuros módulos de `RossDyna`, `La2a` e `SslBus`).
-- **Struct principal:** `pub struct Urei1176LnProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct Urei1176LnProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -249,7 +248,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/dynamics.rs`](../crates/ampforge
 
 - `crates/ampforge-dsp/src/fx/dynamics.rs` (`CompressorProcessor` e futuro `crates/ampforge-dsp/src/fx/racks/urei_1176ln.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.comp.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

@@ -132,7 +132,7 @@ Especificar o contrato técnico, algorítmico e de verificação do efeito de es
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/fx/racks/eventide_micropitch.rs` (`pub struct EventideMicroPitchProcessor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/racks/eventide_micropitch.rs` (`pub struct EventideMicroPitchProcessor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 

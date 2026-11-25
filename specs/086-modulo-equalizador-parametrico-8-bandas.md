@@ -131,7 +131,7 @@ Especificar o contrato técnico, matemático e de verificação do **Módulo Equ
 
 ## 13. Arquitetura modular e contrato de código Rust
 
-- **Módulo alvo:** `crates/ampforge-dsp/src/fx/eq/parametric_8band.rs` (`pub struct ParametricEq8Processor` implementando `DspBlock` + `AutomatableParams`, Spec 053).
+- **Módulo alvo:** `crates/ampforge-dsp/src/fx/eq/parametric_8band.rs` (`pub struct ParametricEq8Processor` implementando `AudioProcessor` + `ModelDescriptor`, Spec 053).
 
 ---
 

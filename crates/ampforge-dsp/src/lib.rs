@@ -22,6 +22,7 @@ pub mod cab;
 pub mod fx;
 pub mod tuner;
 pub mod denormal;
+pub mod limiter;
 pub mod looper;
 pub mod regua;
 pub mod unidades;

@@ -160,7 +160,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233�
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/mxr_phase90.rs`.
-- **Struct principal:** `pub struct MxrPhase90Processor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct MxrPhase90Processor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -190,7 +190,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233�
 ## 17. Critérios de aceite (CA-01 a CA-04)
 
 - **CA-01 — Geometria Exata dos Dois Notches ($0,4142\,f_b$ e $2,4142\,f_b$) da Cascata de 4 Estágios All-Pass Idênticos (`DOCUMENTED` / `ANALYTICAL`):**
-  - *Sinal de entrada:* Tons senoidais de teste em $f_1 = 0,4142 \cdot f_{b0}$, $f_{\text{peak}} = 1,0000 \cdot f_{b0}$ e $f_2 = 2,4142 \cdot f_{b0}$ a `-18 dBFS` (onde $f_{b0} = \sqrt{175 \cdot 1600} \approx 529,15\text{ Hz}$ é a frequência de quebra central com LFO estacionário).
+  - *Sinal de entrada:* Tons senoidais de teste em $f_1 = 0,4142 \cdot f_{b0}$, $f_{\text{peak}} = 1,0000 \cdot f_{b0}$ e $f_2 = 2,4142 \cdot f_{b0}$ a `-12 dBFS` (onde $f_{b0} = \sqrt{175 \cdot 1600} \approx 529,15\text{ Hz}$ é a frequência de quebra central com LFO estacionário).
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `pedal.mxr.phase90` com `enabled = true`, `depth = 0.0` (LFO estacionário em $f_{b0}$), `feedback = 0.0` (`1974 Script Logo`), `mix = 0.50` ($150\text{ k}\Omega / 150\text{ k}\Omega$).
   - *Método de medição:* Ganho em dB em $f_1 \approx 219,2\text{ Hz}$, $f_{\text{peak}} \approx 529,2\text{ Hz}$ e $f_2 \approx 1277,5\text{ Hz}$.
@@ -200,7 +200,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233�
   - *Origem da tolerância:* Equação analítica $\Phi(\omega) = -8\arctan(\omega/\omega_b)$ dos 4 estágios de $47\text{ nF}$ do MXR Phase 90 (`F-01` §"All-Pass Filters").
 
 - **CA-02 — Diferenciação entre `1974 Script Logo` (`feedback = 0.0`) e `1977+ Block Logo` (`feedback = 0.70`, Resistor $R_{28}$) (`DOCUMENTED`):**
-  - *Sinal de entrada:* Senoide na frequência central de pico $f_{\text{peak}} = f_{b0} \approx 529,2\text{ Hz}$ a `-18 dBFS`.
+  - *Sinal de entrada:* Senoide na frequência central de pico $f_{\text{peak}} = f_{b0} \approx 529,2\text{ Hz}$ a `-12 dBFS`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `depth = 0.0`, `mix = 0.50`, comparando `feedback = 0.0` (`Script Logo`) vs `feedback = 0.70` (`Block Logo` com $R_{28}$).
   - *Método de medição:* Ganho em dB na frequência de pico construtivo ($-360^\circ$).
@@ -208,7 +208,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233�
   - *Origem da tolerância:* Efeito de ressonância de malha fechada do resistor $R_{28}$ (`F-01` §"Script vs Block Logo").
 
 - **CA-03 — Varredura Contínua dos Notches pelo Oscilador `SPEED` (`RATE`) (`DOCUMENTED` / `REGRESSION`):**
-  - *Sinal de entrada:* Ruído branco a `-18 dBFS` por `1,0 s`.
+  - *Sinal de entrada:* Ruído branco a `-12 dBFS` por `1,0 s`.
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras.
   - *Configuração e parâmetros:* `rate_hz = 1.0`, `depth = 0.85`, `feedback = 0.0`, `mix = 0.50`.
   - *Método de medição:* Posição espectral do 1º notch medida em $t_1 = 0,25\text{ s}$ (pico positivo do LFO) vs $t_2 = 0,75\text{ s}$ (pico negativo do LFO).
@@ -225,7 +225,7 @@ O código atual em [`crates/ampforge-dsp/src/fx/modulation.rs:78 @ c20cc65, 233�
 
 - `crates/ampforge-dsp/src/fx/modulation.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/mxr_phase90.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.phaser.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_032_time_mod_fx.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

@@ -117,7 +117,6 @@ O código atual em [`crates/ampforge-dsp/src/fx/drive.rs`](../crates/ampforge-ds
    - Na linha `465`, quando `self.model == DriveModel::KlonCentaur`, `process_sample` **não** faz oversampling do bloco inteiro (`let needs_oversampling = matches!(self.model, ...)` exclui `KlonCentaur`!).
    - Em vez disso, dentro de `process_sample_inner` (`drive.rs:553–560`), o código calcula `let clean = x * clean_blend;` (com **atraso de 0 amostras**) e passa **apenas** o ramo `dirty` por `self.oversampler.upsample_8x` e `downsample_8x` (`let dirty = self.oversampler.downsample_8x(&os_buf);`) e depois soma `clean + dirty`!
    - Como o filtro polifásico IIR `8×` (`Oversampler8x`) introduz um atraso de grupo não-nulo e rotação de fase dependente da frequência no ramo `dirty`, somar `clean` (0 atraso) com `dirty` (atrasado pelo filtro de oversampling) cria um **cancelamento de fase tipo *comb-filter*** ao longo do espectro audível — fenômeno que jamais existe no pedal analógico real!
-- Removido em 2026-11-20 (AUD-38): identificador inexistente em qualquer commit
 
 ---
 
@@ -178,7 +177,7 @@ Para eliminar completamente o cancelamento de fase entre `clean` e `dirty`, exis
 ## 13. Arquitetura modular e contrato de código Rust
 
 - **Módulo alvo:** `crates/ampforge-dsp/src/fx/pedals/klon_centaur.rs`.
-- **Struct principal:** `pub struct KlonCentaurProcessor` implementando `DspBlock` + `AutomatableParams` (Spec 053).
+- **Struct principal:** `pub struct KlonCentaurProcessor` implementando `AudioProcessor` + `ModelDescriptor` (Spec 053).
 
 ---
 
@@ -218,7 +217,7 @@ Para eliminar completamente o cancelamento de fase entre `clean` e `dirty`, exis
   - *Origem da tolerância:* Invariante física de soma analógica em tempo contínuo no nó virtual de `IC2B` (`F-01` §"Summing Amplifier").
 
 - **CA-02 — Regime Clean Boost de Alto Headroom em `Gain = 0.0` (`DOCUMENTED`):**
-  - *Sinal de entrada:* Senoide de `1000 Hz` com amplitude `-18 dBFS` ($0,1259\text{ FS}$).
+  - *Sinal de entrada:* Senoide de `1000 Hz` com amplitude `-12 dBFS` ($0,1259\text{ FS}$).
   - *Taxa de amostragem e bloco:* $f_s = 48\,000\text{ Hz}$, bloco de `128` amostras, FFT de `16 384` amostras.
   - *Configuração e parâmetros:* `drive.gain = 0.0`, `drive.tone = 0.50`, `drive.level = 0.85`.
   - *Método de medição:* Medição de THD (Total Harmonic Distortion, razão RMS dos harmônicos $H_2..H_{10}$ sobre a fundamental $H_1$) e ganho da fundamental.
@@ -254,7 +253,7 @@ Para eliminar completamente o cancelamento de fase entre `clean` e `dirty`, exis
 
 - `crates/ampforge-dsp/src/fx/drive.rs` (e futuro `crates/ampforge-dsp/src/fx/pedals/klon_centaur.rs`)
 - `apps/sonix-app/ui/src/controls.registry.ts` (`pedal.klon.*`)
-- Testes atuais: `crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
+- Testes atuais: `Planejado: crates/ampforge-dsp/tests/contract_031_pedals_dsp.rs`, `crates/sonix-desktop/tests/contract_040_pedals_parity.rs`
 
 ---
 

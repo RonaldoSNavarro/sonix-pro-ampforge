@@ -1,9 +1,11 @@
 ---
 name: sonix-pro-ampforge-expert
-description: Especialista técnico em engenharia de áudio e DSP, amplificadores valvulados clássicos de guitarra, circuitos analógicos, pedais, cadeia de sinal, guitarras, captadores, alto-falantes, gabinetes, microfones, impulse responses, modelagem física/comportamental/híbrida, Rust em tempo real e aplicações desktop Tauri v2. Use ao projetar, especificar, implementar, depurar, documentar ou avaliar qualquer parte do SONIX PRO // AMPFORGE.
+description: Especialista técnico em engenharia de áudio e DSP, amplificadores valvulados clássicos de guitarra, circuitos analógicos, pedais, cadeia de sinal, guitarras, captadores, alto-falantes, gabinetes, microfones, impulse responses, modelagem física/comportamental/híbrida, boas práticas oficiais de Rust (doc.rust-lang.org/stable) em tempo real e aplicações desktop Tauri v2. Use ao projetar, especificar, implementar, depurar, documentar ou avaliar qualquer parte do SONIX PRO // AMPFORGE.
 ---
 
 # SONIX PRO // AMPFORGE™ — Skill Especialista de Engenharia
+
+> **Skill Rust Oficial Integrada:** Para toda escrita, revisão, otimização ou auditoria de código Rust neste repositório, esta skill atua **unificada** com **[`rust-best-practices`](../rust-best-practices/SKILL.md)** (baseada na documentação oficial estável em `https://doc.rust-lang.org/stable/`: Book, Reference, Rustonomicon, Cargo Book, Clippy, Edition 2024 e Rust API Guidelines). Leia ambas antes de propor ou revisar qualquer implementação Rust.
 
 ## 1. Missão e Princípio de Atuação
 
@@ -138,12 +140,22 @@ Referência de fluxo (suportando ramos paralelos e splits na matriz DAG 4×12):
 
 ---
 
-## 8. Engenharia DSP Avançada, Rust e Tauri v2
+## 8. Engenharia DSP Avançada, Boas Práticas Oficiais de Rust e Tauri v2
 
-Consulte os guias detalhados em `references/`:
+### 8.1 Regras Obrigatórias de Rust Oficial & Tempo Real (Integrado com `rust-best-practices`)
+- **Zero-alloc e zero-lock no callback de áudio:** proibido alocar/liberar (`Vec`, `String`, `Box`), proibido `Mutex::lock()` e **proibido `try_lock()` com fallback que vaza sinal seco da entrada**. O motor DSP pertence exclusivamente à thread de áudio; parâmetros trafegam por fila SPSC pré-alocada e telemetria por atômicos/triple-buffer.
+- **Soundness em `unsafe`, Atomics e Lock-Free (Rustonomicon / Reference):** todo `unsafe` e `unsafe impl Send/Sync` exige comentário `// SAFETY:` imediato. Proibido ring buffer SPSC caseiro onde `push_overwrite` avança `tail` via CAS concorrentemente com leitor de `MaybeUninit` (data race = UB). Prefira crates auditadas (`ringbuf`, `rtrb`) e valide `unsafe` com Miri.
+- **Newtypes de Unidades Físicas (`C-NEWTYPE`):** nunca misture `Volts`, `FullScale`, `dB`, `Hz` ou escalas pré/pós-boost como `f32`/`f64` crus — evita bugs de gain staging (como `VOLTS_POR_FS` vs digital FS, sidechain pré-boost vs threshold pós-boost, ou `xformer_lf_state` descalibrado).
+- **Erros, Panics e Cargo Profiles (Book Cap. 9 / Cargo Book):** use `Result<T, E>` + `thiserror`; proíba `.unwrap()`/`.expect()` em produção/RT; mantenha `panic = "unwind"` enquanto `audio.rs` usar `catch_unwind` para *fault-mute* seguro (sem contradizer o `Cargo.toml`).
+- **Processamento em Blocos & Numérico:** `f64` para filtros IIR/tone stacks/TPT, FTZ/DAZ (`DenormalGuard`), `is_finite()`, `chunks_exact`/slices alinhados para auto-vetorização — nunca chame módulo de bloco sample-by-sample nem construa FIR/FFT dentro de `process()`.
+- **Higiene Contínua (`[workspace.lints]` + Clippy):** `unsafe_op_in_unsafe_fn = "deny"`, `undocumented_unsafe_blocks = "deny"`, `clippy::correctness = "deny"`, `clippy::perf = "warn"`, `dead_code = "warn"`, persistência verdadeiramente atômica no Windows (sem `remove_file` antes de `rename`) e prontidão Rust 2024.
+
+### 8.2 Guias de Referência
+Consulte os guias detalhados em `references/` e a skill integrada:
+- **[`../rust-best-practices/SKILL.md`](../rust-best-practices/SKILL.md)** — guia oficial completo de boas práticas Rust (`https://doc.rust-lang.org/stable/`), Book, Reference, Rustonomicon, Cargo Book, Clippy, Edition 2024 e tempo real.
 - `references/architecture-rust-windows.md` — arquitetura real do workspace Rust + Tauri v2 (`2.12.5`) + `cpal 0.18.2` (WASAPI/ASIO) + `nih_plug` (VST3/CLAP) e mapa das Specs `053–092`.
 - `references/dsp-engineering.md` — MNA, WDF, State-Space, ADAA, biquads/SVF `f64`, oversampling, convolução zero-latency, separação thread de controle vs thread RT e protocolo de validação.
-- `references/rust-tauri-best-practices.md` — boas práticas de Rust em tempo real e as 7 regras obrigatórias de Tauri v2.
+- `references/rust-tauri-best-practices.md` — boas práticas de Rust (alinhadas à doc oficial) e as 7 regras obrigatórias de Tauri v2.
 - `references/engineering-backlog.md` — estado dos marcos (Specs 001–052) e arquitetura modular (Specs 053–092).
 
 ---
@@ -154,5 +166,7 @@ Consulte os guias detalhados em `references/`:
 - [ ] Classifiquei todas as fontes com os 8 tokens oficiais (`PRIMARY_OFFICIAL` .. `UNKNOWN`) e incluí tabela de evidência por afirmação?
 - [ ] Separei equipamentos físicos distintos em Specs próprias e classifiquei algoritmos genéricos como `modulo-dsp`?
 - [ ] Classifiquei todos os `CA-n` com os 6 tokens oficiais (`DOCUMENTED` .. `PENDING`) e separei `ENGINEERING_TARGET` de características físicas?
-- [ ] Especifiquei condições completas em cada CA numérico (sinal, amplitude, frequência, sample rate, block size, parâmetros, método, tolerância e fonte)?
-- [ ] Incluí a Matriz de Rastreabilidade completa com os 7 status oficiais (`CONFIRMED` .. `BLOCKED`) e mantive bloqueados os requisitos sem fonte suficiente?
+- [ ] Especifiquei condições completas em cada CA numérico com **níveis realistas de guitarra** (`-24` a `-12 dBFS`, palm mute, ruído real `-50` a `-45 dBFS`), não apenas senoides sintéticas de amplitude `1.0`?
+- [ ] Validei gain staging de ponta a ponta (entrada Hi-Z/Line-In, sidechain do gate na mesma escala, headroom real de drive/boost pré-amp, curvas/tapers reais de potenciômetros, equilíbrio graves/médios/agudos com gabinete ativo)?
+- [ ] Verifiquei todas as regras de `rust-best-practices` (zero UB/data race, `// SAFETY:`, zero-alloc/zero-lock RT, zero código morto/decorativo, Clippy limpo)?
+- [ ] Incluí a Matriz de Rastreabilidade completa com os 7 status oficiais (`CONFIRMED` .. `BLOCKED`), apontando apenas para arquivos de teste **reais e existentes**, mantendo bloqueados os requisitos sem fonte suficiente?

@@ -1,6 +1,6 @@
 ---
 name: spec-driven-development
-description: Conduz o desenvolvimento por Spec Driven Development (SDD) — toda mudança de comportamento nasce de uma spec numerada em `specs/NNN-nome.md`, com critérios de aceite verificáveis (CA-n), invariantes declaradas, fora de escopo explícito e rastreabilidade CA→teste. Use quando o usuário pedir para criar/escrever/atualizar uma spec, iniciar uma feature nova, planejar uma mudança de comportamento, registrar dívida técnica ou achados de code review, adotar/instalar o padrão SDD num projeto, ou quando for implementar algo num repositório que já tenha o diretório `specs/`. Acione também quando o pedido for "vamos implementar X" num projeto que segue SDD — a spec vem antes do código.
+description: Conduz o desenvolvimento por Spec Driven Development (SDD) com rigor técnico e proteções anti-superficialidade — toda mudança de comportamento nasce de uma spec numerada em `specs/NNN-nome.md`, com critérios de aceite verificáveis e não-tautológicos (CA-n), testes no caminho real de produção com dados realistas, prova de falha por mutação/red real, invariantes declaradas, fora de escopo explícito e rastreabilidade CA→teste auditável. Use quando o usuário pedir para criar/escrever/atualizar uma spec, iniciar uma feature nova, planejar uma mudança de comportamento, registrar dívida técnica ou achados de code review, adotar/instalar o padrão SDD num projeto, ou quando for implementar algo num repositório que já tenha o diretório `specs/`. Acione também quando o pedido for "vamos implementar X" num projeto que segue SDD — a spec vem antes do código.
 ---
 
 # Spec Driven Development (SDD)
@@ -127,27 +127,60 @@ a próxima pessoa reintroduza o erro por parecer mais simples.
 ## A régua dos critérios de aceite
 
 Um `CA-n` é uma **afirmação verificável no sistema pronto** — algo que se pode reprovar. Régua:
-*consigo escrever o teste (ou o passo de verificação manual) lendo só esta linha?*
+*consigo escrever o teste (ou o passo de verificação manual) lendo só esta linha — e esse teste **reprova** uma implementação rasa, quebrada ou feita só para enganar a métrica?*
 
-| ❌ Desejo | ✅ Critério |
+| ❌ Desejo / CA Frouxo (Enganável) | ✅ Critério Assertivo e Não-Tautológico |
 |---|---|
 | A busca fica mais relevante. | Query de 2+ palavras devolve resultado quando o AND estrito devolveria zero, e o estágio usado volta no campo `matched`. |
-| Cookies mais seguros em produção. | URL pública em `https://` faz `cookie_secure` valer `True` sem configuração adicional; um `False` explícito continua respeitado. |
+| Controle `treble` funciona (ou `rms_10 > rms_5`). | Em `bass=5, mid=5`, mover `treble` de `0 → 5 → 10` altera o ganho em `4 kHz` de forma monotônica na faixa esperada do esquema (ex.: Δ ≥ +12 dB entre 0 e 10, com ponto médio coerente com o taper real do potenciômetro — sem ficar morto até 7), medido na cadeia completa de produção. |
+| Modelos de amplificador soam diferentes (`max_band_diff >= 2 dB`). | Com entrada realista de guitarra (`-18 dBFS` RMS + transientes de palhetada), os 5 modelos calibrados em RMS igualado apresentam assinatura espectral, conteúdo harmônico (razão pares/ímpares e THD em faixa real) e preservação de ataque distintos e compatíveis com cada topologia, **com o gabinete padrão ativo**. |
+| Sem alocação no callback (chamando `process()` e checando `is_finite()`). | Com alocador global de contagem ativo na thread RT, executar `process()` sob troca de parâmetros, presets e sinal dinâmico registra `allocs == 0` **e** `deallocs == 0`, e o teste falha quando uma alocação deliberada é injetada (red real). |
 | Tratar erro de configuração. | URL malformada (sem esquema, com caminho, com espaço) é recusada no boot com mensagem explícita — não silenciosamente ignorada. |
-| Não quebrar quem já usa. | Sem a variável definida, tudo se comporta exatamente como hoje — nenhuma regressão para quem roda local. |
 
 Regras práticas:
 
 - **Um comportamento por CA.** CA com "e" no meio quase sempre são dois.
-- **Inclua o CA de não-regressão.** "Com a flag ausente, nada muda" é o critério que mais salva.
-- **Inclua o caso de erro.** Entrada malformada, dependência fora do ar, permissão ausente.
-- **Nomeie o observável.** O nome do campo, o código HTTP, a mensagem, o arquivo escrito — o CA
-  precisa apontar para algo que existe fora da cabeça de quem escreveu.
-- **Numeração estável.** `CA-7` continua sendo `CA-7` para sempre. CA acrescentado depois entra
-  como `CA-9b` ou no fim da lista; CA removido é marcado como revertido, não renumerado — testes e
-  PRs já citam o número.
-- 5 a 15 CAs é a faixa saudável. Menos que 3, a spec provavelmente não precisava existir; mais de
-  20, são duas specs.
+- **Direção, magnitude e faixa física obrigatórias.** Nunca aceite apenas `a > b`, `diff > 1e-4`, `rms > 0.001` ou `HTTP 200` sem validar o efeito observável no sentido correto e na ordem de grandeza física/funcional esperada.
+- **Condições realistas de operação.** Especifique explicitamente entrada, amplitude/nível real de uso (não valores artificiais que contornam defeitos de ganho!), taxa/ambiente, configuração padrão do usuário e método de medição.
+- **Inclua o CA de não-regressão e o de discriminação negativa.** Não basta provar que funciona no caso feliz: prove que **não** ativa onde não deve, **não** vaza sinal indesejado e **não** destrói o comportamento em extremos (`0.0`, `5.0`, `10.0`).
+- **Inclua o caso de erro.** Entrada malformada, dependência fora do ar, permissão ausente, valor fora da faixa, dispositivo desconectado.
+- **Nomeie o observável.** O nome do campo, o código HTTP, a curva espectral, a atenuação em dB, o arquivo escrito — o CA precisa apontar para algo que existe fora da cabeça de quem escreveu.
+- **Numeração estável.** `CA-7` continua sendo `CA-7` para sempre. CA acrescentado depois entra como `CA-9b` ou no fim da lista; CA removido é marcado como revertido, não renumerado — testes e PRs já citam o número.
+- 5 a 15 CAs é a faixa saudável. Menos que 3, a spec provavelmente não precisava existir; mais de 20, são duas specs.
+
+---
+
+## Disciplina Anti-Superficialidade — Proibição de "Código Feito Só Para Passar nos Testes"
+
+> **Lição dura de engenharia:** Testes verdes com código fraco são **pior** do que testes vermelhos — criam falsa sensação de segurança enquanto o sistema falha na mão do usuário real. O objetivo do SDD + TDD **nunca é fazer o teste ficar verde pelo caminho mais curto**; é construir uma implementação tecnicamente correta, coerente com o domínio real, cujos testes tornam impossível aprovar uma gambiarra.
+
+### As 7 Regras Anti-Gaming Obrigatórias
+
+1. **Resolva o problema real de domínio, nunca o mínimo para o `assert` passar.**
+   - **Proibido** remendar um defeito estrutural com constantes mágicas, `if` ad-hoc para o sinal do teste, ou aproximações falsas de topologia (ex.: simular um tone stack James/Baxandall ou Vox na matriz FMV; trocar uma rede RC de cátodo por um ganho escalar plano que inunda graves).
+   - Antes de codificar, entenda **a física / matemática / arquitetura do mecanismo real** e implemente o modelo correto de ponta a ponta.
+2. **Teste o caminho REAL de produção, nunca um módulo órfão ou desligado.**
+   - **Proibido** validar uma biblioteca/componente que a cadeia de produção não chama (ex.: testar um `HalfBandOversampler` de 96 dB enquanto a produção usa outro filtro; testar um bloco isolado contornando o hi-cut, o limiter interno, o ganho de entrada ou o gabinete padrão).
+   - Toda spec que afeta comportamento observável exige pelo menos um teste **ponta-a-ponta na cadeia real de produção** (ex.: `RealtimeDspChain` + `api::dispatch` + configuração default real, não apenas um struct isolado).
+3. **Proibição de testes tautológicos, circulares ou de fachada.**
+   São explicitamente **inválidos** e devem ser rejeitados no code review:
+   - **Teste circular:** comparar a saída do sistema contra uma função analítica/getter do *próprio código sob teste* sem oráculo independente (fórmula da literatura, valores tabelados de referência ou propriedade física externa).
+   - **Teste de HTTP 200 / getter de struct:** enviar um parâmetro e conferir apenas `status == 200` ou `field == value` para "provar" que um controle funciona. Todo controle deve provar efeito mensurável no comportamento real.
+   - **Limiar matematicamente frouxo:** ex. `corr > 0.3` para provar caminho limpo quando hard-clipping puro já tem correlação `0.90`; `rms > 0.001` para provar diferenciação entre modelos; `waveform_diff_db > -22 dB` sem direção espectral; aceitar `8%` de distorção num canal limpo; testar ataque apenas no modelo limpo descartando os primeiros samples de ataque!
+   - **Teste de invariante sem instrumento de medida:** ex. teste de "zero-alloc" sem `CountingAllocator` medindo `alloc` **e** `dealloc`; teste de "zero-lock" sem provar ausência de contenção.
+   - **Entrada artificial que mascara defeito real:** ex. ajustar manualmente um controle para `8.165` no teste para esconder que o default `5.0` atenua `-8.5 dB`, ou usar DC constante `[0.05; 256]` em vez de sinal dinâmico real.
+4. **Prova de Red Real e Teste de Mutação Mental/Prática.**
+   - Para cada teste de contrato, pergunte e valide: *"Se eu substituir a implementação por passthrough (`y = x`), inverter o sinal do controle, quebrar o taper, alocar um `Vec` no callback, ou desligar o efeito, este teste **quebra com certeza**?"*
+   - Se a resposta for "não" ou "talvez", o teste é fraco e **deve ser endurecido antes de escrever a implementação**.
+5. **Verificação de Ponta a Ponta do Fluxo de Dados, Unidades e Gain Staging.**
+   - Ao implementar qualquer módulo, audite obrigatoriamente **suas fronteiras**: o que entra (escala, unidades físicas, pré/pós-boost, modo Line vs Instrument), o que sai (headroom, saturação interna, limiter, silenciamento em `0.0` e `standby`) e se algum estágio vizinho anula, duplica ou distorce o efeito (ex.: proximidade `+8 dB` + ressonância `+5 dB` + voicing `+4.5 dB` empilhando graves sem `low_cut`).
+6. **Zero Código Morto, Zero Parâmetro Decorativo, Zero Referência Fantasma.**
+   - Todo campo gravado na struct/estado deve ser efetivamente lido e aplicado no processamento; toda chave de parâmetro na spec deve existir com nome idêntico no catálogo canônico do código; todo arquivo de teste citado na spec deve **existir de fato no disco** e realmente exercitar os CAs atribuídos.
+7. **Portão de Auditoria Técnica Adversarial (Obrigatório Antes de `status: implementada`).**
+   Antes de concluir uma implementação, execute uma **auto-revisão adversarial independente** (não confie apenas no "cargo test verde"):
+   - Leia o diff completo como um revisor cético procurando falhas de lógica, unidades trocadas, tapers irreais, casos de borda (`0.0`, `5.0`, `10.0`, bypass, troca de dispositivo, carga pesada) e efeitos colaterais em outros módulos.
+   - Simule mentalmente (ou em teste de cenário realista) o **uso real pelo usuário final** (ex.: plugar guitarra real na interface ou Line-In, trocar de preset/amp, fazer palm mute com ruído real, girar cada knob de 0 a 10).
+   - Se encontrar qualquer ponto onde "passa no teste, mas na prática soa/funciona mal", **corrija a spec, endureça o teste e corrija o código** antes de encerrar.
 
 ## Rastreabilidade CA → teste
 
@@ -220,31 +253,30 @@ aconteceu, no `specs/README.md`, senão o histórico fica incoerente para quem l
 
 ## Antipadrões
 
-- **Spec escrita depois do código, para justificá-lo.** Dá para reconhecer: os CAs descrevem a
-  implementação ("a função `X` recebe o parâmetro `Y`") em vez do comportamento.
-- **CA que é passo de implementação.** "Criar o módulo `foo.py`" não é critério de aceite — nada
-  nele pode ser reprovado sem olhar a estrutura de arquivos.
+- **Implementação feita "só para passar no teste" (reward hacking técnico).** Dá para reconhecer: o código usa atalhos, constantes arbitrárias, ou cobre apenas o ponto exato do `assert` enquanto quebra no uso real, nos extremos (`0.0`/`10.0`), com entrada realista ou integrado ao restante do sistema.
+- **Teste tautológico, circular ou de fachada.** Conferir só `HTTP 200`, `rms > 0.001`, `a > b` sem magnitude/direção, comparar código consigo mesmo, testar "zero-alloc" sem alocador de contagem, ou validar um módulo que a produção nem usa.
+- **Spec escrita depois do código, para justificá-lo.** Dá para reconhecer: os CAs descrevem a implementação ("a função `X` recebe o parâmetro `Y`") em vez do comportamento.
+- **CA que é passo de implementação.** "Criar o módulo `foo.py`" não é critério de aceite — nada nele pode ser reprovado sem olhar a estrutura de arquivos.
+- **Spec desalinhada dos contratos reais do repositório.** Citar traits, chaves de parâmetro ou arquivos de teste que não existem no codebase.
 - **Fora de escopo vazio.**
-- **Índice desatualizado.** Assim que o índice para de refletir a realidade, ele deixa de ser
-  consultado, e o padrão morre em uma semana.
-- **Spec gigante.** Mais de ~20 CAs, ou objetivo com dois "e" — divida. Duas specs pequenas se
-  implementam, revisam e revertem; uma grande fica meio pronta.
-- **Invariantes tocadas em branco por padrão.** Se o projeto tem invariantes declaradas, a seção
-  ou lista quais são tocadas, ou afirma explicitamente que nenhuma é.
+- **Índice desatualizado.** Assim que o índice para de refletir a realidade, ele deixa de ser consultado, e o padrão morre em uma semana.
+- **Spec gigante.** Mais de ~20 CAs, ou objetivo com dois "e" — divida. Duas specs pequenas se implementam, revisam e revertem; uma grande fica meio pronta.
+- **Invariantes tocadas em branco por padrão.** Se o projeto tem invariantes declaradas, a seção ou lista quais são tocadas, ou afirma explicitamente que nenhuma é.
 
 ## Checklist antes do merge
 
-- [ ] Spec existe, numerada, a partir do template, e está no índice.
+- [ ] Spec existe, numerada, a partir do template, está no índice e usa nomes reais de traits/parâmetros/arquivos do repositório.
 - [ ] Objetivo é o problema; contexto tem evidência verificável.
-- [ ] Todo `CA-n` é reprovável — nenhum é desejo ou passo de implementação.
-- [ ] Há CA de não-regressão e CA de caso de erro.
+- [ ] Todo `CA-n` é reprovável, tem direção/magnitude/faixa real e condição de entrada realista — nenhum é desejo, tautologia ou passo de implementação.
+- [ ] Há CA de não-regressão, CA de caso de erro e verificação nos extremos (`min`/`default`/`max`) e na cadeia real de produção (ponta a ponta).
+- [ ] Cada teste de contrato passou pela prova de **Red Real / Mutação** (quebra de fato se a implementação for substituída por stub, invertida ou violar a invariante).
+- [ ] Auditoria técnica adversarial executada no código: lógica sólida de domínio, unidades/escalas consistentes, zero código morto ou parâmetro ignorado, zero gambiarra feita só para enganar o teste.
 - [ ] Fora de escopo preenchido, com motivo.
-- [ ] Invariantes tocadas listadas (ou negadas explicitamente).
-- [ ] CAs de invariante/contrato têm teste automatizado citando o número no nome.
-- [ ] Seção *Testes que cobrem esta spec* mapeia arquivo → CAs.
+- [ ] Invariantes tocadas listadas (ou negadas explicitamente) e verificadas por **régua medida** (não inspeção visual).
+- [ ] CAs de invariante/contrato têm teste automatizado citando o número no nome, em arquivos que **existem de fato no disco**.
+- [ ] Seção *Testes que cobrem esta spec* mapeia arquivo existente → CAs realmente exercitados.
 - [ ] CAs verificados manualmente estão documentados no PR.
-- [ ] Status atualizado; versão bumpada; documentação de comportamento visível (rota, flag, tela)
-      atualizada **no mesmo PR**.
+- [ ] Status atualizado; versão bumpada; documentação de comportamento visível (rota, flag, tela) atualizada **no mesmo PR**.
 
 ## Arquivos desta skill
 
