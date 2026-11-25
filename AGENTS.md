@@ -19,6 +19,7 @@ specs** (que é o changelog do projeto) estão em `specs/README.md` — leia-o a
 
 
 
+
 <!-- BEGIN CORTEX RULES -->
 # Regras Promovidas do Projeto Cortex
 
@@ -40,11 +41,10 @@ O projeto **SONIX PRO // AMPFORGE™** (`simulador-de-efeitos`) adota formalment
 **O callback de áudio nunca pode alocar memória na heap, bloquear threads (locks/mutexes) ou executar processamento algorítmico pesado de análise.**
 
 ### Detalhes de Implementação:
-1. **Ring Buffers e Cópia Lock-Free**: O callback [`RealtimeDspChain::process`](crates/sonix-desktop/src/audio.rs) apenas alimenta amostras do sinal limpo de entrada (após DC blocker e antes de distorções) para um acumulador circular pré-alocado.
-2. **Scratch Buffers Pré-Alocados**: O algoritmo de autocorrelação/diferença de pitch (YIN) em [`TunerProcessor`](crates/ampforge-dsp/src/tuner.rs) opera exclusivamente sobre arrays estáticos pré-dimensionados (`d_scratch`, `d_prime_scratch` de até 2048 amostras), eliminando alocações dinâmicas de vetores.
-3. **Execução Desacoplada da Thread de Áudio**: A análise pesada de pitch é disparada sob demanda ou em taxa de telemetria (30 a 60 Hz) na thread de I/O / API HTTP, enquanto a telemetria reporta `estimated_roundtrip_ms = driver_input_latency_ms + driver_output_latency_ms + (algorithmic_latency_samples / sample_rate) * 1000.0` (sem afirmar "< 1,5 ms" fixo).
+1. **Ring Buffers e Cópia Lock-Free**: O callback [`RealtimeDspChain::process`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/sonix-desktop/src/audio.rs) apenas alimenta amostras do sinal limpo de entrada (após DC blocker e antes de distorções) para um acumulador circular pré-alocado.
+2. **Scratch Buffers Pré-Alocados**: O algoritmo de autocorrelação/diferença de pitch (YIN) em [`TunerProcessor`](file:///g:/Dev/Projetos/Simulador%20de%20efeitos/crates/ampforge-dsp/src/tuner.rs) opera exclusivamente sobre arrays estáticos pré-dimensionados (`d_scratch`, `d_prime_scratch` de até 2048 amostras), eliminando alocações dinâmicas de vetores.
+3. **Execução Desacoplada da Thread de Áudio**: A análise pesada de pitch é disparada sob demanda ou em taxa de telemetria (30 a 60 Hz) na thread de I/O / API HTTP, garantindo que o callback de áudio mantenha jitter determinístico e latência ultrabaixa (< 1.5 ms).
 4. **Verificação Automatizada**: Todo novo componente de análise de áudio deve incluir teste de contrato específico (`test_ca_08_audio_callback_zero_alloc_and_zero_locks`) validando ausência de alocação de memória e invariância de desempenho sob carga contínua.
-5. **Prioridade de Tempo Real**: O *thread* de áudio roda com prioridade de tempo real (`cpal/realtime`, COR-11).
 
 ## Rule [20261113-195929-regra-0a2f]
 # Todo controle visível funciona no backend como o equipamento real
@@ -57,7 +57,7 @@ Não existe controle decorativo. Todo knob, chave, jack, botão, pedal, footswit
 2. **chave aceita e validada pelo backend** (tabela única da Spec 014, validação atômica);
 3. **teste de efeito**: mover o controle de ponta a ponta (ou trocar a opção) com sinal de teste definido muda a saída de forma mensurável **no sentido do equipamento real**. Exemplos:
    - `standby` silencia;
-   - no Plexi 1959, a entrada LOW fica 6 dB abaixo da HIGH;
+   - entrada LOW fica 6 dB abaixo da HIGH;
    - footswitch em bypass deixa a saída igual à entrada;
    - BASS/MIDDLE/TREBLE interagem como a rede FMV.
 
@@ -84,6 +84,22 @@ Um CA que afirma uma invariante precisa de um teste que **meça** o comportament
 ## Por quê
 - A Spec 033 passou em todos os CAs (inventário, IPC, ausência de scroll) com uma UI que não se parecia com o design, porque não tinha CA de fidelidade.
 - Os testes "zero-alloc" passavam enquanto o callback liberava a IR antiga, usava `Mutex` no osciloscópio e silenciava ao carregar IR ou preset.
+
+## Rule [20261125-074027-rule-4d05]
+# Regra de Propriedade Exclusiva e Zero-Mutex no Callback de Áudio em Tempo Real
+
+**Data:** 2026-11-25  
+**Contexto:** [[20261111-023654-dsp-fd17]], [[20261114-131934-regra-d272]], [[20261125-074008-dsp-781a]]  
+**Tags:** `rule`, `realtime`, `dsp`, `audio`, `mutex`, `lock-free`
+
+## Regra Obrigatória
+**O callback de áudio em tempo real NUNCA pode disputar, adquirir ou liberar Mutexes ou RwLocks compartilhados com outras threads.**
+
+### Mandamentos:
+1. **Propriedade Exclusiva do DSP:** O objeto `RealtimeDspChain` (ou qualquer cadeia ativa de processamento) deve ser detido com exclusividade pela thread de áudio durante toda a duração do stream ativo (`AudioThreadChainOwner`), passando `&mut RealtimeDspChain` diretamente ao callback.
+2. **Proibição de Bypass Não-Processado por Falha de Lock:** É expressamente proibido implementar lógica de fallback do tipo "se o lock estiver ocupado, copie o sinal de entrada seco diretamente para a saída". Esse padrão causa vazamentos intermitentes de sinal não processado (som cru da guitarra) e ruídos de fase catastróficos.
+3. **Comunicação por Filas Atômicas Lock-Free / TripleBuffer:** Toda transferência de parâmetros da thread de UI/I/O para a thread de áudio deve usar anéis SPSC lock-free. Toda publicação de telemetria, dados de osciloscópio ou amostras para pitch detection da thread de áudio para a thread de I/O deve usar `TripleBuffer<T>` lock-free ou anéis circulares lock-free pré-dimensionados.
+4. **Tratamento de Standby:** Quando o motor estiver desativado, em modo de segurança ou sem processamento ativo, a saída deve emitir silêncio analítico (`0.0`), aplicando obrigatoriamente uma rampa curta de ganho (5 a 10 ms) para prevenir pops ou transientes DC nos alto-falantes.
 
 <!-- END CORTEX RULES -->
 
