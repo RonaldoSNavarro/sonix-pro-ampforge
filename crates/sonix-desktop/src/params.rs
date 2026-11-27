@@ -172,6 +172,10 @@ pub fn default_grid() -> sonix_core::persistence::GridDto {
     }
 }
 
+fn default_cab_low_cut_hz() -> f32 {
+    75.0
+}
+
 /// Estado persistente e observável da cadeia e interface (tabela única de parâmetros da Spec 014).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppState {
@@ -288,6 +292,8 @@ pub struct AppState {
     pub cab_speaker: String,
     #[serde(rename = "cab_1.resonance_hz")]
     pub cab_resonance_hz: f32,
+    #[serde(default = "default_cab_low_cut_hz", rename = "cab_1.low_cut_hz")]
+    pub cab_low_cut_hz: f32,
     #[serde(rename = "cab_1.hicut_khz")]
     pub cab_hicut_khz: f32,
     #[serde(rename = "cab_1.ir_enabled")]
@@ -632,6 +638,7 @@ impl Default for AppState {
             is_modded: false,
             cab_speaker: "greenback_4x12".to_string(),
             cab_resonance_hz: 98.0,
+            cab_low_cut_hz: 75.0,
             cab_hicut_khz: 8.2,
             cab_ir_enabled: false,
             cab_mic1_model: "sm57".to_string(),
@@ -1652,6 +1659,17 @@ pub static PARAMS: &[ParamDesc] = &[
         None,
         DspParamUpdate::CabResonanceHz,
         cab_resonance_hz
+    ),
+    num_param!(
+        "cab_1.low_cut_hz",
+        &[],
+        20.0,
+        500.0,
+        1.0,
+        75.0,
+        None,
+        DspParamUpdate::CabLowCutHz,
+        cab_low_cut_hz
     ),
     num_param!(
         "cab_1.hicut_khz",
@@ -2722,10 +2740,27 @@ pub fn handle_post_params(
     // Ordena conforme PARAMS: amp_1.model antes do chassi/painel, cab_1.speaker antes de resonance_hz.
     matched.sort_by_key(|(idx, _, _)| *idx);
 
-    let mut updates = Vec::with_capacity(matched.len() + 2);
+    let mut updates = Vec::with_capacity(matched.len() + 8);
+    let model_in_batch = map.get(KEY_AMP_1_MODEL).and_then(|v| v.as_str());
+    let paired_cab_speaker = model_in_batch.and_then(find_model_by_name).map(|m| match m {
+        AmpModelId::UsTwinBlackface65 => "twin_2x12",
+        AmpModelId::CaliDualRectoRevF => "v30_4x12",
+        AmpModelId::UkAc30TopBoost => "alnico_blue_2x12",
+        AmpModelId::BritPlexi1959 | AmpModelId::BritJcm800_2203 => "greenback_4x12",
+    });
+
     for (_, desc, v) in &matched {
         if let Some(u) = (desc.to_dsp)(v) {
             updates.push(u);
+        }
+        if desc.key == KEY_AMP_1_MODEL {
+            if let Some(spk_name) = paired_cab_speaker {
+                if !map.contains_key(KEY_CAB_1_SPEAKER) && !map.contains_key("cab_1.model") {
+                    if let Some(spk) = parse_speaker_model(spk_name) {
+                        updates.push(DspParamUpdate::Cab1Speaker(spk));
+                    }
+                }
+            }
         }
     }
     #[cfg(feature = "fault-injection")]
@@ -2744,8 +2779,14 @@ pub fn handle_post_params(
     }
 
     if let Ok(mut st) = app_state_clone.lock() {
-        if let Some(m_val) = map.get(KEY_AMP_1_MODEL).and_then(|v| v.as_str()) {
+        if let Some(m_val) = model_in_batch {
             st.apply_nominal_chassis_for_model(m_val);
+            if let Some(spk_name) = paired_cab_speaker {
+                if !map.contains_key(KEY_CAB_1_SPEAKER) && !map.contains_key("cab_1.model") {
+                    st.cab_speaker = spk_name.to_string();
+                    st.cab_resonance_hz = nominal_resonance_for_speaker(spk_name);
+                }
+            }
         }
 
         for (_, desc, v) in matched {
@@ -2868,7 +2909,13 @@ pub fn apply_preset_params_queued(
     }
 
     if let Ok(mut st) = app_state.lock() {
+        if params.contains_key(KEY_AMP_1_MODEL) {
+            st.apply_nominal_chassis_for_model(&target_model);
+        }
         for (_, desc, v) in matched {
+            if desc.key == KEY_AMP_1_MODEL {
+                continue;
+            }
             (desc.write_state)(&mut st, v);
         }
         if fallback_recto_channel_mode {

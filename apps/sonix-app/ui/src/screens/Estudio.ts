@@ -778,8 +778,8 @@ export function renderEstudioScreen(store: AppStore): HTMLElement {
     'flex:1;height:226px;border-radius:12px;background:#050505;box-shadow:0 20px 30px rgba(0,0,0,.7),0 0 0 1px #000;padding:8px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;min-width:0;';
   const tHdr = document.createElement('div');
   tHdr.style.cssText = 'display:flex;align-items:center;';
-  const liveBPlus = (store.telemetry as { b_plus_v?: number } | null | undefined)?.b_plus_v ?? numSafe(store, 'amp_1.preamp_plate_v', 280);
-  tHdr.innerHTML = `<span class="m-lbl" style="flex:1;font-size:9px;">VÁLVULAS · ${str(store, 'amp_1.preamp_tube', '12ax7').toUpperCase()} · 4× ${str(store, 'amp_1.power_tube', '6l6gc').toUpperCase()}</span><span class="m-mono" style="font-size:9px;color:#ffb347;">B+ ${Math.round(liveBPlus)} V</span>`;
+  const liveBPlus = store.telemetry.b_plus_v ?? numSafe(store, 'amp_1.preamp_plate_v', 280);
+  tHdr.innerHTML = `<span class="m-lbl" style="flex:1;font-size:9px;">VÁLVULAS · ${str(store, 'amp_1.preamp_tube', '12ax7').toUpperCase()} · 4× ${str(store, 'amp_1.power_tube', '6l6gc').toUpperCase()}</span><span class="m-mono" data-live="b-plus" style="font-size:9px;color:#ffb347;">B+ ${Math.round(liveBPlus)} V</span>`;
 
   const tubesRow = document.createElement('div');
   tubesRow.style.cssText =

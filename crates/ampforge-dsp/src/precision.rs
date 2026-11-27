@@ -37,6 +37,16 @@ impl IirBiquad64 {
         }
     }
 
+    /// Atualiza os coeficientes preservando os registradores de estado (`s1`, `s2`) sem cliques.
+    #[inline]
+    pub fn update_coeffs(&mut self, next: Self) {
+        self.b0 = next.b0;
+        self.b1 = next.b1;
+        self.b2 = next.b2;
+        self.a1 = next.a1;
+        self.a2 = next.a2;
+    }
+
     #[inline]
     pub fn process_sample(&mut self, input: f64) -> f64 {
         // Direct Form II Transposed (64-bit precision)

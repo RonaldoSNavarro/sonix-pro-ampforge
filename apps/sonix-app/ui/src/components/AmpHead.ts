@@ -101,7 +101,9 @@ function createRockerSwitch(
   label: string,
   active: boolean,
   onColor: string,
-  onToggle: () => void
+  onToggle: () => void,
+  titleOverride?: string,
+  standbyState?: 'on' | 'standby'
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;flex:none;';
@@ -110,8 +112,11 @@ function createRockerSwitch(
   btn.type = 'button';
   btn.className = 'rocker';
   btn.dataset.controlId = controlId;
+  if (standbyState) {
+    btn.dataset.standbyState = standbyState;
+  }
   btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-  btn.title = label;
+  btn.title = titleOverride ?? label;
 
   const face = document.createElement('span');
   face.className = 'face';
@@ -140,7 +145,8 @@ function createBatToggle(
   upLabel: string,
   downLabel: string,
   onToggle: () => void,
-  showBottomLabel = true
+  showBottomLabel = true,
+  standbyState?: 'on' | 'standby'
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:1px;flex:none;';
@@ -148,12 +154,16 @@ function createBatToggle(
   const top = document.createElement('span');
   top.className = 'm-lbl';
   top.textContent = upLabel;
-  top.style.cssText = 'font-size:7px;line-height:1;opacity:0.85;color:currentColor;';
+  top.style.cssText = `font-size:7px;line-height:1;opacity:${active ? '0.95' : '0.48'};color:currentColor;cursor:pointer;user-select:none;`;
+  top.addEventListener('click', onToggle);
 
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'bat';
   btn.dataset.controlId = controlId;
+  if (standbyState) {
+    btn.dataset.standbyState = standbyState;
+  }
   btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   btn.title = `${label}: ${active ? upLabel : downLabel}`;
   btn.style.height = '44px';
@@ -172,7 +182,8 @@ function createBatToggle(
     const bot = document.createElement('span');
     bot.className = 'm-lbl';
     bot.textContent = label || downLabel;
-    bot.style.cssText = 'font-size:7.5px;line-height:1;color:currentColor;';
+    bot.style.cssText = `font-size:7.5px;line-height:1;opacity:${active ? '0.48' : '0.95'};color:currentColor;cursor:pointer;user-select:none;`;
+    bot.addEventListener('click', onToggle);
     wrap.appendChild(bot);
   }
   return wrap;
@@ -402,9 +413,17 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
       })
     );
     pushSwitch(
-      createRockerSwitch('amp.standby', 'STANDBY', standby, '#ffb020', () => {
-        void store.setControl('amp.standby', !standby);
-      })
+      createRockerSwitch(
+        'amp.standby',
+        'STANDBY',
+        standby,
+        '#ffb020',
+        () => {
+          void store.setControl('amp.standby', !standby);
+        },
+        standby ? 'STANDBY (Mudo — clique para ativar)' : 'STANDBY desligado (Amp ativo)',
+        standby ? 'standby' : 'on'
+      )
     );
     panel.appendChild(createJewelLight(isLit, 'Indicador Pilot Plexi 1959'));
 
@@ -497,9 +516,17 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
       })
     );
     pushSwitch(
-      createRockerSwitch('amp.standby', 'STANDBY', standby, '#ffb020', () => {
-        void store.setControl('amp.standby', !standby);
-      })
+      createRockerSwitch(
+        'amp.standby',
+        'STANDBY',
+        standby,
+        '#ffb020',
+        () => {
+          void store.setControl('amp.standby', !standby);
+        },
+        standby ? 'STANDBY (Mudo — clique para ativar)' : 'STANDBY desligado (Amp ativo)',
+        standby ? 'standby' : 'on'
+      )
     );
 
     const indicatorBrand = document.createElement('div');
@@ -579,9 +606,18 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
       })
     );
     panel.appendChild(
-      createBatToggle('amp.standby', 'STBY', standby, 'STBY', 'PLAY', () => {
-        void store.setControl('amp.standby', !standby);
-      })
+      createBatToggle(
+        'amp.standby',
+        'STANDBY',
+        !standby,
+        'ON',
+        'STBY',
+        () => {
+          void store.setControl('amp.standby', !standby);
+        },
+        true,
+        standby ? 'standby' : 'on'
+      )
     );
   } else if (model === 'dual_rect') {
     const rectMode = strParam(store, 'amp_1.channel_mode', 'modern');
@@ -669,9 +705,18 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
     const pwrRow = document.createElement('div');
     pwrRow.style.cssText = 'display:flex;align-items:center;gap:12px;flex:none;';
     pwrRow.append(
-      createBatToggle('amp.standby', 'STANDBY', standby, 'STANDBY', '', () => {
-        void store.setControl('amp.standby', !standby);
-      }, false),
+      createBatToggle(
+        'amp.standby',
+        'STANDBY',
+        standby,
+        'STANDBY',
+        'PLAY',
+        () => {
+          void store.setControl('amp.standby', !standby);
+        },
+        false,
+        standby ? 'standby' : 'on'
+      ),
       createBatToggle('amp.power', 'POWER', power, 'POWER', '', () => {
         void store.setControl('amp.power', !power);
       }, false),
@@ -732,9 +777,17 @@ export function createAmpHeadElement(store: AppStore, options: AmpHeadOptions = 
       })
     );
     panel.appendChild(
-      createRockerSwitch('amp.standby', 'STANDBY', standby, '#ffb020', () => {
-        void store.setControl('amp.standby', !standby);
-      })
+      createRockerSwitch(
+        'amp.standby',
+        'STANDBY',
+        standby,
+        '#ffb020',
+        () => {
+          void store.setControl('amp.standby', !standby);
+        },
+        standby ? 'STANDBY (Mudo — clique para ativar)' : 'STANDBY desligado (Amp ativo)',
+        standby ? 'standby' : 'on'
+      )
     );
   }
 

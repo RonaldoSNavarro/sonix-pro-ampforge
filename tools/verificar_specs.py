@@ -148,8 +148,8 @@ def main() -> int:
                     fm_status = sm.group(1).strip().lower()
                     break
 
-        # 1. Front-matter status: rascunho nas specs 059..092
-        if 59 <= num <= 92 and fm_status != "rascunho":
+        # 1. Front-matter status válido (rascunho, aprovada, implementada) nas specs 059..092
+        if 59 <= num <= 92 and fm_status not in ("rascunho", "aprovada", "implementada"):
             missing_frontmatter.append(base)
 
         # Consistência com specs/README.md
@@ -157,6 +157,8 @@ def main() -> int:
             rm = readme_statuses[num]
             if fm_status == "rascunho" and "rascunho" not in rm:
                 status_mismatches.append(f"{base}: front-matter='rascunho' vs README='{rm}'")
+            elif fm_status == "aprovada" and "aprovada" not in rm:
+                status_mismatches.append(f"{base}: front-matter='aprovada' vs README='{rm}'")
             elif fm_status == "implementada" and "implementada" not in rm:
                 status_mismatches.append(f"{base}: front-matter='implementada' vs README='{rm}'")
 

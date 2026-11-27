@@ -1,9 +1,9 @@
 ---
 spec: 058
 titulo: Amplificador Vox AC30/6 Top Boost (Rev. 1964 JMI, 30W 4×EL84)
-status: rascunho
+status: implementada
 tipo: amplificador
-atualizado: 2026-11-20
+atualizado: 2026-11-25
 dependencias: [053, 077, 078, 079]
 ---
 # 058 — Amplificador Vox AC30/6 Top Boost (Rev. 1964 JMI)
@@ -78,7 +78,8 @@ dependencias: [053, 077, 078, 079]
 | Power | `amp_1.power` | boolean | bool | `false/true` | `true` | discreto | `Físico 1964` | Alimentação AC | Mute suave `<= 2,5 ms` |
 | Standby | `amp_1.standby` | boolean | bool | `false/true` | `false` | discreto | `Físico 1964` | Alta tensão B+ | Rampa exponencial |
 | Canal / Entrada | `amp_1.input_jack` | enum | id | `normal_high, normal_low, brilliant_high, brilliant_low, top_boost` | `brilliant_high` | discreto | `Físico 1964` | Seleciona canal Normal vs Brilliant (Top Boost) e High vs Low (−6 dB) | Bypass do módulo Top Boost em Normal + pad `-6,02 dB` |
-| Volume | `amp_1.gain` | number | scale | `0.0..=10.0` | `5.5` | audio log | `Físico 1964` | Volume do canal ativo (excita V1/V2 e diretamente o LTP/4×EL84) | Ganho de canal + drive direto do power amp |
+| Volume (Brilliant / Top Boost) | `amp_1.gain` | number | scale | `0.0..=10.0` | `5.5` | audio 25% | `Físico 1964` | Volume do canal Brilliant/Top Boost (`BRILL VOL`) | Ganho de canal Brilliant + drive direto do power amp |
+| Normal Volume | `amp_1.volume_2` | number | scale | `0.0..=10.0` | `5.0` | audio 25% | `Físico 1964` | Volume independente do canal Normal (`NORMAL VOL` no AC30/6) | Ganho do canal Normal (bypass Top Boost) |
 | Treble | `amp_1.treble` | number | scale | `0.0..=10.0` | `6.0` | audio log | `Físico 1964` | Braço agudo `50 pF` da rede Top Boost | Solver nodal dedicado Vox Top Boost `f64` (Spec 078) |
 | Bass | `amp_1.bass` | number | scale | `0.0..=10.0` | `5.5` | audio log | `Físico 1964` | Braço grave `22 nF / 22 nF` da rede Top Boost | Solver nodal dedicado Vox Top Boost `f64` (Spec 078) |
 | Tone Cut | `amp_1.cut` | number | scale | `0.0..=10.0` | `5.0` | log invertido | `Físico 1964` | Shunt RC diferencial `4,7 nF + 250 kΩ` pós-LTP (horário corta agudos) | LPF diferencial `f64` pós-PI (`18 kHz → 750 Hz`) |
@@ -87,7 +88,8 @@ dependencias: [053, 077, 078, 079]
 
 ## 10. Contratos de integração
 - Implementa `AudioProcessor` (Spec 053) com `module_id = "amp.vox.ac30_6_top_boost"` e `model_revision = "1964-jmi-ac30-6-integrated-tb"`.
-- Rejeita `amp_1.master`, `amp_1.middle`, `amp_1.presence`, `amp_1.depth`, `amp_1.reverb`, `amp_1.jumpered`, `amp_1.volume_2`, `amp_1.spongy` e `amp_1.channel_mode` com `E_VALIDATION:` (fidelidade estrita à revisão de 1964).
+- Conciliação (2026-11-25): aceita `amp_1.volume_2` (`NORMAL VOL`) para o canal Normal e `amp_1.gain` (`BRILL VOL`) para o canal Brilliant/Top Boost (alinhado ao AC30/6 real e `AmpHead.ts`), e ao selecionar `ac30_tb` sem sobrescritas explícitas pareia automaticamente `cab_1.speaker = "alnico_blue_2x12"`.
+- Rejeita `amp_1.master`, `amp_1.middle`, `amp_1.presence`, `amp_1.depth`, `amp_1.reverb`, `amp_1.jumpered`, `amp_1.spongy` e `amp_1.channel_mode` com `E_VALIDATION:` (fidelidade estrita à revisão de 1964).
 
 ## 11. Arquitetura de implementação
 - **Código atual mapeado (HEAD `d891389`):** `crates/ampforge-dsp/src/amp.rs` (linhas `353–366, 828–831, 1161–1164, 1211, 1282–1285, 1345–1347, 1542–1553, 1590–1595`) e `crates/ampforge-dsp/src/tonestack.rs` (linhas `79–93`).

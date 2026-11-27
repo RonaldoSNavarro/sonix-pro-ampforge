@@ -151,7 +151,11 @@ impl ApiContext {
                 } else {
                     resolved_param_queue = Some(chain.param_queue());
                 }
-                telemetry.set_output_muted(chain.is_output_muted());
+                if let Ok(st) = app_state.lock() {
+                    sync_telemetry_output_muted(&telemetry, &st);
+                } else {
+                    telemetry.set_output_muted(chain.is_output_muted());
+                }
                 resource_queue = Some(chain.resource_queue());
                 shared_adc_clips = Some(chain.adc_clips_handle());
                 shared_sample_rate_bits = Some(chain.shared_sample_rate_bits());
@@ -1555,7 +1559,7 @@ fn handle_post_presets_save(
         return (500, "application/json", b"{\"error\":\"failed_to_serialize\"}".to_vec());
     };
 
-    if let Err(e) = std::fs::write(&file_path, json_str) {
+    if let Err(e) = write_atomic_file(&file_path, json_str.as_bytes()) {
         return (
             500,
             "application/json",
@@ -2430,11 +2434,14 @@ fn package_data_dirs(ctx: &ApiContext) -> (std::path::PathBuf, std::path::PathBu
 
 pub fn write_atomic_file(target: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static ATOMIC_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let parent = target.parent().ok_or_else(|| "E_ENGINE: caminho de destino sem diretório pai".to_string())?;
     if !parent.as_os_str().is_empty() && !parent.exists() {
         return Err(format!("E_ENGINE: diretório pai inexistente: {}", parent.display()));
     }
-    let tmp = target.with_extension(format!("tmp.{}", std::process::id()));
+    let seq = ATOMIC_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = target.with_extension(format!("tmp.{}.{}", std::process::id(), seq));
     {
         let mut file = std::fs::File::create(&tmp)
             .map_err(|e| format!("E_ENGINE: falha ao criar arquivo temporário: {e}"))?;

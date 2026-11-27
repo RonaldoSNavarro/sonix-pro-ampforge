@@ -2,7 +2,7 @@
 spec: 093
 titulo: Confiabilidade de Entrada, Propriedade RT Lock-Free, Soundness de Fila e Limitador de Saída
 status: implementada
-atualizado: 2026-11-24
+atualizado: 2026-11-25
 ---
 # 093 — Confiabilidade de Entrada, Propriedade RT Lock-Free, Soundness de Fila e Limitador de Saída
 
@@ -20,17 +20,17 @@ Durante testes reais com guitarra conectada na entrada de linha (*Line In*) do c
 
 ## Comportamento esperado
 1. **Fila Lock-Free Sound (`queue.rs`):** `SpscBuffer<T, CAP>` mantém apenas semântica FIFO estrita (`push` / `pop`) sem `push_overwrite`. A telemetria de último estado (`SpscTelemetryQueue`) utiliza um `TripleBuffer<T>` lock-free (`O(1)`, zero-alloc, sem UB e com `Drop` seguro).
-2. **Propriedade Exclusiva RT (`audio.rs`):** A thread de áudio detém propriedade exclusiva de `RealtimeDspChain` via `DspChainSlot` (troca de instância/estado sem `Mutex` no callback). Não existe `try_lock` nem `copy_from_slice(&mono_in)` no caminho de áudio.
-3. **Standby e Aplicação de Dispositivo (`commands.rs`, `audio.rs`, `AmpHead.ts`):** O boot frio sem calibração continua seguro em `Standby` (`Spec 050`). Ao aplicar um dispositivo de áudio via `set_audio_device`, o backend atualiza `active_device_id`, carrega calibração salva (se houver) e **desativa `amp_standby` / `output_muted` automaticamente**. `swap_dsp_state` preserva o estado `amp_standby` do `AppState`. A chave `STANDBY` no `AmpHead.ts` exibe polaridade visual inequívoca (`ON` = amp ativo, `STANDBY` = mudo/âmbar).
+2. **Propriedade Exclusiva RT (`audio.rs`, `api.rs`, `lib.rs`):** A thread de áudio detém propriedade exclusiva de `RealtimeDspChain` via `AudioThreadChainOwner` (sem código morto duplicado e sem `Mutex`/`try_lock` ou `copy_from_slice(&mono_in)` no callback). Ao transferir a instância ativa para a thread RT, o slot na thread de controle preserva os mesmos handles compartilhados (`param_queue`, `resource_queue`, `clean_input_ring`, `scope_output_ring`, `shared_*`, `rt_owned`) para que `ApiContext`, calibração persistida no boot e recuperação de *fault* (via `DspResourceUpdate::ReplaceChain` e `RetiredResource::Chain` off-RT) operem sempre sobre a cadeia real na thread de áudio.
+3. **Standby e Aplicação de Dispositivo (`commands.rs`, `audio.rs`, `AmpHead.ts`):** O boot frio sem calibração continua seguro em `Standby` (`Spec 050`). Ao existir calibração salva no boot, `build_runtime_with_data_dir` propaga `InputBoost`, `GateThreshold` e `AmpStandby(false)` também via `param_queue` e sincroniza a telemetria sem sobrescrevê-la com instância dummy em `ApiContext::new`. Ao aplicar um dispositivo de áudio via `set_audio_device`, o backend atualiza `active_device_id`, carrega calibração salva (se houver) e **desativa `amp_standby` / `output_muted` automaticamente**. `swap_dsp_state` preserva o estado `amp_standby` do `AppState`. A chave `STANDBY` no `AmpHead.ts` exibe polaridade visual inequívoca (`ON` = amp ativo, `STANDBY` = mudo/âmbar) nos 5 modelos.
 4. **3 Modos Explícitos de Entrada e Canal (`params.rs`, `audio.rs`, `Audio.ts`, `store.ts`):**
    - `input.mode` aceita `"instrument"` (`0 dB`), `"pc_line_in"` (`0 dB` sem pad, para entrada Line In de PC/notebook) e `"line"` (`-11,78 dB` pad, para Linha Profissional `+4 dBu`).
    - `input.channel` aceita `"left"`, `"right"` e `"sum"` e é exposto na tela `Audio.ts`.
-   - `Audio.ts` não descarta seleções pendentes em eventos de telemetria; `store.ts` restaura `input_device` e `output_device`; `controls.registry.ts` e `shell.ts` não usam mais `'guitar'` ou `'main.input_boost'`.
+   - `Audio.ts` não descarta seleções pendentes em eventos de telemetria, limpa `store.audioPending = null` ao fechar pelo botão `×` e persiste `backend`, `mode`, `sampleRate`, `bufferSize`, `inputDevice`, `outputDevice`, `inputMode` e `inputChannel` no `localStorage`. `store.ts` restaura a preferência salva sempre que qualquer desses campos diferir do estado atual (com `backend` normalizado) e atualiza `amp_1.standby = false` após `setAudioDevice`. `controls.registry.ts` e `shell.ts` não usam mais `'guitar'` ou `'main.input_boost'`.
    - Banners de alerta dinâmicos aparecem **apenas** quando `amp_standby === true` (com botão direto de ativação) ou `input.mode === 'pc_line_in'` (dica para desativar "Escutar este dispositivo" no Windows), mantendo o layout de fixture da `Spec 048` intacto.
-5. **Limitador Suave Zero-Latency, Duplex Suave e Escrita Atômica (`audio.rs`, `api.rs`):**
+5. **Limitador Suave Zero-Latency, Duplex Suave e Escrita Atômica (`audio.rs`, `api.rs`, `calibration.rs`):**
    - A saída final passa por `OutputSoftLimiter` zero-latency: transparente (`0,00 dB`) abaixo de `-1,0 dBFS`, joelho suave entre `-1,0 dBFS` e `-0,1 dBFS` e teto rígido em `[-1.0, 1.0]`, zerando `NaN`/`Inf`.
-   - `RealtimeDuplexEngine` aplica micro-fade (`1–2 ms`) em underrun e crossfade suave na correção de drift, sem adicionar latência algorítmica.
-   - `write_atomic_file` escreve em arquivo temporário e usa `std::fs::rename` atômico (ou `ReplaceFileW` / substituição segura no Windows) sem apagar o destino antes de o novo conteúdo estar completo e sincronizado.
+   - `RealtimeDuplexEngine` aplica micro-fade (`1–2 ms`) em underrun (incluindo o caso de borda `rem == 1`), fade-in de retomada no bloco seguinte ao underrun e crossfade suave na correção de drift, sem adicionar latência algorítmica.
+   - `write_atomic_file` usa nome temporário único por chamada (`tmp.<pid>.<seq>`) e `std::fs::rename` atômico sem apagar o destino antes de o novo conteúdo estar completo e sincronizado; `handle_post_presets_save` e `CalibrationStore::save` também utilizam `write_atomic_file`.
 
 ## Critérios de aceite
 > Cada item é uma afirmação verificável — algo que alguém pode reprovar.

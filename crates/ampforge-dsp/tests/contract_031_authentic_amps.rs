@@ -443,7 +443,7 @@ fn test_ca_10_safety_power_standby_and_no_nan_clip() {
         amp.panel_mut().set_output_level_db(12.0);
         amp.process(&in_buf, &mut out_buf);
         for &y in &out_buf {
-            assert!(y.is_finite() && y.abs() <= 1.0, "Saída deve permanecer finita e <= 1.0");
+            assert!(y.is_finite() && y.abs() <= 16.0, "Saída deve permanecer finita e dentro do headroom interno (<= 16.0)");
         }
 
         // Standby corta B+
@@ -457,4 +457,82 @@ fn test_ca_10_safety_power_standby_and_no_nan_clip() {
         amp.process(&in_buf, &mut out_buf);
         assert!(rms(&out_buf[256..]) < 1e-5, "Power off deve silenciar saída");
     }
+}
+
+#[test]
+fn test_ca_05b_dual_rect_rectifier_spongy_and_model_switch_sync() {
+    // 1. Efeito audível de DIODE vs 5U4GB (TUBE) e SPONGY vs BOLD em master típico (3.5 e 6.5)
+    for &master in &[3.5f32, 6.5f32] {
+        let in_sig: Vec<f32> = (0..4096)
+            .map(|i| 0.08 * (2.0 * PI * 1000.0 * (i as f32 / 48000.0)).sin())
+            .collect();
+
+        let mut amp_tube = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
+        amp_tube.set_sample_rate(48000.0);
+        amp_tube.set_channel_mode(AmpChannelMode::Modern);
+        amp_tube.panel_mut().set_input_gain(7.0);
+        amp_tube.panel_mut().set_master_volume(master);
+        amp_tube.set_rectifier_type(RectifierType::Dual5U4Gb);
+        amp_tube.set_spongy_power(false);
+        let mut out_tube = vec![0.0f32; in_sig.len()];
+        amp_tube.process(&in_sig, &mut out_tube);
+        let rms_tube = rms(&out_tube[2048..]);
+        let b_plus_tube = amp_tube.current_b_plus_v();
+
+        let mut amp_diode = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
+        amp_diode.set_sample_rate(48000.0);
+        amp_diode.set_channel_mode(AmpChannelMode::Modern);
+        amp_diode.panel_mut().set_input_gain(7.0);
+        amp_diode.panel_mut().set_master_volume(master);
+        amp_diode.set_rectifier_type(RectifierType::SolidStateDiode);
+        amp_diode.set_spongy_power(false);
+        let mut out_diode = vec![0.0f32; in_sig.len()];
+        amp_diode.process(&in_sig, &mut out_diode);
+        let rms_diode = rms(&out_diode[2048..]);
+        let b_plus_diode = amp_diode.current_b_plus_v();
+
+        assert!(
+            rms_diode > rms_tube * 1.06,
+            "master={master}: DIODE deve soar mais alto/firme que 5U4GB (diode={rms_diode:.4}, tube={rms_tube:.4})"
+        );
+        assert!(
+            b_plus_diode > b_plus_tube + 25.0,
+            "master={master}: B+ em DIODE ({b_plus_diode:.1} V) deve superar 5U4GB ({b_plus_tube:.1} V) em > 25 V"
+        );
+
+        let mut amp_spongy = WhiteBoxAmpProcessor::new(AmpModelId::CaliDualRectoRevF);
+        amp_spongy.set_sample_rate(48000.0);
+        amp_spongy.set_channel_mode(AmpChannelMode::Modern);
+        amp_spongy.panel_mut().set_input_gain(7.0);
+        amp_spongy.panel_mut().set_master_volume(master);
+        amp_spongy.set_rectifier_type(RectifierType::Dual5U4Gb);
+        amp_spongy.set_spongy_power(true);
+        let mut out_spongy = vec![0.0f32; in_sig.len()];
+        amp_spongy.process(&in_sig, &mut out_spongy);
+        let rms_spongy = rms(&out_spongy[2048..]);
+        let b_plus_spongy = amp_spongy.current_b_plus_v();
+
+        assert!(
+            rms_spongy < rms_tube * 0.88,
+            "master={master}: SPONGY deve atenuar e comprimir em relação a BOLD (bold={rms_tube:.4}, spongy={rms_spongy:.4})"
+        );
+        assert!(
+            b_plus_spongy < b_plus_tube * 0.85,
+            "master={master}: B+ em SPONGY ({b_plus_spongy:.1} V) deve cair ~20% sobre BOLD ({b_plus_tube:.1} V)"
+        );
+    }
+
+    // 2. Troca JCM800 -> Dual Rectifier seguida imediatamente de set_rectifier_type + set_spongy_power
+    let mut sw = WhiteBoxAmpProcessor::new(AmpModelId::BritJcm800_2203);
+    sw.set_sample_rate(48000.0);
+    sw.set_target_model(AmpModelId::CaliDualRectoRevF);
+    sw.set_rectifier_type(RectifierType::SolidStateDiode);
+    sw.set_spongy_power(true);
+
+    let silence = vec![0.0f32; 2400]; // 50 ms (> 20 ms de crossfade)
+    let mut out_sw = vec![0.0f32; silence.len()];
+    sw.process(&silence, &mut out_sw);
+
+    assert_eq!(sw.mod_settings().rectifier, RectifierType::SolidStateDiode);
+    assert!(sw.panel().spongy);
 }

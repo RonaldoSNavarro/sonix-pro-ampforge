@@ -42,3 +42,44 @@ test('Spec 093 CA-5: store.ts restaura input_device e output_device; registry e 
   );
   assert.match(shellTs, /amp_1\.standby|amp_standby/, 'shell.ts deve exibir alerta dinâmico quando amp_1.standby estiver ativo');
 });
+
+test('Spec 093 pós-review: Gabinete usa twin_2x12, AmpHead expõe polaridade STANDBY, Audio limpa audioPending no X e store sincroniza modelo/dispositivo', () => {
+  const cabTs = fs.readFileSync(
+    path.join(root, 'apps/sonix-app/ui/src/screens/Gabinete.ts'),
+    'utf8',
+  );
+  assert.match(cabTs, /twin_2x12:/, 'Gabinete.ts cabSpecs deve mapear a chave canônica twin_2x12');
+
+  const ampHeadTs = fs.readFileSync(
+    path.join(root, 'apps/sonix-app/ui/src/components/AmpHead.ts'),
+    'utf8',
+  );
+  assert.match(ampHeadTs, /data-standby-state|standbyState/, 'AmpHead.ts deve expor polaridade explícita de STANDBY em todos os modelos');
+
+  const audioTs = fs.readFileSync(
+    path.join(root, 'apps/sonix-app/ui/src/screens/Audio.ts'),
+    'utf8',
+  );
+  assert.match(
+    audioTs,
+    /closeBtn\.addEventListener\('click',\s*\(\)\s*=>\s*\{[\s\S]*store\.audioPending\s*=\s*null/,
+    'Audio.ts closeBtn (×) deve descartar store.audioPending antes de voltar para main',
+  );
+  assert.match(audioTs, /inputMode:/, 'Audio.ts deve persistir inputMode no localStorage');
+  assert.match(audioTs, /inputChannel:/, 'Audio.ts deve persistir inputChannel no localStorage');
+
+  const storeTs = fs.readFileSync(
+    path.join(root, 'apps/sonix-app/ui/src/store.ts'),
+    'utf8',
+  );
+  assert.match(
+    storeTs,
+    /this\.params\['cab_1\.speaker'\]\s*=/,
+    'store.ts setControl(amp.model) deve sincronizar cab_1.speaker pareado',
+  );
+  assert.match(
+    storeTs,
+    /this\.params\['amp_1\.standby'\]\s*=\s*false/,
+    'store.ts bootstrap() deve sincronizar amp_1.standby = false após restaurar dispositivo via setAudioDevice',
+  );
+});

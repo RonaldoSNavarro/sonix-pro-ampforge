@@ -48,7 +48,10 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
     'width:46px;height:32px;background:transparent;border:0;color:#c9ced4;display:flex;align-items:center;justify-content:center;cursor:pointer;';
   closeBtn.innerHTML =
     '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg>';
-  closeBtn.addEventListener('click', () => store.setScreen('main'));
+  closeBtn.addEventListener('click', () => {
+    store.audioPending = null;
+    store.setScreen('main');
+  });
   titleBar.append(tLbl, closeBtn);
   root.appendChild(titleBar);
 
@@ -614,25 +617,31 @@ export function renderAudioScreen(store: AppStore): HTMLElement {
 
   const applyBtn = makeChipButton('audio.device_apply', 'Aplicar', false, async () => {
     try {
+      const normBackend = pending.backend.startsWith('wasapi') ? 'wasapi' : pending.backend;
+      const inMode = String(store.params?.['input.mode'] ?? 'instrument');
+      const inChannel = String(store.params?.['input.channel'] ?? 'left');
       await store.transport.setAudioDevice({
-        backend: pending.backend.startsWith('wasapi') ? 'wasapi' : pending.backend,
+        backend: normBackend,
         mode: pending.backend,
         sample_rate: pending.sampleRate,
         buffer_size: pending.bufferSize,
         input_device: pending.inputDevice || undefined,
         output_device: pending.outputDevice || undefined,
-        input_mode: String(store.params?.['input.mode'] ?? 'instrument'),
-        input_channel: String(store.params?.['input.channel'] ?? 'left'),
+        input_mode: inMode,
+        input_channel: inChannel,
       });
       try {
         localStorage.setItem(
           'sonix:preferred_audio_device',
           JSON.stringify({
-            backend: pending.backend,
+            backend: normBackend,
+            mode: pending.backend,
             sampleRate: pending.sampleRate,
             bufferSize: pending.bufferSize,
             inputDevice: pending.inputDevice,
             outputDevice: pending.outputDevice,
+            inputMode: inMode,
+            inputChannel: inChannel,
           })
         );
       } catch {}

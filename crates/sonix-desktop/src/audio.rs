@@ -62,54 +62,71 @@ pub enum AudioMode {
 }
 
 /// Slot de transferência de posse exclusiva do `RealtimeDspChain` entre thread de controle e thread de áudio (Spec 093 CA-2).
-/// O callback de tempo real nunca adquire `Mutex`; ele toma posse exclusiva da instância ao iniciar o stream.
+/// O callback de tempo real nunca adquire `Mutex`; ao tomar posse da instância para a thread de áudio,
+/// o slot preserva um shell com os mesmos handles compartilhados (`param_queue`, `resource_queue`, rings e atômicos).
 pub struct DspChainSlot {
-    inner: Mutex<Option<RealtimeDspChain>>,
+    home: Arc<Mutex<RealtimeDspChain>>,
 }
 
 impl DspChainSlot {
     pub fn new(chain: RealtimeDspChain) -> Self {
         Self {
-            inner: Mutex::new(Some(chain)),
+            home: Arc::new(Mutex::new(chain)),
         }
     }
 
+    pub fn from_shared(home: Arc<Mutex<RealtimeDspChain>>) -> Self {
+        Self { home }
+    }
+
     pub fn take_for_audio_thread(&self) -> Option<RealtimeDspChain> {
-        self.inner.lock().ok().and_then(|mut g| g.take())
+        let mut guard = self.home.lock().ok()?;
+        let handles = guard.handles();
+        handles.rt_owned.store(true, Ordering::Release);
+        let shell = RealtimeDspChain::new_shell_with_handles(handles);
+        Some(std::mem::replace(&mut *guard, shell))
     }
 
     pub fn return_from_audio_thread(&self, chain: RealtimeDspChain) {
-        if let Ok(mut g) = self.inner.lock() {
-            *g = Some(chain);
+        chain.rt_owned.store(false, Ordering::Release);
+        if let Ok(mut guard) = self.home.lock() {
+            *guard = chain;
+        }
+    }
+
+    pub fn take_owner(&self) -> AudioThreadChainOwner {
+        let chain = self.take_for_audio_thread();
+        AudioThreadChainOwner {
+            chain,
+            home: Arc::clone(&self.home),
         }
     }
 }
 
-struct AudioThreadChainOwner {
+pub struct AudioThreadChainOwner {
     chain: Option<RealtimeDspChain>,
     home: Arc<Mutex<RealtimeDspChain>>,
 }
 
 impl AudioThreadChainOwner {
-    fn take_from(home: &Arc<Mutex<RealtimeDspChain>>, sample_rate: f32) -> Self {
-        let chain = if let Ok(mut guard) = home.lock() {
-            std::mem::replace(&mut *guard, RealtimeDspChain::new(sample_rate))
-        } else {
-            RealtimeDspChain::new(sample_rate)
-        };
-        Self {
-            chain: Some(chain),
-            home: Arc::clone(home),
-        }
+    #[cfg(any(feature = "host-audio", test))]
+    fn take_from(home: &Arc<Mutex<RealtimeDspChain>>) -> Self {
+        DspChainSlot::from_shared(Arc::clone(home)).take_owner()
+    }
+
+    pub fn take_chain(&mut self) -> Option<RealtimeDspChain> {
+        self.chain.take()
+    }
+
+    pub fn restore_chain(&mut self, chain: RealtimeDspChain) {
+        self.chain = Some(chain);
     }
 }
 
 impl Drop for AudioThreadChainOwner {
     fn drop(&mut self) {
         if let Some(chain) = self.chain.take() {
-            if let Ok(mut guard) = self.home.lock() {
-                *guard = chain;
-            }
+            DspChainSlot::from_shared(Arc::clone(&self.home)).return_from_audio_thread(chain);
         }
     }
 }
@@ -1065,6 +1082,8 @@ impl DesktopAudioHost {
             }
         }
 
+        dsp.try_apply_rt_chain_replacement();
+
         if telemetry.is_engine_faulted() {
             data.fill(0.0);
             telemetry.update_peaks(telemetry.input_peak_db(), -120.0, 0.0);
@@ -1176,6 +1195,8 @@ impl DesktopAudioHost {
                 duplex.set_target_period(total_frames);
             }
         }
+
+        dsp.try_apply_rt_chain_replacement();
 
         if telemetry.is_engine_faulted() {
             data.fill(0);
@@ -1557,7 +1578,7 @@ impl DesktopAudioHost {
                 let mut mono_in_f32 = vec![0.0f32; 4096];
                 let mut mono_out_f32 = vec![0.0f32; 4096];
                 let duplex_f32 = duplex.clone();
-                let mut dsp_owner_f32 = AudioThreadChainOwner::take_from(&dsp_chain, out_sample_rate_f);
+                let mut dsp_owner_f32 = AudioThreadChainOwner::take_from(&dsp_chain);
                 let tele_f32 = telemetry.clone();
                 let err_cb = err_slot_base.clone();
 
@@ -1587,7 +1608,7 @@ impl DesktopAudioHost {
                         let mut mono_in_fb = vec![0.0f32; 4096];
                         let mut mono_out_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
-                        let mut dsp_owner_fb = AudioThreadChainOwner::take_from(&dsp_chain, aligned_out_sr.max(1) as f32);
+                        let mut dsp_owner_fb = AudioThreadChainOwner::take_from(&dsp_chain);
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
                         let err_fb = err_slot_base.clone();
@@ -1621,7 +1642,7 @@ impl DesktopAudioHost {
                 let mut mono_in_i16 = vec![0.0f32; 4096];
                 let mut mono_out_i16 = vec![0.0f32; 4096];
                 let duplex_i16 = duplex.clone();
-                let mut dsp_owner_i16 = AudioThreadChainOwner::take_from(&dsp_chain, out_sample_rate_f);
+                let mut dsp_owner_i16 = AudioThreadChainOwner::take_from(&dsp_chain);
                 let tele_i16 = telemetry.clone();
                 let obs_i16 = observed_out_period.clone();
                 let err_cb = err_slot_base.clone();
@@ -1652,7 +1673,7 @@ impl DesktopAudioHost {
                         let mut mono_in_fb = vec![0.0f32; 4096];
                         let mut mono_out_fb = vec![0.0f32; 4096];
                         let duplex_fb = duplex.clone();
-                        let mut dsp_owner_fb = AudioThreadChainOwner::take_from(&dsp_chain, aligned_out_sr.max(1) as f32);
+                        let mut dsp_owner_fb = AudioThreadChainOwner::take_from(&dsp_chain);
                         let tele_fb = telemetry.clone();
                         let obs_fb = observed_out_period.clone();
                         let err_fb = err_slot_base.clone();
@@ -2079,6 +2100,7 @@ pub enum RetiredDspResource {
     DiSamples(Vec<f32>),
     Topology(Box<CompiledDagTopology>),
     Modifiers(Box<CompiledModifierTable>),
+    Chain(Box<RealtimeDspChain>),
 }
 
 /// Fila MPSC (produtores serializados por lock externo ao callback, consumidor SPSC lock-free)
@@ -2092,6 +2114,7 @@ const _: () = assert!(RETIRED_QUEUE_CAPACITY >= 2 * MAX_RESOURCES_IN_FLIGHT);
 pub struct LockFreeResourceQueue {
     inner: Arc<SpscOwnedQueue<PreparedDspResource, MAX_RESOURCES_IN_FLIGHT>>,
     producer_lock: Arc<Mutex<()>>,
+    chain_replacements: Arc<SpscOwnedQueue<Box<RealtimeDspChain>, 4>>,
     retired_queue: Arc<SpscOwnedQueue<RetiredDspResource, RETIRED_QUEUE_CAPACITY>>,
     retired_reclaimed: Arc<AtomicU64>,
     retired_consumer_lock: Arc<Mutex<()>>,
@@ -2104,11 +2127,26 @@ impl LockFreeResourceQueue {
         Self {
             inner: Arc::new(SpscOwnedQueue::new()),
             producer_lock: Arc::new(Mutex::new(())),
+            chain_replacements: Arc::new(SpscOwnedQueue::new()),
             retired_queue: Arc::new(SpscOwnedQueue::new()),
             retired_reclaimed: Arc::new(AtomicU64::new(0)),
             retired_consumer_lock: Arc::new(Mutex::new(())),
             reaper_paused: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn push_chain_replacement(
+        &self,
+        chain: Box<RealtimeDspChain>,
+    ) -> Result<(), Box<RealtimeDspChain>> {
+        self.reclaim_retired();
+        let _guard = self.producer_lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.chain_replacements.push(chain)
+    }
+
+    #[inline]
+    pub fn pop_chain_replacement(&self) -> Option<Box<RealtimeDspChain>> {
+        self.chain_replacements.pop()
     }
 
     pub fn push(&self, item: PreparedDspResource) -> Result<(), PreparedDspResource> {
@@ -2178,6 +2216,7 @@ impl Clone for LockFreeResourceQueue {
         Self {
             inner: Arc::clone(&self.inner),
             producer_lock: Arc::clone(&self.producer_lock),
+            chain_replacements: Arc::clone(&self.chain_replacements),
             retired_queue: Arc::clone(&self.retired_queue),
             retired_reclaimed: Arc::clone(&self.retired_reclaimed),
             retired_consumer_lock: Arc::clone(&self.retired_consumer_lock),
@@ -2340,6 +2379,11 @@ impl RetiredReaper {
         self.retire_resource(RetiredDspResource::Modifiers(table))
     }
 
+    #[inline]
+    fn retire_chain(&mut self, chain: Box<RealtimeDspChain>) -> bool {
+        self.retire_resource(RetiredDspResource::Chain(chain))
+    }
+
     fn reclaimed_count(&self) -> u64 {
         self.reclaimed_count.load(Ordering::Relaxed)
     }
@@ -2350,7 +2394,9 @@ impl Drop for RetiredReaper {
         self.paused.store(false, Ordering::Release);
         self.shutdown.store(true, Ordering::Release);
         if let Some(h) = self.worker_handle.take() {
-            let _ = h.join();
+            if h.thread().id() != std::thread::current().id() {
+                let _ = h.join();
+            }
         }
     }
 }
@@ -2412,6 +2458,7 @@ pub enum DspParamUpdate {
     AmpPreampPlateV(f32),
     AmpTriodeAsym(f32),
     CabResonanceHz(f32),
+    CabLowCutHz(f32),
     CabHicutKhz(f32),
     CabIrEnabled(bool),
     CabMic1Model(MicModel),
@@ -2603,6 +2650,7 @@ pub struct RealtimeDuplexEngine {
     overruns: AtomicU64,
     input_channel: AtomicU8,
     last_sample_bits: AtomicU32,
+    underrun_recovery_needed: AtomicBool,
 }
 
 impl RealtimeDuplexEngine {
@@ -2614,6 +2662,7 @@ impl RealtimeDuplexEngine {
             overruns: AtomicU64::new(0),
             input_channel: AtomicU8::new(InputChannel::Left.to_u8()),
             last_sample_bits: AtomicU32::new(0.0f32.to_bits()),
+            underrun_recovery_needed: AtomicBool::new(false),
         }
     }
 
@@ -2626,6 +2675,7 @@ impl RealtimeDuplexEngine {
             overruns: AtomicU64::new(0),
             input_channel: AtomicU8::new(InputChannel::Left.to_u8()),
             last_sample_bits: AtomicU32::new(0.0f32.to_bits()),
+            underrun_recovery_needed: AtomicBool::new(false),
         };
         // Pré-carrega o buffer com exatamente 1 período de silêncio para iniciar equilibrado em regime estacionário
         let warmup = vec![0.0f32; tp];
@@ -2711,16 +2761,30 @@ impl RealtimeDuplexEngine {
             self.underruns.fetch_add(1, Ordering::Relaxed);
             let start_val = if popped > 0 { buf[popped - 1] } else { prev_last };
             let rem = buf.len() - popped;
-            let fade_len = rem.min(64); // ~1.33 ms @ 48 kHz
-            for i in 0..fade_len {
-                let t = 1.0 - ((i + 1) as f32 / fade_len as f32);
-                buf[popped + i] = start_val * t;
+            if rem == 1 {
+                buf[popped] = start_val * 0.5;
+                self.last_sample_bits
+                    .store(buf[popped].to_bits(), Ordering::Relaxed);
+            } else {
+                let fade_len = rem.min(64); // ~1.33 ms @ 48 kHz
+                for i in 0..fade_len {
+                    let t = 1.0 - ((i + 1) as f32 / fade_len as f32);
+                    buf[popped + i] = start_val * t;
+                }
+                if rem > fade_len {
+                    buf[popped + fade_len..].fill(0.0);
+                }
+                self.last_sample_bits.store(0.0f32.to_bits(), Ordering::Relaxed);
             }
-            if rem > fade_len {
-                buf[popped + fade_len..].fill(0.0);
-            }
-            self.last_sample_bits.store(0.0f32.to_bits(), Ordering::Relaxed);
+            self.underrun_recovery_needed.store(true, Ordering::Relaxed);
         } else if !buf.is_empty() {
+            if self.underrun_recovery_needed.swap(false, Ordering::Relaxed) {
+                let fade_len = buf.len().min(64);
+                for (i, s) in buf[..fade_len].iter_mut().enumerate() {
+                    let alpha = (i + 1) as f32 / fade_len as f32;
+                    *s = prev_last * (1.0 - alpha) + *s * alpha;
+                }
+            }
             self.last_sample_bits
                 .store(buf[buf.len() - 1].to_bits(), Ordering::Relaxed);
         }
@@ -2990,10 +3054,11 @@ pub struct RealtimeDspChain {
     tuner_scratch_read: Vec<f32>,
     tuner_mute_gain: f32,
 
-    // Spec 028 / 037: Filas SPSC Lock-Free de parâmetros, recursos pesados e coleta off-RT
+    // Spec 028 / 037 / 093: Filas SPSC Lock-Free de parâmetros, recursos pesados e coleta off-RT
     param_queue: Arc<LockFreeParamQueue>,
     resource_queue: Arc<LockFreeResourceQueue>,
     retired_reaper: RetiredReaper,
+    rt_owned: Arc<AtomicBool>,
     cpu_monitor: ampforge_dsp::cpu::CpuMonitor,
 
     // Spec 049 Parte C (CA-23..CA-28): Topologia DAG 4x12 dinâmica + tap pré-gabinete
@@ -3269,6 +3334,7 @@ impl RealtimeDspChain {
             param_queue: Arc::new(LockFreeParamQueue::new()),
             resource_queue,
             retired_reaper,
+            rt_owned: Arc::new(AtomicBool::new(false)),
             cpu_monitor: ampforge_dsp::cpu::CpuMonitor::new(
                 ampforge_dsp::config::SampleRate::Rate48000,
                 ampforge_dsp::config::BufferSize::Size128,
@@ -3760,6 +3826,7 @@ impl RealtimeDspChain {
             DspParamUpdate::AmpPreampPlateV(v) => self.set_amp_preamp_plate_v(v),
             DspParamUpdate::AmpTriodeAsym(v) => self.set_amp_triode_asym(v),
             DspParamUpdate::CabResonanceHz(v) => self.set_cab_resonance_hz(v),
+            DspParamUpdate::CabLowCutHz(v) => self.cab.set_low_cut_hz(v),
             DspParamUpdate::CabHicutKhz(v) => self.set_cab_hicut_khz(v),
             DspParamUpdate::CabIrEnabled(b) => self.set_cab_ir_enabled(b),
             DspParamUpdate::CabMic1Model(m) => self.cab.mic_slot_mut(0).model = m,
@@ -5168,8 +5235,10 @@ impl RealtimeDspChain {
             }
         }
 
-        // Spec 026: Rampa de silenciamento do afinador de 5 ms (CA-4)
-        if self.tuner_enabled && self.tuner_output_mode == TunerOutputMode::Mute {
+        // Spec 026 / Rule 4d05: Rampa de silenciamento de 5 ms (afinador Mute ou Standby sem amp_2 paralelo ativo)
+        let full_output_muted = (self.tuner_enabled && self.tuner_output_mode == TunerOutputMode::Mute)
+            || (self.amp_standby && !(self.split_enabled && self.amp_2_enabled));
+        if full_output_muted {
             let ramp_step = 1.0 / (0.005 * self.sample_rate);
             for s in output[..len].iter_mut() {
                 self.tuner_mute_gain = (self.tuner_mute_gain - ramp_step).max(0.0);
@@ -5441,7 +5510,27 @@ impl RealtimeDspChain {
             param_queue: self.param_queue.clone(),
             resource_queue: self.resource_queue.clone(),
             shared_topology_id: self.shared_topology_id.clone(),
+            rt_owned: self.rt_owned.clone(),
         }
+    }
+
+    /// Cria shell na thread de controle mantendo todos os handles compartilhados com a cadeia RT ativa (Spec 093).
+    #[inline(never)]
+    pub fn new_shell_with_handles(handles: RealtimeDspChainHandles) -> Self {
+        let mut chain = Self::new_inner(handles.sample_rate, false);
+        chain.max_block = handles.max_block;
+        chain.shared_sample_rate_bits = handles.shared_sample_rate_bits;
+        chain.shared_algo_latency_samples = handles.shared_algo_latency_samples;
+        chain.shared_pitch_wet_latency_ms_bits = handles.shared_pitch_wet_latency_ms_bits;
+        chain.shared_b_plus_v_bits = handles.shared_b_plus_v_bits;
+        chain.adc_clips = handles.adc_clips;
+        chain.clean_input_ring = handles.clean_input_ring;
+        chain.scope_output_ring = handles.scope_output_ring;
+        chain.param_queue = handles.param_queue;
+        chain.resource_queue = handles.resource_queue;
+        chain.shared_topology_id = handles.shared_topology_id;
+        chain.rt_owned = handles.rt_owned;
+        chain
     }
 
     #[inline(never)]
@@ -5451,6 +5540,14 @@ impl RealtimeDspChain {
 
     #[inline(never)]
     pub fn rebuild_boxed_from_handles(handles: RealtimeDspChainHandles) -> Box<Self> {
+        Self::rebuild_boxed_from_handles_inner(handles, true)
+    }
+
+    #[inline(never)]
+    fn rebuild_boxed_from_handles_inner(
+        handles: RealtimeDspChainHandles,
+        spawn_reaper: bool,
+    ) -> Box<Self> {
         let mut chain = Self::build_boxed_inner(handles.sample_rate);
         let mut shadow = Self::build_boxed_inner(handles.sample_rate);
 
@@ -5464,15 +5561,24 @@ impl RealtimeDspChain {
         chain.param_queue = handles.param_queue.clone();
         chain.resource_queue = handles.resource_queue.clone();
         chain.shared_topology_id = handles.shared_topology_id.clone();
+        chain.rt_owned = handles.rt_owned.clone();
         chain.test_riff_buffer =
             crate::calibration::generate_karplus_strong_riff(handles.sample_rate, 12345);
         chain.tuner_scratch_read = vec![0.0; 8192];
-        chain.retired_reaper = RetiredReaper::with_queue(
-            handles.resource_queue.retired_queue(),
-            handles.resource_queue.retired_reclaimed(),
-            handles.resource_queue.retired_consumer_lock(),
-            handles.resource_queue.reaper_paused_handle(),
-        );
+        chain.retired_reaper = if spawn_reaper {
+            RetiredReaper::with_queue(
+                handles.resource_queue.retired_queue(),
+                handles.resource_queue.retired_reclaimed(),
+                handles.resource_queue.retired_consumer_lock(),
+                handles.resource_queue.reaper_paused_handle(),
+            )
+        } else {
+            RetiredReaper::noop_with_queue(
+                handles.resource_queue.retired_queue(),
+                handles.resource_queue.retired_reclaimed(),
+                handles.resource_queue.reaper_paused_handle(),
+            )
+        };
 
         shadow.shared_sample_rate_bits = handles.shared_sample_rate_bits;
         shadow.shared_algo_latency_samples = handles.shared_algo_latency_samples;
@@ -5484,11 +5590,31 @@ impl RealtimeDspChain {
         shadow.param_queue = handles.param_queue;
         shadow.resource_queue = handles.resource_queue;
         shadow.shared_topology_id = handles.shared_topology_id;
+        shadow.rt_owned = handles.rt_owned;
 
         chain.shadow = Some(shadow);
         chain.shadow_out_buf = vec![0.0; handles.max_block.max(2048)];
         chain.prepare(handles.sample_rate, handles.max_block);
         chain
+    }
+
+    #[inline]
+    pub fn try_apply_rt_chain_replacement(&mut self) -> bool {
+        self.retired_reaper.flush_pending();
+        let mut applied = false;
+        while let Some(mut fresh) = self.resource_queue.pop_chain_replacement() {
+            // SAFETY: ambas as instâncias são distintas; preservamos `self.retired_reaper` no receptor RT ativo.
+            unsafe {
+                std::ptr::swap(&mut *fresh as *mut RealtimeDspChain, self as *mut RealtimeDspChain);
+                std::ptr::swap(
+                    &mut self.retired_reaper as *mut RetiredReaper,
+                    &mut fresh.retired_reaper as *mut RetiredReaper,
+                );
+            }
+            let _ = self.retired_reaper.retire_chain(fresh);
+            applied = true;
+        }
+        applied
     }
 
     pub fn apply_param_updates(&mut self, updates: &[DspParamUpdate]) {
@@ -5512,6 +5638,7 @@ pub struct RealtimeDspChainHandles {
     pub param_queue: Arc<LockFreeParamQueue>,
     pub resource_queue: Arc<LockFreeResourceQueue>,
     pub shared_topology_id: Arc<AtomicU64>,
+    pub rt_owned: Arc<AtomicBool>,
 }
 
 /// Reconstrói `RealtimeDspChain` fora da thread de áudio usando o estado atual e limpa `engine_faulted` (AUD-04).
@@ -5528,7 +5655,8 @@ pub fn recover_dsp_chain_with_state(
         let guard = dsp_ref.lock().unwrap_or_else(|e| e.into_inner());
         guard.handles()
     };
-    let mut fresh = RealtimeDspChain::rebuild_boxed_from_handles(handles);
+    let rt_active = handles.rt_owned.load(Ordering::Acquire);
+    let mut fresh = RealtimeDspChain::rebuild_boxed_from_handles_inner(handles.clone(), !rt_active);
     let updates = crate::api::app_state_to_dsp_updates(st);
     fresh.apply_param_updates(&updates);
     let mods = crate::api::compile_modifiers_table(&st.modifiers);
@@ -5539,14 +5667,18 @@ pub fn recover_dsp_chain_with_state(
         *shadow.active_topology = st.dag_topology;
         *shadow.active_modifiers = mods;
     }
-    {
+    if rt_active {
+        if handles.resource_queue.push_chain_replacement(fresh).is_err() {
+            return None;
+        }
+    } else {
         let mut guard = dsp_ref.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: ambos são referências mutáveis distintas; ptr::swap evita colocar duas cadeias na pilha em debug.
         unsafe {
             std::ptr::swap(&mut *guard as *mut RealtimeDspChain, &mut *fresh as *mut RealtimeDspChain);
         }
+        drop(fresh);
     }
-    drop(fresh);
     let count = telemetry.clear_engine_faulted_and_record_recovery();
     Some(count)
 }

@@ -1,9 +1,9 @@
 ---
 spec: 055
 titulo: Amplificador Marshall JCM800 2203 (Rev. 1981 Master Volume Lead, 100W)
-status: rascunho
+status: implementada
 tipo: amplificador
-atualizado: 2026-11-20
+atualizado: 2026-11-25
 dependencias: [053, 077, 078, 079]
 ---
 # 055 — Amplificador Marshall JCM800 2203 (Rev. 1981 Master Volume Lead)
@@ -93,6 +93,7 @@ dependencias: [053, 077, 078, 079]
 
 ## 10. Contratos de integração
 - Implementa `AudioProcessor` (Spec 053) com `module_id = "amp.marshall.jcm800_2203"` e `model_revision = "1981-jcm800-2203-jmp-circuit"`.
+- Ao selecionar `amp_1.model = "jcm800_2203"` sem sobrescritas explícitas no mesmo lote, o backend pareia automaticamente `cab_1.speaker = "greenback_4x12"` e valores nominais do modelo; `Middle` e `Treble` usam taper linear (B).
 - Rejeita `volume_2`, `jumpered`, `cut`, `reverb`, `spongy`, `channel_mode`, `vibrato_speed`, `vibrato_depth` com `E_VALIDATION:`.
 
 ## 11. Arquitetura de implementação

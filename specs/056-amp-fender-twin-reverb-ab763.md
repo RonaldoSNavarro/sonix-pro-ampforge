@@ -1,9 +1,9 @@
 ---
 spec: 056
 titulo: Amplificador Fender Twin Reverb AB763 (Rev. 1963–1967 Blackface, 85W)
-status: rascunho
+status: implementada
 tipo: amplificador
-atualizado: 2026-11-20
+atualizado: 2026-11-25
 dependencias: [053, 077, 078, 079]
 ---
 # 056 — Amplificador Fender Twin Reverb AB763 (Rev. 1963–1967 Blackface)
@@ -94,6 +94,7 @@ dependencias: [053, 077, 078, 079]
 
 ## 10. Contratos de integração
 - Implementa `AudioProcessor` (Spec 053) com `module_id = "amp.fender.twin_reverb_ab763"` e `model_revision = "1965-ab763-blackface-85w"`.
+- Ao selecionar `amp_1.model = "twin_ab763"` sem sobrescritas explícitas no mesmo lote, o backend pareia automaticamente `cab_1.speaker = "twin_2x12"` e valores nominais do modelo; `Bass` e `Treble` usam taper audio 25%, `Middle` usa taper linear.
 - Rejeita `amp_1.master`, `amp_1.presence`, `amp_1.depth`, `amp_1.cut`, `amp_1.volume_2`, `amp_1.jumpered`, `amp_1.spongy` e `amp_1.channel_mode` com `E_VALIDATION:`.
 
 ## 11. Arquitetura de implementação

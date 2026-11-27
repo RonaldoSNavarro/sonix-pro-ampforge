@@ -64,6 +64,84 @@ fn test_ca_02_rt_output_callback_owns_chain_without_mutex_or_dry_bypass() {
 }
 
 #[test]
+fn test_ca_02_taken_chain_keeps_api_ctx_and_fault_recovery_connected() {
+    use sonix_desktop::api::{dispatch, ApiContext, AppState};
+    use sonix_desktop::audio::{recover_dsp_chain_with_state, AudioThreadChainOwner};
+    use std::sync::Mutex;
+
+    let mut initial = RealtimeDspChain::new(48_000.0);
+    initial.set_amp_standby(true);
+    let dsp_ref = Arc::new(Mutex::new(initial));
+
+    // Simula posse exclusiva tomada pela thread de áudio ANTES da criação do ApiContext
+    let mut rt_owner: AudioThreadChainOwner = DspChainSlot::from_shared(Arc::clone(&dsp_ref)).take_owner();
+    let mut rt_chain = rt_owner.take_chain().expect("RT toma posse exclusiva");
+
+    let telemetry = Arc::new(TelemetryBuffer::new(256));
+    let app_state = Arc::new(Mutex::new(AppState::default()));
+    let ctx = ApiContext::new(
+        Arc::new(Mutex::new(None)),
+        app_state.clone(),
+        telemetry.clone(),
+        Some(Arc::clone(&dsp_ref)),
+        None,
+        Some("default"),
+        None,
+    );
+
+    // Mutação via API depois da tomada de posse deve atingir a cadeia viva na thread RT
+    let (code, _, _) = dispatch(&ctx, "/api/params", "POST", br#"{"amp_1.standby":false,"amp_1.gain":9.0}"#);
+    assert_eq!(code, 200);
+    assert!(rt_chain.drain_param_queue() >= 2, "param_queue compartilhada deve entregar atualizações à thread RT");
+    assert!(!rt_chain.is_output_muted(), "amp_1.standby=false deve desmutar a cadeia RT ativa");
+
+    // Clean input ring e scope output ring compartilhados devem refletir sinal processado pela cadeia RT
+    let duplex = Arc::new(RealtimeDuplexEngine::with_target_period(4096, 128));
+    let inp: Vec<f32> = (0..256).map(|i| 0.25 * ((i as f32) * 0.08).sin()).collect();
+    duplex.push_captured_samples(&inp);
+    let mut out_stereo = vec![0.0f32; 512];
+    let mut sc_in = vec![0.0f32; 256];
+    let mut sc_out = vec![0.0f32; 256];
+    DesktopAudioHost::process_output_callback_f32(
+        &mut out_stereo,
+        2,
+        48_000.0,
+        &mut sc_in,
+        &mut sc_out,
+        &duplex,
+        &mut rt_chain,
+        &telemetry,
+        None,
+    );
+    let mut ring_buf = vec![0.0f32; 128];
+    let got_scope = ctx.scope_output_ring.as_ref().unwrap().read_latest(&mut ring_buf);
+    assert!(got_scope > 0 && ring_buf.iter().any(|x| x.abs() > 1e-4));
+
+    // Simula engine_faulted + recuperação lock-free quando rt_owned == true
+    telemetry.mark_engine_faulted();
+    let st = app_state.lock().unwrap().clone();
+    let rec = recover_dsp_chain_with_state(&dsp_ref, &telemetry, &st);
+    assert_eq!(rec, Some(1));
+    assert!(!telemetry.is_engine_faulted());
+
+    duplex.push_captured_samples(&inp);
+    DesktopAudioHost::process_output_callback_f32(
+        &mut out_stereo,
+        2,
+        48_000.0,
+        &mut sc_in,
+        &mut sc_out,
+        &duplex,
+        &mut rt_chain,
+        &telemetry,
+        None,
+    );
+    let peak = out_stereo.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+    assert!(peak > 1e-4, "Substituição lock-free de cadeia faulted deve restaurar áudio RT (peak={peak})");
+    rt_owner.restore_chain(rt_chain);
+}
+
+#[test]
 fn test_ca_04_three_explicit_input_modes_and_channel_param() {
     let desc_mode = find_param("input.mode").expect("input.mode deve existir");
     let desc_chan = find_param("input.channel").expect("input.channel deve existir");
@@ -160,6 +238,38 @@ fn test_ca_07_duplex_smooth_underrun_without_hard_step() {
 }
 
 #[test]
+fn test_ca_07_duplex_single_sample_underrun_and_resume_fade_in() {
+    let duplex = RealtimeDuplexEngine::new(2048);
+    // Caso de borda crítico: rem == 1 (127 amostras disponíveis para bloco de 128)
+    let input_127 = vec![0.25f32; 127];
+    duplex.push_captured_samples(&input_127);
+
+    let mut out1 = vec![0.0f32; 128];
+    let _ = duplex.pop_samples_for_processing(&mut out1);
+    assert!(
+        (out1[127] - out1[126]).abs() <= 0.15,
+        "Underrun rem==1 não pode dar salto instantâneo de {} para {} (step={})",
+        out1[126],
+        out1[127],
+        (out1[127] - out1[126]).abs()
+    );
+
+    // Retomada após underrun com bloco cheio: também não pode dar salto abrupto de volta a 0.25
+    let input_128 = vec![0.25f32; 128];
+    duplex.push_captured_samples(&input_128);
+    let mut out2 = vec![0.0f32; 128];
+    let _ = duplex.pop_samples_for_processing(&mut out2);
+    let resume_step = (out2[0] - out1[127]).abs();
+    assert!(
+        resume_step <= 0.15,
+        "Retomada após underrun não pode dar salto abrupto de {} para {} (step={})",
+        out1[127],
+        out2[0],
+        resume_step
+    );
+}
+
+#[test]
 fn test_ca_08_write_atomic_file_preserves_existing_on_failure() {
     let dir = std::env::temp_dir().join(format!("sonix_093_atomic_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
@@ -168,6 +278,30 @@ fn test_ca_08_write_atomic_file_preserves_existing_on_failure() {
 
     write_atomic_file(&target, br#"{"ok":2}"#).expect("escrita atômica bem-sucedida");
     assert_eq!(std::fs::read(&target).unwrap(), br#"{"ok":2}"#);
+
+    // Escritas concorrentes no mesmo arquivo não devem colidir em arquivo temporário `tmp.<pid>`
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let mut handles = Vec::new();
+    for tid in 0..4 {
+        let t = target.clone();
+        let b = barrier.clone();
+        handles.push(std::thread::spawn(move || {
+            b.wait();
+            for iter in 0..10 {
+                let payload = format!(r#"{{"tid":{},"iter":{}}}"#, tid, iter);
+                write_atomic_file(&t, payload.as_bytes())
+                    .expect("escrita atômica concorrente não pode falhar por colisão de tmp");
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    // CalibrationStore::save também deve usar gravação atômica sem corromper o arquivo existente
+    let cal_store = sonix_desktop::calibration::CalibrationStore::open(&dir);
+    cal_store.save("dev-a", 1.5, -55.0);
+    assert!(dir.join("calibration.json").exists());
 
     // Se o caminho pai não existir, deve falhar sem remover nada existente
     let bad_target = dir.join("missing_subdir").join("preset.json");

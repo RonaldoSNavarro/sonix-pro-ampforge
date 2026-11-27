@@ -86,8 +86,8 @@ fn aud_45_biquad_unificado_bit_a_bit_identico() {
     assert_eq!(
         hashes,
         (
-            0x6fa1e028c5e66052,
-            0x0e45288d47503646,
+            0x6fa1e028c5e66052, // HEAD AmpCore baseline preservado bit a bit
+            718727116713510475, // Baseline Spec 080 (VirtualCabProcessor: low_cut, SM57, proximidade)
             0xb0c27ae8c5aa09c5,
             0xd356337bf70c0fdb,
             0xb6200fb55eb81ffe,

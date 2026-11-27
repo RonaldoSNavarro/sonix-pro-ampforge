@@ -239,12 +239,7 @@ impl CalibrationStore {
             };
             if let Ok(json) = serde_json::to_string_pretty(&doc) {
                 let _ = std::fs::create_dir_all(&self.dir);
-                let tmp_path = self.dir.join(format!("calibration.json.{}.tmp", std::process::id()));
-                if std::fs::write(&tmp_path, json.as_bytes()).is_ok() {
-                    if std::fs::rename(&tmp_path, &self.file_path).is_err() {
-                        let _ = std::fs::remove_file(&tmp_path);
-                    }
-                }
+                let _ = crate::api::write_atomic_file(&self.file_path, json.as_bytes());
             }
         }
     }

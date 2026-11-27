@@ -127,7 +127,7 @@ pub struct CabAcousticConditioning {
 impl Default for CabAcousticConditioning {
     fn default() -> Self {
         Self {
-            low_cut_hz: 60.0,
+            low_cut_hz: 75.0,
             low_cut_slope_db_oct: 12,
             high_cut_hz: 4200.0,
             speaker_thump: 0.0,
@@ -222,7 +222,7 @@ fn interpolate_curve_db(points: &[(f32, f32)], freq_hz: f64) -> f64 {
     0.0
 }
 
-fn fft_512(re: &mut [f64; SPEAKER_FFT_N], im: &mut [f64; SPEAKER_FFT_N], inverse: bool) {
+fn fft_1024(re: &mut [f64; SPEAKER_FFT_N], im: &mut [f64; SPEAKER_FFT_N], inverse: bool) {
     let mut j = 0usize;
     for i in 0..SPEAKER_FFT_N {
         if i < j {
@@ -295,7 +295,7 @@ fn build_min_phase_speaker_fir(model: SpeakerCabModel, sr: f32) -> [f32; SPEAKER
     }
 
     // IFFT -> cepstro real
-    fft_512(&mut log_re, &mut log_im, true);
+    fft_1024(&mut log_re, &mut log_im, true);
     for n in 1..SPEAKER_FFT_N / 2 {
         log_re[n] *= 2.0;
         log_im[n] *= 2.0;
@@ -306,7 +306,7 @@ fn build_min_phase_speaker_fir(model: SpeakerCabModel, sr: f32) -> [f32; SPEAKER
     }
 
     // FFT -> espectro complexo log mínimo, depois exp() -> H_min
-    fft_512(&mut log_re, &mut log_im, false);
+    fft_1024(&mut log_re, &mut log_im, false);
     for k in 0..SPEAKER_FFT_N {
         let r = log_re[k].exp();
         let theta = log_im[k];
@@ -315,7 +315,7 @@ fn build_min_phase_speaker_fir(model: SpeakerCabModel, sr: f32) -> [f32; SPEAKER
     }
 
     // IFFT -> FIR de fase mínima
-    fft_512(&mut log_re, &mut log_im, true);
+    fft_1024(&mut log_re, &mut log_im, true);
     let mut fir = [0.0f32; SPEAKER_FIR_LEN];
     for n in 0..SPEAKER_FIR_LEN {
         // Janela suave apenas nos últimos 16 taps para zerar borda
@@ -1021,6 +1021,7 @@ pub struct VirtualCabProcessor {
     sample_rate: f32,
     custom_ir: Option<ImpulseResponse>,
     target_ir: Option<ImpulseResponse>,
+    ir_trash_queue: std::sync::Arc<crate::queue::SpscOwnedQueue<ImpulseResponse, 64>>,
     retired_irs: [Option<ImpulseResponse>; 8],
     ir_enabled: bool,
     ir_crossfade: f32,
@@ -1034,6 +1035,7 @@ pub struct VirtualCabProcessor {
     conv_custom: PartitionedConvolverState,
     conv_target: PartitionedConvolverState,
     // Filtros de modelagem de microfone e gabinete
+    low_cut_filter: crate::precision::IirBiquad64,
     hicut_filter1: BiquadFilter,
     hicut_filter2: BiquadFilter,
     open_back_hp: BiquadFilter,
@@ -1049,12 +1051,12 @@ pub struct VirtualCabProcessor {
     mic2_model_f1: BiquadFilter,
     mic2_model_f2: BiquadFilter,
     hicut_smoother: crate::smoother::ParamSmoother,
+    lowcut_smoother: crate::smoother::ParamSmoother,
     resonance_smoother: crate::smoother::ParamSmoother,
     has_processed: bool,
-    speaker_fir: [f32; SPEAKER_FIR_LEN],
+    speaker_firs: [[f32; SPEAKER_FIR_LEN]; 4],
     speaker_hist: [f32; SPEAKER_FIR_LEN * 2],
     speaker_hist_pos: usize,
-    fir_model: SpeakerCabModel,
     fir_sr: f32,
     cached_no_ir: Option<CabNoIrCache>,
 }
@@ -1077,6 +1079,25 @@ impl Default for VirtualCabProcessor {
 }
 
 impl VirtualCabProcessor {
+    #[inline]
+    fn speaker_index(model: SpeakerCabModel) -> usize {
+        match model {
+            SpeakerCabModel::Greenback4x12Closed => 0,
+            SpeakerCabModel::V304x12Closed => 1,
+            SpeakerCabModel::AlnicoBlue2x12Open => 2,
+            SpeakerCabModel::Twin2x12Open => 3,
+        }
+    }
+
+    fn precompute_speaker_firs(sr: f32) -> [[f32; SPEAKER_FIR_LEN]; 4] {
+        [
+            build_min_phase_speaker_fir(SpeakerCabModel::Greenback4x12Closed, sr),
+            build_min_phase_speaker_fir(SpeakerCabModel::V304x12Closed, sr),
+            build_min_phase_speaker_fir(SpeakerCabModel::AlnicoBlue2x12Open, sr),
+            build_min_phase_speaker_fir(SpeakerCabModel::Twin2x12Open, sr),
+        ]
+    }
+
     pub fn new() -> Self {
         let slot1 = MicSlotConfig::default();
         let mut slot2 = MicSlotConfig::default();
@@ -1085,6 +1106,7 @@ impl VirtualCabProcessor {
         let spk = SpeakerCabModel::Greenback4x12Closed;
         let impedance_curve = spk.default_impedance_curve();
         let conditioning = CabAcousticConditioning::default();
+        let init_lowcut_hz = conditioning.low_cut_hz as f64;
         let init_hicut_hz = conditioning.high_cut_hz as f64;
         let init_res_hz = impedance_curve.low_resonance_hz as f64;
 
@@ -1092,21 +1114,27 @@ impl VirtualCabProcessor {
             speaker_model: spk,
             mics: [slot1, slot2],
             impedance_curve,
-            conditioning,
+            conditioning: conditioning.clone(),
             coupled_amp_id: None,
             sample_rate: 48000.0,
             custom_ir: None,
             target_ir: None,
+            ir_trash_queue: std::sync::Arc::new(crate::queue::SpscOwnedQueue::new()),
             retired_irs: [const { None }; 8],
             ir_enabled: false,
             ir_crossfade: 1.0,
-            ir_crossfade_step: 1.0 / (48000.0 * 0.020),
+            ir_crossfade_step: 1.0 / (48000.0 * 0.015),
             delay_line_mic1: vec![0.0; 16384],
             delay_pos_mic1: 0,
             delay_line_mic2: vec![0.0; 16384],
             delay_pos_mic2: 0,
             conv_custom: PartitionedConvolverState::new(),
             conv_target: PartitionedConvolverState::new(),
+            low_cut_filter: crate::precision::IirBiquad64::high_pass(
+                48000.0,
+                conditioning.low_cut_hz as f64,
+                std::f64::consts::FRAC_1_SQRT_2,
+            ),
             hicut_filter1: BiquadFilter::default(),
             hicut_filter2: BiquadFilter::default(),
             open_back_hp: BiquadFilter::default(),
@@ -1122,12 +1150,12 @@ impl VirtualCabProcessor {
             mic2_model_f1: BiquadFilter::default(),
             mic2_model_f2: BiquadFilter::default(),
             hicut_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_hicut_hz),
+            lowcut_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_lowcut_hz),
             resonance_smoother: crate::smoother::ParamSmoother::new(48000.0, 0.020, init_res_hz),
             has_processed: false,
-            speaker_fir: build_min_phase_speaker_fir(spk, 48000.0),
+            speaker_firs: Self::precompute_speaker_firs(48000.0),
             speaker_hist: [0.0; SPEAKER_FIR_LEN * 2],
             speaker_hist_pos: 0,
-            fir_model: spk,
             fir_sr: 48000.0,
             cached_no_ir: None,
         };
@@ -1137,10 +1165,43 @@ impl VirtualCabProcessor {
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
-        self.ir_crossfade_step = 1.0 / (self.sample_rate * 0.020).max(1.0);
+        self.ir_crossfade_step = 1.0 / (self.sample_rate * 0.015).max(1.0);
         self.hicut_smoother.set_sample_rate(self.sample_rate as f64);
+        self.lowcut_smoother.set_sample_rate(self.sample_rate as f64);
         self.resonance_smoother.set_sample_rate(self.sample_rate as f64);
+        if (self.fir_sr - self.sample_rate).abs() > 0.5 {
+            self.speaker_firs = Self::precompute_speaker_firs(self.sample_rate);
+            self.fir_sr = self.sample_rate;
+        }
+        self.low_cut_filter
+            .update_coeffs(crate::precision::IirBiquad64::high_pass(
+                self.sample_rate as f64,
+                self.lowcut_smoother.current(),
+                std::f64::consts::FRAC_1_SQRT_2,
+            ));
         self.update_filters();
+    }
+
+    pub fn set_low_cut_hz(&mut self, hz: f32) {
+        let clamped = hz.clamp(20.0, 500.0);
+        if (clamped - self.conditioning.low_cut_hz).abs() > 0.1 {
+            self.conditioning.low_cut_hz = clamped;
+            if !self.has_processed {
+                self.lowcut_smoother.reset(clamped as f64);
+                self.low_cut_filter
+                    .update_coeffs(crate::precision::IirBiquad64::high_pass(
+                        self.sample_rate as f64,
+                        clamped as f64,
+                        std::f64::consts::FRAC_1_SQRT_2,
+                    ));
+            } else {
+                self.lowcut_smoother.set_target(clamped as f64);
+            }
+        }
+    }
+
+    pub fn low_cut_hz(&self) -> f32 {
+        self.conditioning.low_cut_hz
     }
 
     pub fn set_speaker_model(&mut self, model: SpeakerCabModel) {
@@ -1160,7 +1221,7 @@ impl VirtualCabProcessor {
     }
 
     pub fn speaker_fir_taps(&self) -> &[f32] {
-        &self.speaker_fir
+        &self.speaker_firs[Self::speaker_index(self.speaker_model)]
     }
 
     pub fn set_resonance_hz(&mut self, hz: f32) {
@@ -1200,34 +1261,83 @@ impl VirtualCabProcessor {
         self.ir_enabled
     }
 
-    fn push_retired_ir(&mut self, ir: ImpulseResponse) {
+    fn flush_retired_irs_to_trash(&mut self) {
         for slot in &mut self.retired_irs {
-            if slot.is_none() {
-                *slot = Some(ir);
-                return;
+            if let Some(old) = slot.take() {
+                if let Err(rejected) = self.ir_trash_queue.push(old) {
+                    *slot = Some(rejected);
+                    break;
+                }
             }
         }
-        self.retired_irs[0] = Some(ir);
     }
 
-    pub fn set_custom_ir(&mut self, ir: ImpulseResponse) {
+    fn can_retire_slot(&self) -> bool {
+        self.ir_trash_queue.remaining_capacity() > 0
+            || self.retired_irs.iter().any(Option::is_none)
+    }
+
+    fn push_retired_ir(&mut self, ir: ImpulseResponse) -> Result<(), ImpulseResponse> {
+        self.flush_retired_irs_to_trash();
+        match self.ir_trash_queue.push(ir) {
+            Ok(()) => Ok(()),
+            Err(returned) => {
+                for slot in &mut self.retired_irs {
+                    if slot.is_none() {
+                        *slot = Some(returned);
+                        return Ok(());
+                    }
+                }
+                Err(returned)
+            }
+        }
+    }
+
+    pub fn ir_trash_handle(&self) -> std::sync::Arc<crate::queue::SpscOwnedQueue<ImpulseResponse, 64>> {
+        std::sync::Arc::clone(&self.ir_trash_queue)
+    }
+
+    /// Substitui a IR ativa sem jamais descartar a IR antiga na thread RT quando o coletor estiver saturado.
+    pub fn try_set_custom_ir(&mut self, ir: ImpulseResponse) -> Result<(), ImpulseResponse> {
+        self.flush_retired_irs_to_trash();
+        let needed = usize::from(self.custom_ir.is_some()) + usize::from(self.target_ir.is_some());
+        if needed > 0 && !self.can_retire_slot() {
+            return Err(ir);
+        }
         if let Some(old) = self.custom_ir.take() {
-            self.push_retired_ir(old);
+            if let Err(rej) = self.push_retired_ir(old) {
+                self.custom_ir = Some(rej);
+                return Err(ir);
+            }
         }
         self.custom_ir = Some(ir);
         self.conv_custom.reset();
         self.ir_crossfade = 1.0;
         if let Some(old_t) = self.target_ir.take() {
-            self.push_retired_ir(old_t);
+            if let Err(rej) = self.push_retired_ir(old_t) {
+                self.target_ir = Some(rej);
+            }
         }
+        Ok(())
+    }
+
+    pub fn set_custom_ir(&mut self, ir: ImpulseResponse) {
+        let _ = self.try_set_custom_ir(ir);
     }
 
     pub fn set_target_ir(&mut self, ir: ImpulseResponse) {
         if self.custom_ir.is_none() {
             self.set_custom_ir(ir);
         } else {
+            self.flush_retired_irs_to_trash();
+            if self.target_ir.is_some() && !self.can_retire_slot() {
+                return;
+            }
             if let Some(old_t) = self.target_ir.replace(ir) {
-                self.push_retired_ir(old_t);
+                if let Err(rej) = self.push_retired_ir(old_t) {
+                    let _ = self.target_ir.replace(rej);
+                    return;
+                }
             }
             self.conv_target.reset();
             self.ir_crossfade = 0.0;
@@ -1235,6 +1345,9 @@ impl VirtualCabProcessor {
     }
 
     pub fn take_retired_ir(&mut self) -> Option<ImpulseResponse> {
+        if let Some(ir) = self.ir_trash_queue.pop() {
+            return Some(ir);
+        }
         for slot in &mut self.retired_irs {
             if slot.is_some() {
                 return slot.take();
@@ -1244,7 +1357,7 @@ impl VirtualCabProcessor {
     }
 
     pub fn has_retired_ir(&self) -> bool {
-        self.retired_irs.iter().any(Option::is_some)
+        self.ir_trash_queue.len() > 0 || self.retired_irs.iter().any(Option::is_some)
     }
 
     pub fn reset_ir_state(&mut self) {
@@ -1338,12 +1451,7 @@ impl VirtualCabProcessor {
             self.open_back_hp.update_coeffs(BiquadFilter::default());
         }
 
-        // Curva de resposta do alto-falante por FIR de fase mínima (calculada em prepare / troca de modelo/sr)
-        if self.fir_model != self.speaker_model || (self.fir_sr - self.sample_rate).abs() > 0.5 {
-            self.speaker_fir = build_min_phase_speaker_fir(self.speaker_model, self.sample_rate);
-            self.fir_model = self.speaker_model;
-            self.fir_sr = self.sample_rate;
-        }
+        // Zero FFT em RT: os 4 FIRs já estão pré-computados em `self.speaker_firs`
         self.speaker_voicing_filter.update_coeffs(BiquadFilter::default());
     }
 
@@ -1359,12 +1467,47 @@ impl VirtualCabProcessor {
         self.speaker_hist[pos + SPEAKER_FIR_LEN] = x;
 
         let hist = &self.speaker_hist[pos..pos + SPEAKER_FIR_LEN];
-        let fir = &self.speaker_fir[..SPEAKER_FIR_LEN];
+        let fir = &self.speaker_firs[Self::speaker_index(self.speaker_model)][..SPEAKER_FIR_LEN];
         let mut acc = 0.0f32;
         for (&h, &f) in hist.iter().zip(fir.iter()) {
             acc += h * f;
         }
         crate::denormal::flush_f32(acc)
+    }
+
+    fn apply_lowcut_output(&mut self, output: &mut [f32]) {
+        if self.conditioning.low_cut_hz <= 20.5 && !self.lowcut_smoother.is_ramping() {
+            return;
+        }
+        let sr = self.sample_rate as f64;
+        if !self.lowcut_smoother.is_ramping() {
+            let fc = self.lowcut_smoother.current();
+            self.low_cut_filter
+                .update_coeffs(crate::precision::IirBiquad64::high_pass(
+                    sr,
+                    fc,
+                    std::f64::consts::FRAC_1_SQRT_2,
+                ));
+            for s in output.iter_mut() {
+                *s = self.low_cut_filter.process_sample(*s as f64) as f32;
+            }
+        } else {
+            let mut offset = 0usize;
+            while offset < output.len() {
+                let chunk = (output.len() - offset).min(4);
+                let fc = self.lowcut_smoother.advance(chunk);
+                self.low_cut_filter
+                    .update_coeffs(crate::precision::IirBiquad64::high_pass(
+                        sr,
+                        fc,
+                        std::f64::consts::FRAC_1_SQRT_2,
+                    ));
+                for s in &mut output[offset..offset + chunk] {
+                    *s = self.low_cut_filter.process_sample(*s as f64) as f32;
+                }
+                offset += chunk;
+            }
+        }
     }
 
     fn apply_hicut_output(&mut self, output: &mut [f32]) {
@@ -1406,6 +1549,7 @@ impl VirtualCabProcessor {
             self.resonance_smoother.advance(input.len());
             self.process_ir_convolution(input, output);
             self.apply_hicut_output(output);
+            self.apply_lowcut_output(output);
             return;
         }
 
@@ -1439,19 +1583,23 @@ impl VirtualCabProcessor {
                 total_gain_arr[slot_idx] = (gain * sign) as f64;
 
                 let pos = mic.position_cap_to_edge.clamp(0.0, 1.0);
-                let pos_cut_db = -8.5 * pos as f64;
+                let pos_cut_db = -7.0 * pos as f64;
                 if slot_idx == 0 {
-                    self.mic1_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
+                    self.mic1_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3800.0, pos_cut_db, sr));
                 } else {
-                    self.mic2_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3500.0, pos_cut_db, sr));
+                    self.mic2_pos_filter.update_coeffs(BiquadFilter::high_shelf_sqrt2(3800.0, pos_cut_db, sr));
                 }
 
                 let dist_cm = mic.distance_cm.clamp(0.0, 30.0) as f64;
-                let prox_boost_db = 9.0 * (1.0 - (dist_cm / 20.0).clamp(0.0, 1.0));
+                let max_prox = match mic.model {
+                    MicModel::R121 | MicModel::M160 => 8.5,
+                    _ => 8.0,
+                };
+                let prox_boost_db = max_prox / (1.0 + dist_cm / 2.0);
                 if slot_idx == 0 {
-                    self.mic1_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
+                    self.mic1_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(130.0, prox_boost_db, sr));
                 } else {
-                    self.mic2_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(150.0, prox_boost_db, sr));
+                    self.mic2_prox_filter.update_coeffs(BiquadFilter::low_shelf_sqrt2(130.0, prox_boost_db, sr));
                 }
 
                 let angle_norm = (mic.angle_off_axis_deg / 45.0).clamp(0.0, 1.0) as f64;
@@ -1471,8 +1619,8 @@ impl VirtualCabProcessor {
                 };
                 match mic.model {
                     MicModel::Sm57 => {
-                        model_f1.update_coeffs(BiquadFilter::peaking(5600.0, 4.0, 2.5, sr));
-                        model_f2.update_coeffs(BiquadFilter::low_shelf_sqrt2(160.0, -3.5, sr));
+                        model_f1.update_coeffs(BiquadFilter::peaking(5000.0, 4.5, 1.6, sr));
+                        model_f2.update_coeffs(BiquadFilter::default());
                     }
                     MicModel::Md421 => {
                         model_f1.update_coeffs(BiquadFilter::peaking(280.0, -2.5, 1.2, sr));
@@ -1587,27 +1735,47 @@ impl VirtualCabProcessor {
             }
         }
 
-        // Condicionamento acústico do gabinete: FIR de fase mínima do falante, open-back e corte de agudos
-        if !self.hicut_smoother.is_ramping() && !self.resonance_smoother.is_ramping() {
+        // Condicionamento acústico do gabinete: FIR de fase mínima do falante, open-back, corte de graves (12 dB/oct) e corte de agudos
+        let apply_low_cut = self.conditioning.low_cut_hz > 20.5 || self.lowcut_smoother.is_ramping();
+        if !self.hicut_smoother.is_ramping()
+            && !self.resonance_smoother.is_ramping()
+            && !self.lowcut_smoother.is_ramping()
+        {
             for s in output.iter_mut() {
                 let fir_out = self.step_speaker_fir(*s);
                 let mut v = fir_out as f64;
                 v = self.open_back_hp.process(v);
+                if apply_low_cut {
+                    v = self.low_cut_filter.process_sample(v);
+                }
                 v = self.hicut_filter1.process_flushed(v);
                 v = self.hicut_filter2.process_flushed(v);
                 *s = v as f32;
             }
         } else {
+            let sr = self.sample_rate as f64;
             let mut offset = 0usize;
             while offset < output.len() {
                 let chunk = (output.len() - offset).min(4);
                 let fc = self.hicut_smoother.advance(chunk);
+                let fc_lc = self.lowcut_smoother.advance(chunk);
                 self.resonance_smoother.advance(chunk);
                 self.update_hicut_coeffs(fc);
+                if apply_low_cut {
+                    self.low_cut_filter
+                        .update_coeffs(crate::precision::IirBiquad64::high_pass(
+                            sr,
+                            fc_lc,
+                            std::f64::consts::FRAC_1_SQRT_2,
+                        ));
+                }
                 for s in &mut output[offset..offset + chunk] {
                     let fir_out = self.step_speaker_fir(*s);
                     let mut v = fir_out as f64;
                     v = self.open_back_hp.process(v);
+                    if apply_low_cut {
+                        v = self.low_cut_filter.process_sample(v);
+                    }
                     v = self.hicut_filter1.process_flushed(v);
                     v = self.hicut_filter2.process_flushed(v);
                     *s = v as f32;
@@ -1658,9 +1826,155 @@ impl VirtualCabProcessor {
                     self.ir_crossfade = 1.0;
                     // Move a IR antiga para retired_irs sem desalocar na thread de áudio (Spec 037 CA-3 / AUD-07)
                     if let Some(old) = old_ir {
-                        self.push_retired_ir(old);
+                        let _ = self.push_retired_ir(old);
                     }
                 }
+            }
+        }
+    }
+}
+
+const CAB_SPEAKERS: &[&str] = &["greenback_4x12", "v30_4x12", "alnico_blue_2x12", "twin_2x12"];
+
+const CAB_PARAMS: &[crate::processor::ParamDescriptor] = &[
+    crate::processor::ParamDescriptor {
+        id: 1,
+        key: "cab_1.speaker",
+        label: "Speaker",
+        unit: "id",
+        min: 0.0,
+        max: 3.0,
+        default: 0.0,
+        taper: crate::processor::ParamTaper::Discrete,
+        enum_variants: CAB_SPEAKERS,
+    },
+    crate::processor::ParamDescriptor {
+        id: 2,
+        key: "cab_1.low_cut_hz",
+        label: "Low Cut",
+        unit: "Hz",
+        min: 20.0,
+        max: 500.0,
+        default: 75.0,
+        taper: crate::processor::ParamTaper::Log10,
+        enum_variants: &[],
+    },
+    crate::processor::ParamDescriptor {
+        id: 3,
+        key: "cab_1.high_cut_hz",
+        label: "High Cut",
+        unit: "Hz",
+        min: 3500.0,
+        max: 18000.0,
+        default: 4200.0,
+        taper: crate::processor::ParamTaper::Log10,
+        enum_variants: &[],
+    },
+    crate::processor::ParamDescriptor {
+        id: 4,
+        key: "cab_1.mic1.position",
+        label: "Mic 1 Position",
+        unit: "norm",
+        min: 0.0,
+        max: 1.0,
+        default: 0.2,
+        taper: crate::processor::ParamTaper::Linear,
+        enum_variants: &[],
+    },
+    crate::processor::ParamDescriptor {
+        id: 5,
+        key: "cab_1.mic1.distance_cm",
+        label: "Mic 1 Distance",
+        unit: "cm",
+        min: 0.0,
+        max: 30.0,
+        default: 2.0,
+        taper: crate::processor::ParamTaper::Linear,
+        enum_variants: &[],
+    },
+];
+
+impl VirtualCabProcessor {
+    pub const DESCRIPTOR: crate::processor::ModelDescriptor = crate::processor::ModelDescriptor {
+        module_id: "component.cab.ir_convolution_and_mics",
+        model_revision: "2026-zero-latency-fdl-v2",
+        display_name: "Virtual Cabinet & IR Convolver",
+        layout: crate::processor::ChannelLayout::Mono,
+        params: CAB_PARAMS,
+    };
+}
+
+impl crate::processor::AudioProcessor for VirtualCabProcessor {
+    fn descriptor(&self) -> &crate::processor::ModelDescriptor {
+        &Self::DESCRIPTOR
+    }
+
+    fn prepare(&mut self, spec: crate::processor::AudioSpec) -> Result<(), crate::processor::DspError> {
+        self.set_sample_rate(spec.sample_rate as f32);
+        Ok(())
+    }
+
+    fn reset(&mut self) {
+        self.reset_ir_state();
+        self.delay_line_mic1.fill(0.0);
+        self.delay_line_mic2.fill(0.0);
+        self.speaker_hist.fill(0.0);
+    }
+
+    fn apply_param_rt(
+        &mut self,
+        id: crate::processor::ParamId,
+        value: crate::processor::ParamValue,
+    ) -> Result<(), crate::processor::ParamError> {
+        match (id, value) {
+            (1, crate::processor::ParamValue::Enum(s)) => {
+                let spk = match s {
+                    "greenback_4x12" => SpeakerCabModel::Greenback4x12Closed,
+                    "v30_4x12" => SpeakerCabModel::V304x12Closed,
+                    "alnico_blue_2x12" => SpeakerCabModel::AlnicoBlue2x12Open,
+                    "twin_2x12" => SpeakerCabModel::Twin2x12Open,
+                    _ => {
+                        return Err(crate::processor::ParamError::InvalidEnumVariant {
+                            key: "cab_1.speaker",
+                            variant: s,
+                        })
+                    }
+                };
+                self.set_speaker_model(spk);
+            }
+            (2, crate::processor::ParamValue::Float(hz)) => self.set_low_cut_hz(hz),
+            (3, crate::processor::ParamValue::Float(hz)) => self.set_hicut_khz(hz / 1000.0),
+            (4, crate::processor::ParamValue::Float(pos)) => {
+                self.mics[0].position_cap_to_edge = pos.clamp(0.0, 1.0);
+            }
+            (5, crate::processor::ParamValue::Float(cm)) => {
+                self.mics[0].distance_cm = cm.clamp(0.0, 30.0);
+            }
+            _ => return Err(crate::processor::ParamError::UnknownParamId(id)),
+        }
+        Ok(())
+    }
+
+    fn process(
+        &mut self,
+        _ctx: &crate::processor::ProcessContext,
+        input: &crate::processor::AudioBlockRef<'_>,
+        output: &mut crate::processor::AudioBlockMut<'_>,
+    ) {
+        self.process(input.channel(0), output.channel_mut(0));
+    }
+
+    fn latency_samples(&self) -> usize {
+        0
+    }
+
+    fn drain_retired(&mut self, sink: &mut dyn crate::processor::RetiredSink) {
+        while let Some(ir) = self.take_retired_ir() {
+            if let Err(returned) = sink.push_retired(Box::new(ir)) {
+                if let Ok(ir_back) = returned.downcast::<ImpulseResponse>() {
+                    let _ = self.push_retired_ir(*ir_back);
+                }
+                break;
             }
         }
     }

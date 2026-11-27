@@ -49,6 +49,7 @@ fn ca1_48000_taps_96khz_ir_matches_f64_reference_under_minus_80db() {
     cab.set_sample_rate(sr);
     cab.set_custom_ir(ir);
     cab.set_ir_enabled(true);
+    cab.set_low_cut_hz(20.0);
     cab.set_hicut_khz(18.0);
 
     // Entrada multi-tom de 49152 amostras em blocos de 128
@@ -98,6 +99,7 @@ fn ca2_zero_additional_latency_on_ir_convolution() {
     cab.set_sample_rate(sr);
     cab.set_custom_ir(ir);
     cab.set_ir_enabled(true);
+    cab.set_low_cut_hz(20.0);
     cab.set_hicut_khz(18.0);
 
     let mut input = vec![0.0f32; 256];
@@ -238,6 +240,7 @@ fn ca5_cab_resonance_hz_shifts_amp_cab_low_frequency_peak() {
 
         let mut cab = VirtualCabProcessor::new();
         cab.set_sample_rate(sr);
+        cab.set_low_cut_hz(20.0);
         cab.set_resonance_hz(res_hz);
 
         let mut best_hz = 0.0f32;

@@ -493,6 +493,10 @@ function updateLiveReadouts(
   appRoot.querySelectorAll<HTMLElement>('[data-live="gate-gr"]').forEach((el) => {
     el.textContent = `GR ${gateGrDb.toFixed(1)} dB`;
   });
+  const liveBPlusV = store.telemetry.b_plus_v ?? Number(store.params?.['amp_1.preamp_plate_v'] ?? 280);
+  appRoot.querySelectorAll<HTMLElement>('[data-live="b-plus"]').forEach((el) => {
+    el.textContent = `B+ ${Math.round(liveBPlusV)} V`;
+  });
 
   // Sincroniza knobs e sliders de parâmetros contínuos sem desmontar o DOM (Spec 051, CA-8 / CA-10).
   appRoot.querySelectorAll<HTMLElement>('sonix-knob[data-control-id]').forEach((el) => {

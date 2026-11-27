@@ -91,6 +91,7 @@ export const PARAMS_SCHEMA = {
   'cab_1.enabled': { type: 'boolean', defaultValue: true },
   'cab_1.speaker': { type: 'enum', options: ['greenback_4x12', 'v30_4x12', 'alnico_blue_2x12', 'twin_2x12_open'], defaultValue: 'greenback_4x12' },
   'cab_1.resonance_hz': { type: 'number', range: [65, 135], step: 1, defaultValue: 98 },
+  'cab_1.low_cut_hz': { type: 'number', range: [20, 500], step: 1, defaultValue: 75 },
   'cab_1.hicut_khz': { type: 'number', range: [3.5, 18], step: 0.1, defaultValue: 8.2 },
   'cab_1.ir_enabled': { type: 'boolean', defaultValue: false },
   'cab_1.mic1.enabled': { type: 'boolean', defaultValue: true },

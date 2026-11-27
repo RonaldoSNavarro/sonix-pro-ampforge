@@ -247,6 +247,7 @@ fn test_ca_08_zero_latency_fir_convolution_fidelity() {
     let ir = ImpulseResponse::from_samples(sr, ir_samples.clone());
     cab.set_custom_ir(ir);
     cab.set_ir_enabled(true);
+    cab.set_low_cut_hz(20.0);
     cab.set_hicut_khz(18.0);
 
     // 1. Verifica latência zero: impulso na entrada produz IR[0] no índice 0
@@ -358,6 +359,7 @@ fn test_ca_10_ir_normalization_options() {
     let ir_raw = ImpulseResponse::from_samples_with_normalization(sr, raw_ir.clone(), false);
     cab.set_custom_ir(ir_raw);
     cab.set_ir_enabled(true);
+    cab.set_low_cut_hz(20.0);
     cab.set_hicut_khz(18.0);
 
     let in_sig = vec![1.0f32; 128];

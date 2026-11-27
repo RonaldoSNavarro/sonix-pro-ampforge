@@ -132,6 +132,8 @@ fn aud_22_stack_igual_a_yeh() {
                     comps.b_pos = l;
                     comps.r_load = f64::INFINITY;
 
+                    let mut comps_ideal = comps;
+                    comps_ideal.r_src = 0.0;
                     for &freq in &freqs_analog {
                         let yeh_db = yeh_smith_magnitude_db(
                             comps.r_treble,
@@ -146,7 +148,7 @@ fn aud_22_stack_igual_a_yeh() {
                             m,
                             freq,
                         );
-                        let prod_db = analog_tonestack_magnitude_db_for_components(comps, freq);
+                        let prod_db = analog_tonestack_magnitude_db_for_components(comps_ideal, freq);
                         let err = (prod_db - yeh_db).abs();
                         max_analog_err = max_analog_err.max(err);
                         assert!(
@@ -157,7 +159,7 @@ fn aud_22_stack_igual_a_yeh() {
                     }
 
                     ts.reset();
-                    ts.update_with_components(comps, sr);
+                    ts.update_with_components(comps_ideal, sr);
                     for (i, sample_out) in ir.iter_mut().enumerate() {
                         *sample_out = ts.process(if i == 0 { 1.0 } else { 0.0 });
                     }
@@ -733,6 +735,8 @@ fn ca5_stack_fender_ab763_coincide_com_yeh() {
     let mut comps = resolved_fmv_components(ToneStackTopology::FenderTmbMidScoop, 5.0, 5.0, 5.0);
     comps.r_load = f64::INFINITY;
     let freqs = [20.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
+    let mut comps_ideal = comps;
+    comps_ideal.r_src = 0.0;
     for &freq in &freqs {
         let yeh_db = yeh_smith_magnitude_db(
             comps.r_treble,
@@ -747,7 +751,7 @@ fn ca5_stack_fender_ab763_coincide_com_yeh() {
             comps.m_pos,
             freq,
         );
-        let prod_db = analog_tonestack_magnitude_db_for_components(comps, freq);
+        let prod_db = analog_tonestack_magnitude_db_for_components(comps_ideal, freq);
         let err = (prod_db - yeh_db).abs();
         assert!(
             err <= 0.5,

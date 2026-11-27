@@ -91,3 +91,84 @@ fn test_ca_02_to_07_amp_controls_api_accepts_and_changes_audio() {
     );
     assert_eq!(st_bad, 400);
 }
+
+#[test]
+fn test_ca_05b_dual_rect_rectifier_and_spongy_end_to_end_api() {
+    let ctx = make_ctx();
+
+    // Seleciona Dual Rectifier com master default (~3.5), spongy=false, rectifier nominal=5u4gb
+    let (st, _, _) = dispatch(
+        &ctx,
+        "/api/params",
+        "POST",
+        br#"{"amp_1.model": "dual_rect", "amp_1.channel_mode": "modern", "amp_1.gain": 7.0, "amp_1.master": 3.5, "amp_1.spongy": false}"#,
+    );
+    assert_eq!(st, 200);
+
+    // Conclui crossfade de troca de modelo antes das medições
+    let _ = render_rms_freq(&ctx, 0.08, 1000.0);
+    let rms_tube_bold = render_rms_freq(&ctx, 0.08, 1000.0);
+    let bplus_tube_bold = ctx.dsp_chain.as_ref().unwrap().lock().unwrap().current_b_plus_v();
+
+    let (_, _, st_body) = dispatch(&ctx, "/api/state", "GET", b"");
+    let state_json: serde_json::Value = serde_json::from_slice(&st_body).unwrap();
+    assert_eq!(state_json["amp_1.rectifier"], "5u4gb");
+    assert_eq!(state_json["amp_1.spongy"], false);
+
+    // Alterna RECTIFIER -> DIODE
+    let (st, _, _) = dispatch(&ctx, "/api/params", "POST", br#"{"amp_1.rectifier": "diode"}"#);
+    assert_eq!(st, 200);
+    let rms_diode_bold = render_rms_freq(&ctx, 0.08, 1000.0);
+    let bplus_diode_bold = ctx.dsp_chain.as_ref().unwrap().lock().unwrap().current_b_plus_v();
+    assert!(
+        rms_diode_bold > rms_tube_bold * 1.06,
+        "API: Dual Rectifier DIODE ({rms_diode_bold:.4}) deve soar mais alto/firme que 5U4GB ({rms_tube_bold:.4})"
+    );
+    assert!(
+        bplus_diode_bold > bplus_tube_bold + 25.0,
+        "API: B+ em DIODE ({bplus_diode_bold:.1}V) deve subir sobre 5U4GB ({bplus_tube_bold:.1}V)"
+    );
+
+    // Alterna POWER -> SPONGY
+    let (st, _, _) = dispatch(&ctx, "/api/params", "POST", br#"{"amp_1.spongy": true}"#);
+    assert_eq!(st, 200);
+    let rms_diode_spongy = render_rms_freq(&ctx, 0.08, 1000.0);
+    let bplus_diode_spongy = ctx.dsp_chain.as_ref().unwrap().lock().unwrap().current_b_plus_v();
+    assert!(
+        rms_diode_spongy < rms_diode_bold * 0.88,
+        "API: Dual Rectifier SPONGY ({rms_diode_spongy:.4}) deve atenuar sobre BOLD ({rms_diode_bold:.4})"
+    );
+    assert!(
+        bplus_diode_spongy < bplus_diode_bold * 0.85,
+        "API: B+ em SPONGY ({bplus_diode_spongy:.1}V) deve cair ~20% sobre BOLD ({bplus_diode_bold:.1}V)"
+    );
+
+    // Volta para TUBE + BOLD e confere GET /api/state
+    let (st, _, _) = dispatch(
+        &ctx,
+        "/api/params",
+        "POST",
+        br#"{"amp_1.rectifier": "5u4gb", "amp_1.spongy": false}"#,
+    );
+    assert_eq!(st, 200);
+    let (_, _, st_body2) = dispatch(&ctx, "/api/state", "GET", b"");
+    let state_json2: serde_json::Value = serde_json::from_slice(&st_body2).unwrap();
+    assert_eq!(state_json2["amp_1.rectifier"], "5u4gb");
+    assert_eq!(state_json2["amp_1.spongy"], false);
+
+    // Também garante que lote com model + rectifier diode no mesmo POST não perde rectifier no crossfade
+    let ctx2 = make_ctx();
+    let (st, _, _) = dispatch(
+        &ctx2,
+        "/api/params",
+        "POST",
+        br#"{"amp_1.model": "dual_rect", "amp_1.rectifier": "diode", "amp_1.spongy": true}"#,
+    );
+    assert_eq!(st, 200);
+    let _ = render_rms_freq(&ctx2, 0.05, 1000.0);
+    let bplus_combo = ctx2.dsp_chain.as_ref().unwrap().lock().unwrap().current_b_plus_v();
+    assert!(
+        bplus_combo < 400.0,
+        "Lote dual_rect + spongy deve manter spongy após crossfade (B+={bplus_combo:.1}V)"
+    );
+}

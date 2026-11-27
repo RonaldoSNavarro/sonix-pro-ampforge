@@ -403,11 +403,13 @@ fn aud_09_toda_chave_ida_e_volta() {
         while let Some(u) = pq.pop() {
             drained.push(u);
         }
+        let expected_updates = if desc.key == "amp_1.model" { 2 } else { 1 };
         assert_eq!(
             drained.len(),
-            1,
-            "AUD-09: chave '{}' deve emitir exatamente 1 DspParamUpdate (emitiu {}: {:?})",
+            expected_updates,
+            "AUD-09: chave '{}' deve emitir exatamente {} DspParamUpdate (emitiu {}: {:?})",
             desc.key,
+            expected_updates,
             drained.len(),
             drained
         );

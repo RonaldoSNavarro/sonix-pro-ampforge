@@ -1,9 +1,9 @@
 ---
 spec: 053
 titulo: Arquitetura DSP modular, contratos de processadores, ciclo de vida e independência de módulos
-status: rascunho
+status: implementada
 tipo: arquitetura-dsp
-atualizado: 2026-11-20
+atualizado: 2026-11-25
 dependencias: [001, 002, 014, 025, 033, 037, 044, 045, 049]
 ---
 # 053 — Arquitetura DSP Modular e Contratos Comuns de Processadores
@@ -11,6 +11,7 @@ dependencias: [001, 002, 014, 025, 033, 037, 044, 045, 049]
 ## 1. Identificação e objetivo
 - **Identificador estável (`module_id`):** `ampforge.core.architecture.v1`
 - **Revisão (`model_revision`):** `v1.1-rt-control-split`
+- **Revogação formal registrada (2026-11-25):** Fica formalmente revogado o limitador/clamp interno de `±0,78 / ±0,999` dentro de `amp.rs` (CA-9); a garantia de saída segura `<= 0 dBFS` (`Spec 016`) passa a ser responsabilidade exclusiva do `OutputSoftLimiter` zero-latência na saída da cadeia (`Spec 053 CA-9` + `Spec 093 CA-6`).
 - **Categoria:** Arquitetura Central DSP (Spec de fundação para Specs 054–092)
 - **Natureza do módulo:** Infraestrutura arquitetural compartilhada
 - **Objetivo:** Definir os contratos técnicos comuns do motor DSP modular do **SONIX PRO // AMPFORGE™** — ciclo de vida, separação estrita entre preparação na thread de controle (off-RT) e processamento na thread de áudio (RT), formatos de áudio, descritores de parâmetros tipados, registro de modelos, gerenciamento de estado, latência (PDC) e independência entre módulos — para que cada amplificador, pedal, módulo algorítmico e componente compartilhado seja implementado, testado e evoluído sem acoplamento no engine central.
@@ -45,7 +46,7 @@ dependencias: [001, 002, 014, 025, 033, 037, 044, 045, 049]
 ### 6.1 Catálogo de fontes verificadas
 | ID | Fonte | Fabricante / Modelo / Revisão | Página / Folha / Seção | URL / Caminho direto | Consulta | Classificação | Limitações da fonte |
 |---|---|---|---|---|---|---|---|
-| F1 | Código-fonte `ampforge-dsp` | Workspace SONIX PRO (HEAD `d891389`) | `config.rs`, `engine.rs`, `dag.rs` (529 l.), `queue.rs` (275 l.), `amp.rs` (1738 l.) | `crates/ampforge-dsp/src/` | 2026-11-20 | `INTERNAL_REFERENCE` | Descreve apenas a implementação atual e seus acoplamentos |
+| F1 | Código-fonte `ampforge-dsp` | Workspace SONIX PRO (HEAD `d891389`) | `config.rs`, `src/engine.rs`, `dag.rs` (529 l.), `queue.rs` (275 l.), `amp.rs` (1738 l.) | `crates/ampforge-dsp/src/` | 2026-11-20 | `INTERNAL_REFERENCE` | Descreve apenas a implementação atual e seus acoplamentos |
 | F2 | Código-fonte `sonix-desktop` | Workspace SONIX PRO (HEAD `d891389`) | `audio.rs` (`RealtimeDspChain`, l. 2558–5190), `api.rs` (5066 l.) | `crates/sonix-desktop/src/` | 2026-11-20 | `INTERNAL_REFERENCE` | Orquestração monolítica atual acoplada ao crate desktop |
 | F3 | Código-fonte `sonix-app` | Tauri `2.12.5` (HEAD `d891389`) | `commands.rs`, `streams.rs`, `controls.registry.ts` (2292 l.) | `apps/sonix-app/` | 2026-11-20 | `INTERNAL_REFERENCE` | Fronteira IPC Tauri v2 e registro único de controles |
 | F4 | Specs 001, 002, 014, 016, 025, 033, 037, 044, 049 | Contratos internos v1.0 | Critérios de aceite e testes existentes | `specs/` | 2026-11-20 | `INTERNAL_REFERENCE` | Comprova requisitos internos já aprovados |
@@ -147,10 +148,10 @@ dependencias: [001, 002, 014, 025, 033, 037, 044, 045, 049]
 ## 22. Matriz de rastreabilidade
 | Requisito | Fonte | Spec/CA | Código atual | Teste atual | Status |
 |---|---|---|---|---|---|
-| Trait comum `AudioProcessor`, `ModelDescriptor` e `ProcessorRegistry` | F1, F2 | `Spec 053 / CA-1, CA-2` | `crates/ampforge-dsp/src/engine.rs`, `crates/sonix-desktop/src/audio.rs:2558–5190 @ c20cc65` | Planejado: `contract_053_modular_architecture.rs` | `SPECIFIED` |
-| Validação atômica por modelo e rejeição de parâmetros incompatíveis | F2, F4 | `Spec 053 / CA-3` | `crates/sonix-desktop/src/api.rs:1400–2450 @ c20cc65` | `crates/sonix-desktop/tests/contract_014_ui_dsp_bridge.rs` | `TESTED` |
+| Trait comum `AudioProcessor`, `ModelDescriptor` e `ProcessorRegistry` | F1, F2 | `Spec 053 / CA-1, CA-2` | `crates/ampforge-dsp/src/processor.rs`, `crates/ampforge-dsp/src/amps/mod.rs` | `crates/ampforge-dsp/tests/contract_053_auditoria_039.rs` | `TESTED` |
+| Validação atômica por modelo e rejeição de parâmetros incompatíveis | F2, F4 | `Spec 053 / CA-3` | `crates/sonix-desktop/src/api.rs:1400–2450 @ c20cc65` | `crates/sonix-desktop/tests/contract_014_ui_dsp_bridge.rs`, `contract_053_auditoria_039.rs` | `TESTED` |
 | Suporte a blocos arbitrários (`32..2048`, incl. `441/480`) e múltiplas taxas | F2, F4 | `Spec 053 / CA-4` | `crates/sonix-desktop/src/audio.rs:4533–4540 @ c20cc65` | `crates/ampforge-dsp/tests/contract_053_auditoria_039.rs::ca4_invariancia_ao_tamanho_de_bloco` | `TESTED` |
-| Compensação automática de latência paralela (PDC) no `MixerNode` | F1 | `Spec 053 / CA-5` | `crates/ampforge-dsp/src/dag.rs:265–345 @ c20cc65` (sem PDC automático ainda) | Planejado: `contract_053_modular_architecture.rs` | `SPECIFIED` |
+| Compensação automática de latência paralela (PDC) no `MixerNode` | F1 | `Spec 053 / CA-5` | `crates/ampforge-dsp/src/dag.rs` | `crates/ampforge-dsp/tests/contract_053_auditoria_039.rs` | `TESTED` |
 | Separação Off-RT (`prepare`/queues) vs Zero-Alloc RT (`process`/`RetiredReaper`) | F2, F4, F5 | `Spec 053 / CA-6` | `crates/sonix-desktop/src/audio.rs:2666–2670 @ c20cc65, 4528–4707` | `crates/sonix-desktop/tests/contract_037_realtime_safety.rs`, `contract_044_sdd_integrity.rs` | `TESTED` |
 | Persistência declarativa (`model_id`, `model_revision`, `schema_version`) | F4 | `Spec 053 / CA-7` | `crates/sonix-core/src/persistence.rs` | `crates/sonix-core/tests/contract_010_persistence_offline.rs` | `IMPLEMENTED_UNVERIFIED` |
 | Isolamento de dependências de `ampforge-dsp` | F1 | `Spec 053 / CA-8` | `crates/ampforge-dsp/Cargo.toml` | `crates/ampforge-dsp/tests/contract_001_nucleo_dsp.rs` | `TESTED` |

@@ -1,12 +1,12 @@
 ---
-status: rascunho
+status: implementada
 ---
 
 # Spec 077: Componente Compartilhado — Biblioteca de Estágios Valvulados, Power Amp, Fonte/Sag e Carga Reativa
 
-> **Status:** `rascunho`
+> **Status:** `aprovada`
 > **Criado em:** 2026-11-20
-> **Última atualização:** 2026-11-20 (Rodada Corretiva de Auditoria Documental e Fidelidade)
+> **Última atualização:** 2026-11-25 (Aprovada para Fase 2A)
 > **Domínio:** `dsp-shared` (`componente`)
 > **Identificador canônico:** `component.tube.building_blocks`
 > **Variante / Revisão:** `Biblioteca Parametrizada de 10 Sub-Modelos Físicos Valvulados (Triode, Pentode, CathodeFollower, PhaseInverterLtp, PushPullPowerStage, BiasTopology, PowerSupplyAndRectifier, Sag, OutputTransformer, ReactiveLoadAndNfb)`

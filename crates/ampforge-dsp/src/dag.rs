@@ -596,3 +596,158 @@ impl DagGraph {
         }
     }
 }
+
+/// Linha de atraso pré-alocada para Compensação de Latência Paralela (PDC — Spec 053 CA-5).
+#[derive(Debug, Clone)]
+pub struct PdcDelayLine {
+    buffer: Vec<f32>,
+    write_pos: usize,
+}
+
+impl PdcDelayLine {
+    /// Aloca capacidade fixa off-RT.
+    pub fn new(max_delay_samples: usize) -> Self {
+        let cap = (max_delay_samples + 1).next_power_of_two().max(64);
+        Self {
+            buffer: vec![0.0; cap],
+            write_pos: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.buffer.fill(0.0);
+        self.write_pos = 0;
+    }
+
+    /// Aplica atraso de `delay_samples` in-place sem alocar memória na thread RT.
+    #[inline]
+    pub fn process_in_place(&mut self, samples: &mut [f32], delay_samples: usize) {
+        if delay_samples == 0 || self.buffer.is_empty() {
+            return;
+        }
+        let mask = self.buffer.len() - 1;
+        let d = delay_samples.min(mask);
+        for s in samples.iter_mut() {
+            let x = *s;
+            let read_pos = (self.write_pos + self.buffer.len() - d) & mask;
+            *s = self.buffer[read_pos];
+            self.buffer[self.write_pos] = x;
+            self.write_pos = (self.write_pos + 1) & mask;
+        }
+    }
+}
+
+/// Executor modular de grafo paralelo (2 ramos A/B com SplitNode, PDC automático e MixerNode)
+/// operando exclusivamente sobre `&mut [Box<dyn AudioProcessor>]` sem downcast (Spec 053 CA-2, CA-5).
+pub struct ModularParallelExecutor {
+    split: SplitNode,
+    mixer: MixerNode,
+    pdc_a: PdcDelayLine,
+    pdc_b: PdcDelayLine,
+    buf_a: Vec<f32>,
+    buf_b: Vec<f32>,
+    scratch_a: Vec<f32>,
+    scratch_b: Vec<f32>,
+    out_r: Vec<f32>,
+    total_latency_samples: usize,
+}
+
+impl ModularParallelExecutor {
+    /// Prepara buffers e linhas de atraso na thread de controle (Off-RT).
+    pub fn new(max_block_size: usize, max_pdc_samples: usize, sample_rate: f32) -> Self {
+        let n = max_block_size.max(64);
+        let mut split = SplitNode::new(SplitMode::BalanceAb { ratio: 0.5 });
+        split.set_sample_rate(sample_rate);
+        split.set_ratio(0.5);
+        let mut mixer = MixerNode::new();
+        mixer.configure_channel(
+            0,
+            MixerChannelConfig {
+                level_db: -6.0206,
+                pan: 0.0,
+                phase_invert: false,
+            },
+        );
+        mixer.configure_channel(
+            1,
+            MixerChannelConfig {
+                level_db: -6.0206,
+                pan: 0.0,
+                phase_invert: false,
+            },
+        );
+        Self {
+            split,
+            mixer,
+            pdc_a: PdcDelayLine::new(max_pdc_samples),
+            pdc_b: PdcDelayLine::new(max_pdc_samples),
+            buf_a: vec![0.0; n],
+            buf_b: vec![0.0; n],
+            scratch_a: vec![0.0; n],
+            scratch_b: vec![0.0; n],
+            out_r: vec![0.0; n],
+            total_latency_samples: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.pdc_a.reset();
+        self.pdc_b.reset();
+    }
+
+    #[inline]
+    pub fn total_algorithmic_latency_samples(&self) -> usize {
+        self.total_latency_samples
+    }
+
+    /// Executa os dois ramos em paralelo com PDC automático e zero alocação na thread RT.
+    pub fn process_parallel_mono(
+        &mut self,
+        ctx: &crate::processor::ProcessContext,
+        branch_a: &mut [Box<dyn crate::processor::AudioProcessor>],
+        branch_b: &mut [Box<dyn crate::processor::AudioProcessor>],
+        input: &[f32],
+        output: &mut [f32],
+    ) {
+        let n = input.len().min(output.len()).min(self.buf_a.len());
+        if n == 0 {
+            return;
+        }
+
+        let lat_a: usize = branch_a.iter().map(|p| p.latency_samples()).sum();
+        let lat_b: usize = branch_b.iter().map(|p| p.latency_samples()).sum();
+        let max_lat = lat_a.max(lat_b);
+        self.total_latency_samples = max_lat;
+
+        self.split
+            .process(&input[..n], &mut self.buf_a[..n], &mut self.buf_b[..n]);
+
+        for proc in branch_a.iter_mut() {
+            let in_blk = crate::processor::AudioBlockRef::from_mono(&self.buf_a[..n]);
+            let mut out_blk = crate::processor::AudioBlockMut::from_mono(&mut self.scratch_a[..n]);
+            proc.process(ctx, &in_blk, &mut out_blk);
+            self.buf_a[..n].copy_from_slice(&self.scratch_a[..n]);
+        }
+
+        for proc in branch_b.iter_mut() {
+            let in_blk = crate::processor::AudioBlockRef::from_mono(&self.buf_b[..n]);
+            let mut out_blk = crate::processor::AudioBlockMut::from_mono(&mut self.scratch_b[..n]);
+            proc.process(ctx, &in_blk, &mut out_blk);
+            self.buf_b[..n].copy_from_slice(&self.scratch_b[..n]);
+        }
+
+        let comp_a = max_lat.saturating_sub(lat_a);
+        let comp_b = max_lat.saturating_sub(lat_b);
+        self.pdc_a.process_in_place(&mut self.buf_a[..n], comp_a);
+        self.pdc_b.process_in_place(&mut self.buf_b[..n], comp_b);
+
+        let inputs: [&[f32]; 2] = [&self.buf_a[..n], &self.buf_b[..n]];
+        self.mixer
+            .process(&inputs, &mut output[..n], &mut self.out_r[..n]);
+        // MixerNode aplica pan constante 0.0 -> cos(pi/4) = 1/sqrt(2); normaliza para soma mono unitária
+        let norm = std::f32::consts::SQRT_2;
+        for s in &mut output[..n] {
+            *s *= norm;
+        }
+    }
+}

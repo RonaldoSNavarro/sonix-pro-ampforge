@@ -1,12 +1,12 @@
 ---
-status: rascunho
+status: implementada
 ---
 
 # Spec 080: Componente Compartilhado — Gabinete, Convolução IR Zero-Latency e Microfonação
 
-> **Status:** `rascunho`
+> **Status:** `aprovada`
 > **Criado em:** 2026-11-20
-> **Última atualização:** 2026-11-20 (Rodada Corretiva de Auditoria Documental e Fidelidade)
+> **Última atualização:** 2026-11-25 (Aprovada para Fase 2A: zero FFT em process(), low_cut_hz ativo, proximidade recalibrada)
 > **Domínio:** `dsp-shared` (`componente`)
 > **Identificador canônico:** `component.cab.ir_convolution_and_mics`
 > **Variante / Revisão:** `Convolução Particionada Uniforme Zero-Latency (Partição 0 FIR Direta B=128 + FDL FFT N=256) + Dual-IR Mixer + 7 Microfones + Gestão Lock-Free de Troca de IR`

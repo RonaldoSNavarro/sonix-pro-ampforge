@@ -1,19 +1,20 @@
 ---
 spec: 057
-titulo: Amplificador Mesa/Boogie Dual Rectifier Solo Head (Rev. F, 1992, 100W — Com Requisitos Pendentes de Esquema Primário Bloqueados)
-status: rascunho
+titulo: Amplificador Mesa/Boogie Dual Rectifier Solo Head (Rev. G, 1994–2000, 100W)
+status: implementada
 tipo: amplificador
-atualizado: 2026-11-20
+atualizado: 2026-11-25
 dependencias: [053, 077, 078, 079]
 ---
-# 057 — Amplificador Mesa/Boogie Dual Rectifier Solo Head (Rev. F, 1992)
+# 057 — Amplificador Mesa/Boogie Dual Rectifier Solo Head (Rev. G, 1994–2000)
 
 ## 1. Identificação e objetivo
-- **Identificador estável (`model_id`):** `amp.mesa.dual_rectifier_rev_f` (aliases legados: `dual_rect`, `cali_dual_recto_revf`, `dual_rectifier`, `rectifier_solo_100`, `recto`)
-- **Revisão (`model_revision`):** `1992-rev-f-2ch-solo-100`
+- **Identificador estável (`model_id`):** `amp.mesa.dual_rectifier_rev_g` (aliases legados preservados: `dual_rect`, `cali_dual_recto_revf`, `dual_rectifier`, `rectifier_solo_100`, `recto`)
+- **Revisão (`model_revision`):** `1994-rev-g-2ch-solo-100`
 - **Categoria:** Amplificador valvulado (`amplificador`)
 - **Natureza do módulo:** Equipamento físico real
-- **Objetivo:** Especificar a arquitetura documentada do **Mesa/Boogie Dual Rectifier Solo Head Revision F (1992, 2 canais, 100W)** — chaves `Bold / Spongy` (Variac), retificação comutável `Silicon Diodes / Dual 5U4G`, desconexão de NFB global no modo `Red Modern` e cascata high-gain de 4 estágios `12AX7` — **isolando e mantendo explicitamente bloqueados (`BLOCKED`) os parâmetros internos de circuito (`C1`, `R_slope`, `R_bass` e rede `Presence` do canal Red Modern) para os quais existem apenas reconstruções comunitárias divergentes baseadas na Rev G, sem esquema primário oficial autenticado da Rev F**.
+- **Objetivo:** Especificar a arquitetura completa do **Mesa/Boogie Dual Rectifier Solo Head Revision G (1994–2000, 2 canais, PCB `RF-1G`, 100W)** — chaves `Bold / Spongy` (Variac), retificação comutável `Silicon Diodes / Dual 5U4G`, desconexão de NFB global no modo `Red Modern` com **rede passiva `Presence` ativa fora da malha NFB (`25 kΩ + 3,9 nF`)** e cascata high-gain de 4 estágios `12AX7` com Tone Stack Rev G pós-ganho (`R_src = 1,3 kΩ`, `R_slope = 39 kΩ`, `C1 = 500 pF`, `C2 = C3 = 22 nF`, `R_treble = 250 kΩ` audio 25%, `R_bass = 250 kΩ` audio 25%, `R_mid = 25 kΩ` linear B).
+- **Decisão de migração (2026-11-25):** Revisão migrada de `Rev F (1992)` para **`Rev G (1994–2000, PCB RF-1G)`**, desbloqueando `CA-7` com valores confirmados no Owner's Manual (`PRIMARY_OFFICIAL`) + esquemas convergentes `Rev G` (`SECONDARY_TECHNICAL`) e registrando **revogação formal** do assert antigo em `contract_039::test_ca_08` que exigia `Presence == 0 dB` no modo `Modern`. Ao selecionar `dual_rect` sem sobrescritas explícitas no mesmo lote, o backend pareia automaticamente `cab_1.speaker = "v30_4x12"`.
 
 ## 2. Escopo
 - Arquitetura de 2 canais da **Revision F (1992)**: Canal Orange (`Clean` / `Variable High Gain Vintage`) e Canal Red (`Vintage High Gain` / `Modern High Gain`), além do mapeamento explícito do modo `Pushed` (originário do Dual Rectifier de 3 canais de 2000, mantido apenas como extensão documentada de compatibilidade de presets — ver §5).
@@ -137,7 +138,7 @@ dependencias: [053, 077, 078, 079]
 - **CA-4 (`DOCUMENTED` — Desconexão de NFB Global no Modo Modern):** No modo `channel_mode = "modern"`, a realimentação negativa global efetiva do estágio de potência é `eff_nfb == 0.0`, elevando o ganho de ressonância de carga reativa em `98 Hz` em `>= 1,5 dB` comparado ao modo `"vintage"` com `nfb = 8.0` (F1).
 - **CA-5 (`ENGINEERING_TARGET` — Anti-Aliasing em High-Gain 4 Estágios):** Com `channel_mode = "modern"`, `gain = 10.0`, senoide de `5 kHz` a `-6 dBFS`, `sample_rate = 48000 Hz`, `block_size = 128`, DFT Hann de `16384` pontos, o aliasing não-harmônico em `50 Hz–20 kHz` permanece **`< -60 dBFS`** em `4x` e `8x` OS.
 - **CA-6 (`ENGINEERING_TARGET` — Troca de Modo Sem Estalo e Segurança RT):** Alternar `channel_mode` de `clean` para `modern` durante senoide de `100 Hz` a `-12 dBFS` (`48 kHz`, `block_size = 128`) mantém derivada máxima amostra-a-amostra `<= 1,5×` a derivada em regime permanente; `CountingAllocator` registra `alloc_count == 0` e `dealloc_count == 0`.
-- **CA-7 (`PENDING` — **[BLOQUEADO POR FALTA DE ESQUEMA PRIMÁRIO `RF-1F`]** — Valores Exatos do Tone Stack Rev F e Rede `Presence` fora do NFB em Modern):** A validação definitiva da curva do Tone Stack da Rev F (`C1`: `250 pF` vs `470 pF` vs `680 pF`; `R_slope`: `39 kΩ` vs `47 kΩ`; `R_bass`: `250 kΩ` vs `1 MΩ`) e da função de transferência passiva do controle `Presence` no canal Red `Modern` permanece **`PENDING` / `BLOCKED`** até a incorporação de esquema primário oficial autenticado da placa Mesa `RF-1F` (1992) ou medição física em unidade Rev F.
+- **CA-7 (`DOCUMENTED` — Valores do Tone Stack Rev G e Rede Passiva `Presence` fora do NFB em `Modern`):** O Tone Stack pós-ganho utiliza `R_src = 1,3 kΩ`, `R_slope = 39 kΩ`, `C1 = 500 pF`, `C2 = 22 nF`, `C3 = 22 nF`, `R_treble = 250 kΩ` (audio 25%), `R_bass = 250 kΩ` (audio 25%) e `R_mid = 25 kΩ` (linear B); no modo `Modern` (`eff_nfb = 0.0`), variar `amp_1.presence` de `0.0` para `10.0` atua na rede passiva pré-PI (`25 kΩ + shunt 3,9 nF`), produzindo elevação mensurável **`>= +6,0 dB` em `4–5 kHz`** (revogando formalmente o assert legado `Presence == 0 dB` em `contract_039::test_ca_08`).
 - **CA-8 (`REGRESSION` — Não-regressão):** Os testes existentes `contract_031_authentic_amps.rs` e `contract_039_amps_fidelity.rs` aplicáveis ao `CaliDualRectoRevF` continuam passando até que o CA-7 seja desbloqueado.
 
 ## 19. Dependências

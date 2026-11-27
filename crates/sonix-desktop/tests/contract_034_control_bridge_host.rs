@@ -403,8 +403,8 @@ fn test_ca_11_all_ui_dispatchable_params_apply_through_param_queue() {
     let mut guard = dsp.lock().unwrap();
     let drained = guard.drain_param_queue();
     assert_eq!(
-        drained, 18,
-        "CA-11: nem todos os 18 parâmetros de controle UI foram enfileirados em DspParamUpdate (drained={})",
+        drained, 19,
+        "CA-11: os 18 parâmetros de controle UI + 1 auto-pareamento cab_1.speaker devem ser enfileirados em DspParamUpdate (drained={})",
         drained
     );
 }

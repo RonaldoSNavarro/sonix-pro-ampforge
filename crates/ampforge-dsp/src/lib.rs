@@ -15,8 +15,11 @@ pub mod biquad;
 pub mod cpu;
 pub mod engine;
 pub mod dag;
+pub mod processor;
 pub mod amp;
+pub mod amps;
 pub mod tonestack;
+pub mod tube;
 pub mod modshop;
 pub mod cab;
 pub mod fx;
@@ -36,3 +39,9 @@ pub use oversampling::{HalfBandOversampler, OversamplingFactor};
 pub use precision::IirBiquad64;
 pub use cpu::CpuMonitor;
 pub use engine::DspEngine;
+pub use processor::{
+    AudioBlockMut, AudioBlockRef, AudioProcessor, AudioSpec, ChannelLayout, DspError,
+    ModelDescriptor, ModelRevision, ModuleId, ParamDescriptor, ParamError, ParamId, ParamTaper,
+    ParamValue, ProcessContext, ProcessorFactory, ProcessorRegistry, RetiredResource, RetiredSink,
+    SpscRetiredSink,
+};

@@ -220,6 +220,13 @@ pub fn build_runtime_with_data_dir(
             st.gate_threshold_db = gate;
             st.amp_standby = false;
         }
+        if let Some(ref pq) = param_queue {
+            let _ = pq.push_batch(&[
+                sonix_desktop::audio::DspParamUpdate::InputBoost(boost),
+                sonix_desktop::audio::DspParamUpdate::GateThreshold(gate),
+                sonix_desktop::audio::DspParamUpdate::AmpStandby(false),
+            ]);
+        }
         if let Ok(mut dsp) = dsp_chain.lock() {
             dsp.set_input_boost(boost);
             dsp.set_gate_threshold_db(gate);

@@ -586,6 +586,7 @@ struct AmpSubblockCache {
     bright_effective_boost: f64,
     input_pad: f64,
     power_tube_headroom: f64,
+    rect_bplus_scale: f64,
     variac_scale: f64,
     spongy_power_atten: f64,
     plexi_ch1_on: bool,
@@ -635,7 +636,7 @@ pub struct WhiteBoxAmpProcessor {
 pub const DECISAO_SONIX_TWIN_RT60: f64 = 3.0;
 
 #[derive(Debug, Clone)]
-struct SpringReverbTank {
+pub(crate) struct SpringReverbTank {
     lines: [[f64; 2048]; 4],
     lens: [usize; 4],
     idx: [usize; 4],
@@ -661,7 +662,13 @@ impl Default for SpringReverbTank {
 }
 
 impl SpringReverbTank {
-    fn reset(&mut self) {
+    pub(crate) fn new(sr: f32) -> Self {
+        let mut s = Self::default();
+        s.set_sample_rate(sr);
+        s
+    }
+
+    pub(crate) fn reset(&mut self) {
         for line in &mut self.lines {
             line.fill(0.0);
         }
@@ -669,7 +676,7 @@ impl SpringReverbTank {
         self.lp = [0.0; 4];
     }
 
-    fn set_sample_rate(&mut self, sr: f32) {
+    pub(crate) fn set_sample_rate(&mut self, sr: f32) {
         let fs = (sr as f64).max(1.0);
         let scale = (fs / 48000.0).clamp(0.5, 2.0);
         self.lp_alpha = (1.0 - (-2.0 * std::f64::consts::PI * 6500.0 / fs).exp()).clamp(0.01, 0.99);
@@ -687,7 +694,7 @@ impl SpringReverbTank {
     }
 
     #[inline(always)]
-    fn process_sample(&mut self, x: f64) -> f64 {
+    pub(crate) fn process_sample(&mut self, x: f64) -> f64 {
         let mut d = [0.0f64; 4];
         for k in 0..4 {
             let p = self.idx[k];
@@ -1159,10 +1166,20 @@ impl AmpCore {
         self.cached_subblock = None;
     }
 
-    /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
+    /// Returns the instantaneous B+ rail voltage including power-supply sag, variac and rectifier drop.
     pub fn current_b_plus_v(&self) -> f32 {
-        let factor = (1.0 - self.sag_state as f32).max(0.15);
-        self.mod_settings.preamp_plate_v * factor
+        let variac = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
+            0.80
+        } else {
+            1.0
+        };
+        let rect_static_drop = match self.mod_settings.rectifier {
+            RectifierType::SolidStateDiode => 1.0,
+            RectifierType::Gz34_5Ar4 => 0.95,
+            RectifierType::Dual5U4Gb => 0.91,
+        };
+        let factor = ((1.0 - self.sag_state as f32) * variac * rect_static_drop).max(0.15);
+        self.mod_settings.b_plus_voltage * factor
     }
 
     #[inline]
@@ -1497,12 +1514,14 @@ impl AmpCore {
                 1.0
             };
 
-            let power_tube_headroom = match self.mod_settings.power_tube {
-                PowerTube::El34 => 1.0,
-                PowerTube::Tube6L6Gc => 1.18,
-                PowerTube::Tube6V6 => 0.85,
-                PowerTube::Kt88 => 1.35,
-                PowerTube::El84 => 0.78,
+            let rect_bplus_scale = if self.model_id == AmpModelId::CaliDualRectoRevF {
+                match self.mod_settings.rectifier {
+                    RectifierType::Dual5U4Gb => 1.0,
+                    RectifierType::Gz34_5Ar4 => 1.06,
+                    RectifierType::SolidStateDiode => 1.14,
+                }
+            } else {
+                1.0
             };
             let variac_scale = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
                 0.80
@@ -1510,10 +1529,24 @@ impl AmpCore {
                 1.0
             };
             let spongy_power_atten = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
-                0.86
+                0.82
             } else {
                 1.0
             };
+            let base_power_tube_headroom = match self.mod_settings.power_tube {
+                PowerTube::El34 => 1.0,
+                PowerTube::Tube6L6Gc => 1.18,
+                PowerTube::Tube6V6 => 0.85,
+                PowerTube::Kt88 => 1.35,
+                PowerTube::El84 => 0.78,
+            };
+            let mut power_tube_headroom = base_power_tube_headroom;
+            if rect_bplus_scale != 1.0 {
+                power_tube_headroom *= rect_bplus_scale;
+            }
+            if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
+                power_tube_headroom *= 0.85;
+            }
 
             let is_plexi_jumpered = self.panel.jumpered || self.panel.input_jack == AmpInputJack::Jumpered;
             let plexi_ch1_on = is_plexi_jumpered || !self.panel.input_jack.is_normal_channel();
@@ -1563,7 +1596,13 @@ impl AmpCore {
                 PreampTube::Ef86 => (1.22f64, 1.35f64),
             };
             let tube_alpha = (1.0 / (fs_base * 0.008)).clamp(0.0005, 0.05);
-            let v1_headroom = ((self.mod_settings.preamp_plate_v as f64 / 250.0) * variac_scale).max(0.1);
+            let v1_base = (self.mod_settings.preamp_plate_v as f64 / 250.0) * variac_scale;
+            let v1_headroom = (if rect_bplus_scale != 1.0 {
+                v1_base * rect_bplus_scale
+            } else {
+                v1_base
+            })
+            .max(0.1);
             let asym = self.mod_settings.triode_asym as f64;
             let bias_ma_f = self.mod_settings.bias_ma as f64;
             let bias_deficit = ((32.0 - bias_ma_f) / 12.0).clamp(0.0, 1.0);
@@ -1593,7 +1632,11 @@ impl AmpCore {
             let alpha_miller = (2.0 * std::f64::consts::PI * 7500.0 / sr).clamp(0.01, 0.90);
 
             let xf_val = self.mod_settings.xformer_sat as f64;
-            let sag_amt = self.mod_settings.sag as f64;
+            let sag_amt = if self.model_id == AmpModelId::CaliDualRectoRevF && self.panel.spongy {
+                (self.mod_settings.sag as f64) * 1.35
+            } else {
+                self.mod_settings.sag as f64
+            };
             let ri = self.mod_settings.rectifier.internal_resistance();
             let tau_att = self.mod_settings.rectifier.attack_time_sec();
             let tau_rel = self.mod_settings.rectifier.release_time_sec();
@@ -1673,6 +1716,7 @@ impl AmpCore {
                 bright_effective_boost,
                 input_pad,
                 power_tube_headroom,
+                rect_bplus_scale,
                 variac_scale,
                 spongy_power_atten,
                 plexi_ch1_on,
@@ -1718,6 +1762,7 @@ impl AmpCore {
         let bright_effective_boost = c.bright_effective_boost;
         let input_pad = c.input_pad;
         let power_tube_headroom = c.power_tube_headroom;
+        let rect_bplus_scale = c.rect_bplus_scale;
         let variac_scale = c.variac_scale;
         let spongy_power_atten = c.spongy_power_atten;
         let plexi_ch1_on = c.plexi_ch1_on;
@@ -2080,7 +2125,12 @@ impl AmpCore {
                 self.sag_state = crate::denormal::flush_f64(
                     self.sag_state + alpha_sag * (target_drop - self.sag_state),
                 );
-                let b_plus_factor = ((1.0 - self.sag_state) * variac_scale).max(0.15);
+                let b_plus_scaled = if rect_bplus_scale != 1.0 {
+                    (1.0 - self.sag_state) * variac_scale * rect_bplus_scale
+                } else {
+                    (1.0 - self.sag_state) * variac_scale
+                };
+                let b_plus_factor = b_plus_scaled.max(0.15);
 
                 // Safe output limiter inside oversampled loop (limiar 0.78 preserva ataque transiente; teto 0.85 evita Gibbs > 0.999 pós-AA)
                 let lim_in = power_out * b_plus_factor * self.standby_env;
@@ -2237,22 +2287,29 @@ impl WhiteBoxAmpProcessor {
 
     pub fn set_preamp_tube_type(&mut self, tube: PreampTube) {
         self.amp.mod_settings.preamp_tube = tube;
+        self.amp_transicao.mod_settings.preamp_tube = tube;
     }
 
     pub fn set_power_tube_type(&mut self, tube: PowerTube) {
         self.amp.mod_settings.power_tube = tube;
+        self.amp_transicao.mod_settings.power_tube = tube;
     }
 
     pub fn set_power_tube_bias_ma(&mut self, ma: f32) {
-        self.amp.mod_settings.bias_ma = ma.clamp(20.0, 55.0);
+        let clamped = ma.clamp(20.0, 55.0);
+        self.amp.mod_settings.bias_ma = clamped;
+        self.amp_transicao.mod_settings.bias_ma = clamped;
     }
 
     pub fn set_sag_amount(&mut self, sag: f32) {
-        self.amp.mod_settings.sag = sag.clamp(0.0, 10.0);
+        let clamped = sag.clamp(0.0, 10.0);
+        self.amp.mod_settings.sag = clamped;
+        self.amp_transicao.mod_settings.sag = clamped;
     }
 
     pub fn set_rectifier_type(&mut self, rec: RectifierType) {
         self.amp.mod_settings.rectifier = rec;
+        self.amp_transicao.mod_settings.rectifier = rec;
     }
 
     /// Returns the instantaneous B+ rail voltage including power-supply sag and variac scaling.
@@ -2265,23 +2322,32 @@ impl WhiteBoxAmpProcessor {
     }
 
     pub fn set_negative_feedback(&mut self, nfb: f32) {
-        self.amp.mod_settings.nfb = nfb.clamp(0.0, 10.0);
+        let clamped = nfb.clamp(0.0, 10.0);
+        self.amp.mod_settings.nfb = clamped;
+        self.amp_transicao.mod_settings.nfb = clamped;
     }
 
     pub fn set_transformer_saturation(&mut self, sat: f32) {
-        self.amp.mod_settings.xformer_sat = sat.clamp(0.0, 10.0);
+        let clamped = sat.clamp(0.0, 10.0);
+        self.amp.mod_settings.xformer_sat = clamped;
+        self.amp_transicao.mod_settings.xformer_sat = clamped;
     }
 
     pub fn set_preamp_plate_voltage(&mut self, v: f32) {
-        self.amp.mod_settings.preamp_plate_v = v.clamp(180.0, 340.0);
+        let clamped = v.clamp(180.0, 340.0);
+        self.amp.mod_settings.preamp_plate_v = clamped;
+        self.amp_transicao.mod_settings.preamp_plate_v = clamped;
     }
 
     pub fn set_triode_asymmetry(&mut self, asym: f32) {
-        self.amp.mod_settings.triode_asym = asym.clamp(0.0, 0.60);
+        let clamped = asym.clamp(0.0, 0.60);
+        self.amp.mod_settings.triode_asym = clamped;
+        self.amp_transicao.mod_settings.triode_asym = clamped;
     }
 
     pub fn set_tonestack_topology(&mut self, ts: ToneStackTopology) {
         self.amp.mod_settings.tonestack = ts;
+        self.amp_transicao.mod_settings.tonestack = ts;
     }
 
     pub fn set_target_model(&mut self, model: AmpModelId) {

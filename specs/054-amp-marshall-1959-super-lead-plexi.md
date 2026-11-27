@@ -1,9 +1,9 @@
 ---
 spec: 054
 titulo: Amplificador Marshall 1959 Super Lead / Plexi (Rev. 1969 SL/A Pré-Julho 1969, 100W)
-status: rascunho
+status: implementada
 tipo: amplificador
-atualizado: 2026-11-20
+atualizado: 2026-11-25
 dependencias: [053, 077, 078, 079]
 ---
 # 054 — Amplificador Marshall 1959 Super Lead / Plexi (Rev. 1969 SL/A)
@@ -115,6 +115,7 @@ dependencias: [053, 077, 078, 079]
 
 ## 10. Contratos de integração
 - Implementa `AudioProcessor` (Spec 053) com `module_id = "amp.marshall.1959_super_lead"` e `model_revision = "1969-jmp-sl-a-pre-july"`.
+- Ao selecionar `amp_1.model = "plexi_1959"` sem sobrescrita explícita de `cab_1.speaker` / `amp_1.gain` / `amp_1.input_jack` no mesmo lote, o backend pareia automaticamente `cab_1.speaker = "greenback_4x12"` e valores nominais do modelo.
 - Rejeita `amp_1.master`, `amp_1.cut`, `amp_1.reverb`, `amp_1.spongy` e `amp_1.channel_mode` com `E_VALIDATION:` quando este modelo estiver ativo.
 
 ## 11. Arquitetura de implementação

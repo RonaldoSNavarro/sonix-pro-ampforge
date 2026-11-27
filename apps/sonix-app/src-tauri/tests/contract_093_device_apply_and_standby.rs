@@ -66,3 +66,43 @@ fn test_ca_03_apply_device_updates_active_device_id_and_exits_standby() {
         "Telemetria não pode permanecer mutada após aplicar dispositivo"
     );
 }
+
+#[test]
+fn test_ca_03_saved_calibration_boot_pushes_standby_false_to_param_queue() {
+    let dir = TempDirGuard::new("sonix_093_ca3_calib_boot");
+    let store = sonix_desktop::calibration::CalibrationStore::open(&dir.path);
+    store.save("default", 2.0, -52.0);
+    drop(store);
+
+    let runtime = build_runtime_for_startup_test_in_dir(dir.path.clone(), Some("default"));
+    let pq = runtime
+        .api_ctx
+        .param_queue
+        .as_ref()
+        .expect("param_queue presente no runtime");
+
+    let mut saw_standby_false = false;
+    let mut saw_boost = false;
+    let mut saw_gate = false;
+    while let Some(u) = pq.pop() {
+        match u {
+            sonix_desktop::audio::DspParamUpdate::AmpStandby(false) => saw_standby_false = true,
+            sonix_desktop::audio::DspParamUpdate::InputBoost(b) if (b - 2.0).abs() < 1e-4 => {
+                saw_boost = true
+            }
+            sonix_desktop::audio::DspParamUpdate::GateThreshold(g) if (g - (-52.0)).abs() < 1e-4 => {
+                saw_gate = true
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_standby_false && saw_boost && saw_gate,
+        "Boot com calibração salva deve enfileirar InputBoost, GateThreshold e AmpStandby(false) na fila SPSC para a thread de áudio (standby={saw_standby_false}, boost={saw_boost}, gate={saw_gate})"
+    );
+    assert!(
+        !runtime.api_ctx.telemetry.is_output_muted(),
+        "Telemetria não pode ser sobrescrita para muted no boot com calibração salva"
+    );
+}

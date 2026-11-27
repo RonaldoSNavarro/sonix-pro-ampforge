@@ -1,12 +1,12 @@
 ---
-status: rascunho
+status: implementada
 ---
 
 # Spec 078: Componente Compartilhado — Solvers Analíticos de Redes Passivas de Tone Stack
 
-> **Status:** `rascunho` (`bloqueio parcial documental` no solver Mesa Rectifier Rev F até confirmação do esquema oficial)
+> **Status:** `aprovada` (migrado para Mesa Rectifier Rev G em 2026-11-25)
 > **Criado em:** 2026-11-20
-> **Última atualização:** 2026-11-20 (Rodada Corretiva de Auditoria Documental e Fidelidade)
+> **Última atualização:** 2026-11-25 (Aprovada para Fase 2A: 4 solvers separados, R_src e tapers reais)
 > **Domínio:** `dsp-shared` (`componente`)
 > **Identificador canônico:** `component.tonestack.passive_solvers`
 > **Variante / Revisão:** `4 Solvers Analíticos Separados por Circuito Real (FMV com R_src variável, Vox Top Boost OS/010, James/Baxandall, Mesa Rectifier)`

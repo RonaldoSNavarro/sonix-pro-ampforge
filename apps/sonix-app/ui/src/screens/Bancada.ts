@@ -1,6 +1,6 @@
 import { createKnob } from '../components/Knob.ts';
 import type { AppStore } from '../store.ts';
-import { makeChipButton, num, str } from './_helpers.ts';
+import { bool, makeChipButton, num, str } from './_helpers.ts';
 
 function sliceTriggeredWindow(
   outArr: number[],
@@ -283,10 +283,12 @@ export function renderBancadaScreen(store: AppStore): HTMLElement {
   const preTubeRaw = str(store, 'amp_1.preamp_tube', '12ax7');
   const pwrTubeRaw = str(store, 'amp_1.power_tube', defaultPwrByModel[ampModel] ?? 'el34');
   const rectRaw = str(store, 'amp_1.rectifier', 'diode');
+  const spongy = bool(store, 'amp_1.spongy', false);
   const impRaw = str(store, 'amp_1.impedance_ohms', '8');
   const biasMa = num(store, 'amp_1.bias_ma', 38);
   const sagVal = num(store, 'amp_1.sag', 3.0);
-  const bplus = rectRaw === 'diode' ? 464 : rectRaw === 'gz34' ? 440 : 426;
+  const baseBplus = rectRaw === 'diode' ? 464 : rectRaw === 'gz34' ? 440 : 426;
+  const bplus = Math.round(baseBplus * (ampModel === 'dual_rect' && spongy ? 0.80 : 1.0));
 
   // ── Top Bar ────────────────────────────────────────────────────────────────
   const topBar = document.createElement('div');

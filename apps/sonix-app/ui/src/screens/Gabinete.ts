@@ -119,7 +119,7 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
       badge: 'ALNICO BLUE · 15 W · 8 Ω',
       note: 'Ímã de alnico, agudos brilhantes, comprime cedo em volume alto.',
     },
-    twin_2x12_open: {
+    twin_2x12: {
       title: '2×12 aberto (Twin)',
       cones: 2,
       f0: 90,
@@ -128,7 +128,8 @@ export function renderGabineteScreen(store: AppStore): HTMLElement {
     },
   };
 
-  const activeSpeaker = str(store, 'cab_1.speaker', 'v30_4x12');
+  const rawSpeaker = str(store, 'cab_1.speaker', 'v30_4x12');
+  const activeSpeaker = rawSpeaker === 'twin_2x12_open' ? 'twin_2x12' : rawSpeaker;
   const cab = cabSpecs[activeSpeaker] ?? cabSpecs.v30_4x12;
 
   // ── Top Bar ────────────────────────────────────────────────────────────────

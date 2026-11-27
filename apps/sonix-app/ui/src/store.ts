@@ -88,6 +88,7 @@ export interface TelemetryData {
   cpu_usage_pct: number;
   gate_gr_db?: number;
   gate_state?: 'open' | 'hold' | 'closed';
+  b_plus_v?: number;
   looper?: {
     state: string;
     layers: number;
@@ -340,15 +341,47 @@ export class AppStore {
       }
       this.params[desc.backendKey] = normalized;
       if (desc.backendKey === 'amp_1.model' && typeof normalized === 'string') {
-        const defaultPwr: Record<string, string> = {
-          jcm800_2203: 'el34',
-          plexi_1959: 'el34',
-          twin_ab763: '6l6gc',
-          dual_rect: '6l6gc',
-          ac30_tb: 'el84_variant',
+        const nominalChassis: Record<string, {
+          preamp_tube: string;
+          power_tube: string;
+          bias_ma: number;
+          sag: number;
+          rectifier: string;
+          nfb: number;
+          xformer_sat: number;
+          preamp_plate_v: number;
+          triode_asym: number;
+          tonestack: string;
+        }> = {
+          jcm800_2203: { preamp_tube: '12ax7', power_tube: 'el34', bias_ma: 38.0, sag: 3.0, rectifier: 'diode', nfb: 5.0, xformer_sat: 4.0, preamp_plate_v: 280.0, triode_asym: 0.20, tonestack: 'model' },
+          plexi_1959: { preamp_tube: '12ax7', power_tube: 'el34', bias_ma: 36.0, sag: 4.0, rectifier: 'diode', nfb: 6.0, xformer_sat: 5.0, preamp_plate_v: 250.0, triode_asym: 0.22, tonestack: 'model' },
+          twin_ab763: { preamp_tube: '12ax7', power_tube: '6l6gc', bias_ma: 35.0, sag: 2.0, rectifier: 'diode', nfb: 8.0, xformer_sat: 2.0, preamp_plate_v: 310.0, triode_asym: 0.15, tonestack: 'model' },
+          dual_rect: { preamp_tube: '12ax7', power_tube: '6l6gc', bias_ma: 32.0, sag: 5.0, rectifier: '5u4gb', nfb: 3.0, xformer_sat: 3.0, preamp_plate_v: 290.0, triode_asym: 0.28, tonestack: 'model' },
+          ac30_tb: { preamp_tube: '12ax7', power_tube: 'el84_variant', bias_ma: 45.0, sag: 6.0, rectifier: 'gz34', nfb: 0.0, xformer_sat: 5.0, preamp_plate_v: 240.0, triode_asym: 0.18, tonestack: 'model' },
         };
-        if (defaultPwr[normalized]) {
-          this.params['amp_1.power_tube'] = defaultPwr[normalized];
+        const pairedCab: Record<string, [string, number]> = {
+          jcm800_2203: ['greenback_4x12', 98],
+          plexi_1959: ['greenback_4x12', 98],
+          twin_ab763: ['twin_2x12', 90],
+          dual_rect: ['v30_4x12', 108],
+          ac30_tb: ['alnico_blue_2x12', 82],
+        };
+        const nom = nominalChassis[normalized];
+        if (nom) {
+          this.params['amp_1.preamp_tube'] = nom.preamp_tube;
+          this.params['amp_1.power_tube'] = nom.power_tube;
+          this.params['amp_1.bias_ma'] = nom.bias_ma;
+          this.params['amp_1.sag'] = nom.sag;
+          this.params['amp_1.rectifier'] = nom.rectifier;
+          this.params['amp_1.nfb'] = nom.nfb;
+          this.params['amp_1.xformer_sat'] = nom.xformer_sat;
+          this.params['amp_1.preamp_plate_v'] = nom.preamp_plate_v;
+          this.params['amp_1.triode_asym'] = nom.triode_asym;
+          this.params['amp_1.tonestack'] = nom.tonestack;
+        }
+        if (pairedCab[normalized]) {
+          this.params['cab_1.speaker'] = pairedCab[normalized][0];
+          this.params['cab_1.resonance_hz'] = pairedCab[normalized][1];
         }
       }
       this.transport.setParam(desc.backendKey, normalized);
@@ -431,21 +464,36 @@ export class AppStore {
         const saved = JSON.parse(rawSaved) as Record<string, unknown>;
         const wantInput = (saved.input_device ?? saved.inputDevice) as string | undefined;
         const wantOutput = (saved.output_device ?? saved.outputDevice) as string | undefined;
-        if (saved && typeof saved === 'object' && (wantInput || wantOutput)) {
+        const wantMode = String(saved.mode || saved.backend || 'wasapi_shared');
+        const wantBackend = wantMode.startsWith('wasapi') ? 'wasapi' : String(saved.backend || wantMode || 'wasapi');
+        const wantSr = Number(saved.sample_rate || saved.sampleRate || 48000);
+        const wantBs = Number(saved.buffer_size || saved.bufferSize || 64);
+        const wantInMode = (saved.input_mode ?? saved.inputMode) as string | undefined;
+        const wantInChan = (saved.input_channel ?? saved.inputChannel) as string | undefined;
+        if (saved && typeof saved === 'object') {
           const hasIn = !wantInput || this.devices.some((d) => d.is_input && d.name === wantInput);
           const hasOut = !wantOutput || this.devices.some((d) => d.is_output && d.name === wantOutput);
-          if (
-            (hasIn && wantInput && this.audioStatus.input_device !== wantInput) ||
-            (hasOut && wantOutput && this.audioStatus.output_device !== wantOutput)
-          ) {
+          const diffIn = Boolean(hasIn && wantInput && this.audioStatus.input_device !== wantInput);
+          const diffOut = Boolean(hasOut && wantOutput && this.audioStatus.output_device !== wantOutput);
+          const diffMode = this.audioStatus.mode !== wantMode;
+          const diffSr = this.audioStatus.sample_rate !== wantSr;
+          const diffBs = this.audioStatus.output_period_frames !== wantBs;
+          const diffInMode = Boolean(wantInMode && this.params['input.mode'] !== wantInMode);
+          const diffInChan = Boolean(wantInChan && this.params['input.channel'] !== wantInChan);
+          if (diffIn || diffOut || diffMode || diffSr || diffBs || diffInMode || diffInChan) {
             await this.transport.setAudioDevice({
-              backend: String(saved.backend || 'wasapi'),
-              mode: String(saved.mode || saved.backend || 'wasapi_shared'),
-              sample_rate: Number(saved.sample_rate || saved.sampleRate || 48000),
-              buffer_size: Number(saved.buffer_size || saved.bufferSize || 64),
+              backend: wantBackend,
+              mode: wantMode,
+              sample_rate: wantSr,
+              buffer_size: wantBs,
               input_device: hasIn && wantInput ? wantInput : undefined,
               output_device: hasOut && wantOutput ? wantOutput : undefined,
+              input_mode: wantInMode || String(this.params['input.mode'] ?? 'instrument'),
+              input_channel: wantInChan || String(this.params['input.channel'] ?? 'left'),
             });
+            if (wantInMode) this.params['input.mode'] = wantInMode;
+            if (wantInChan) this.params['input.channel'] = wantInChan;
+            this.params['amp_1.standby'] = false;
             const updatedSt = await this.transport.getAudioStatus();
             if (updatedSt && typeof updatedSt === 'object') Object.assign(this.audioStatus, updatedSt);
           }
@@ -555,6 +603,9 @@ export class AppStore {
     }
     if (typeof p.gate_state === 'string') {
       this.telemetry.gate_state = p.gate_state as 'open' | 'hold' | 'closed';
+    }
+    if (typeof p.b_plus_v === 'number' && Number.isFinite(p.b_plus_v)) {
+      this.telemetry.b_plus_v = p.b_plus_v;
     }
     if (Array.isArray(p.waveform)) {
       this.telemetry.waveform = p.waveform as number[];
